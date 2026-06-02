@@ -18,8 +18,11 @@ yarn-error.log*
 # Wails / Go build output
 GO/GuildSync/build/bin/
 GO/GuildSync/frontend/dist/
+GO/GuildSync/frontend/wailsjs/
 GO/GuildSync/frontend/node_modules/
 GO/Filewatcher/*.exe
+
+NodeJS/data/
 
 # Go
 *.exe
