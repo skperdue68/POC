@@ -3,7 +3,6 @@ package main
 import (
 	"embed"
 
-	"github.com/getlantern/systray"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -23,18 +22,18 @@ var trayIcon []byte
 func main() {
 	app := NewApp(appIcon, trayIcon)
 
-	// Start the tray in the background.
-	// Wails needs to stay on the main application path.
-	go systray.Run(app.trayReady, app.trayExit)
-
 	err := wails.Run(&options.App{
 		Title:  "GuildSync",
 		Width:  816,
 		Height: 920,
 
-		Frameless:         true,
-		AlwaysOnTop:       true,
-		HideWindowOnClose: true,
+		Frameless: true,
+
+		// Windows uses our systray file.
+		// macOS/Linux will use normal native window behavior.
+		HideWindowOnClose: supportsTray(),
+
+		AlwaysOnTop: true,
 
 		BackgroundColour: &options.RGBA{
 			R: 0,
@@ -71,6 +70,4 @@ func main() {
 	if err != nil {
 		println("Error:", err.Error())
 	}
-
-	systray.Quit()
 }

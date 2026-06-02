@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/getlantern/systray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -37,6 +36,11 @@ func NewApp(appIcon []byte, trayIcon []byte) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
+	// Start tray support.
+	// On Windows this starts getlantern/systray.
+	// On macOS/Linux this is a no-op and the OS/Wails handles normal app behavior.
+	a.startTray()
+
 	// Splash screen behavior.
 	runtime.WindowCenter(ctx)
 	runtime.WindowSetAlwaysOnTop(ctx, true)
@@ -44,6 +48,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	_ = a.SaveWindowState()
+	a.stopTray()
 }
 
 func (a *App) ShowMainWindow() {
@@ -97,7 +102,17 @@ func (a *App) SaveWindowState() error {
 
 func (a *App) HideToTray() {
 	_ = a.SaveWindowState()
-	runtime.WindowHide(a.ctx)
+
+	if a.ctx == nil {
+		return
+	}
+
+	if supportsTray() {
+		runtime.WindowHide(a.ctx)
+		return
+	}
+
+	runtime.WindowMinimise(a.ctx)
 }
 
 func (a *App) ShowFromTray() {
@@ -113,13 +128,29 @@ func (a *App) ShowFromTray() {
 
 func (a *App) MinimizeWindow() {
 	_ = a.SaveWindowState()
+
+	if a.ctx == nil {
+		return
+	}
+
 	runtime.WindowMinimise(a.ctx)
 }
 
 func (a *App) CloseWindow() {
-	// This is called by your custom close button.
-	// It does NOT quit. It hides to tray.
-	a.HideToTray()
+	_ = a.SaveWindowState()
+
+	if a.ctx == nil {
+		return
+	}
+
+	if supportsTray() {
+		// Windows: close button hides to system tray.
+		runtime.WindowHide(a.ctx)
+		return
+	}
+
+	// macOS/Linux: let the platform behave normally.
+	runtime.Quit(a.ctx)
 }
 
 func (a *App) QuitFromTray() {
@@ -128,39 +159,11 @@ func (a *App) QuitFromTray() {
 	a.mu.Unlock()
 
 	_ = a.SaveWindowState()
-	systray.Quit()
-	runtime.Quit(a.ctx)
-}
+	a.stopTray()
 
-func (a *App) trayReady() {
-	systray.SetIcon(a.trayIcon)
-	systray.SetTitle("GuildSync")
-	systray.SetTooltip("GuildSync is running")
-
-	mShow := systray.AddMenuItem("Show", "Show GuildSync")
-	mHide := systray.AddMenuItem("Hide", "Hide GuildSync")
-	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Quit GuildSync", "Quit GuildSync")
-
-	go func() {
-		for {
-			select {
-			case <-mShow.ClickedCh:
-				a.ShowFromTray()
-
-			case <-mHide.ClickedCh:
-				a.HideToTray()
-
-			case <-mQuit.ClickedCh:
-				a.QuitFromTray()
-				return
-			}
-		}
-	}()
-}
-
-func (a *App) trayExit() {
-	// Cleanup hook if needed later.
+	if a.ctx != nil {
+		runtime.Quit(a.ctx)
+	}
 }
 
 func (a *App) loadWindowState() WindowState {
