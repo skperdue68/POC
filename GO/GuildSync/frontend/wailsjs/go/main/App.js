@@ -6,8 +6,16 @@ export function CloseWindow() {
   return window['go']['main']['App']['CloseWindow']();
 }
 
+export function GetDiscordSession() {
+  return window['go']['main']['App']['GetDiscordSession']();
+}
+
 export function HideToTray() {
   return window['go']['main']['App']['HideToTray']();
+}
+
+export function LogoutDiscord() {
+  return window['go']['main']['App']['LogoutDiscord']();
 }
 
 export function MinimizeWindow() {
@@ -28,4 +36,8 @@ export function ShowFromTray() {
 
 export function ShowMainWindow() {
   return window['go']['main']['App']['ShowMainWindow']();
+}
+
+export function StartDiscordLogin() {
+  return window['go']['main']['App']['StartDiscordLogin']();
 }

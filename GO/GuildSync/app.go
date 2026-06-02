@@ -16,6 +16,7 @@ type App struct {
 	trayIcon []byte
 	mu       sync.Mutex
 	quiting  bool
+	oauth    *oauthRuntimeState
 }
 
 type WindowState struct {
