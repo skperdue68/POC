@@ -17,7 +17,7 @@ import {
 
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
-const GUILDSYNC_APP_VERSION = '1.0.2';
+const GUILDSYNC_APP_VERSION = '1.0.3';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 const TRANSIENT_MESSAGE_TTL_MS = 60 * 1000;

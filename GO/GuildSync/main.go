@@ -27,6 +27,8 @@ func main() {
 		Width:  816,
 		Height: 920,
 
+		MinHeight: 800,
+		MinWidth: 900,
 		Frameless: true,
 
 		// Windows uses our systray file.
