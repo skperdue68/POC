@@ -22,6 +22,10 @@ export function LogoutGuildSync() {
   return window['go']['main']['App']['LogoutGuildSync']();
 }
 
+export function MaximizeWindow() {
+  return window['go']['main']['App']['MaximizeWindow']();
+}
+
 export function MinimizeWindow() {
   return window['go']['main']['App']['MinimizeWindow']();
 }

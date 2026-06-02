@@ -167,7 +167,14 @@ body {
   filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.45));
 }
 
-/* Discord button */
+/* Discord login button */
+
+.discord-area {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
 
 .discord-login-button {
   height: 56px;
@@ -185,7 +192,11 @@ body {
   font-weight: 600;
   letter-spacing: 0.1px;
   box-shadow: 0 10px 24px rgba(37, 56, 163, 0.35);
-  cursor: default;
+  cursor: pointer;
+}
+
+.discord-login-button:hover {
+  background: linear-gradient(180deg, #7B86FF 0%, #6571F6 100%);
 }
 
 .discord-icon-wrap {
@@ -201,6 +212,133 @@ body {
   width: 28px;
   height: 28px;
   display: block;
+}
+
+/* Authenticated Discord avatar and profile */
+
+.discord-profile-wrap {
+  position: relative;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.discord-avatar-button {
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+.discord-avatar-button:hover {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.discord-avatar-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.discord-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #6D78F5 0%, #5865F2 100%);
+  color: #FFFFFF;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+
+.discord-profile-menu {
+  position: absolute;
+  top: 66px;
+  right: 0;
+  min-width: 260px;
+  display: none;
+  z-index: 8;
+}
+
+.discord-profile-menu.open {
+  display: block;
+}
+
+.profile-card {
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  background: rgba(8, 13, 28, 0.96);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(10px);
+}
+
+.profile-card-title {
+  margin-bottom: 14px;
+  color: #E5E7EB;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.profile-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 9px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.profile-label {
+  color: #94A3B8;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.profile-value {
+  max-width: 150px;
+  color: #E5E7EB;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+  word-break: break-word;
+}
+
+.discord-secondary-button {
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #E5E7EB;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.discord-secondary-button:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.profile-logout-button {
+  width: 100%;
+  margin-top: 14px;
 }
 
 /* Bottom version text */
@@ -234,82 +372,112 @@ body {
   z-index: 2;
 }
 
-.status-spacer {
+.status-message-viewport {
+  position: relative;
+  height: 20px;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.status-message-track {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  max-width: none;
+  color: #94A3B8;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(0) translateY(-50%);
+  will-change: transform, opacity;
+}
+
+.status-message-track.fade-in {
+  animation-name: guildsync-status-fade-in;
+  animation-duration: var(--message-fade-duration);
+  animation-timing-function: ease;
+  animation-fill-mode: forwards;
+}
+
+.status-message-track.fade-out {
+  animation-name: guildsync-status-fade-out;
+  animation-duration: var(--message-fade-duration);
+  animation-timing-function: ease;
+  animation-fill-mode: forwards;
+}
+
+.status-message-track.long-scroll {
+  animation-name: guildsync-status-long-scroll;
+  animation-duration: var(--long-scroll-duration);
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.status-spacer {
+  width: 18px;
+  flex: 0 0 18px;
 }
 
 .status-dot {
   width: 18px;
   height: 18px;
   border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.status-dot.status-red {
+  background: #ef4444;
+  box-shadow:
+    0 0 0 4px rgba(239, 68, 68, 0.08),
+    0 0 12px rgba(239, 68, 68, 0.45);
+}
+
+.status-dot.status-yellow {
+  background: #eab308;
+  box-shadow:
+    0 0 0 4px rgba(234, 179, 8, 0.08),
+    0 0 12px rgba(234, 179, 8, 0.45);
+}
+
+.status-dot.status-green {
   background: #22c55e;
   box-shadow:
     0 0 0 4px rgba(34, 197, 94, 0.08),
     0 0 12px rgba(34, 197, 94, 0.45);
 }
 
-/* Authenticated Discord header */
+@keyframes guildsync-status-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(0) translateY(-50%);
+  }
 
-.discord-area {
-  min-height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(-50%);
+  }
 }
 
-.discord-login-button {
-  cursor: pointer;
+@keyframes guildsync-status-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
-.discord-login-button:hover {
-  background: linear-gradient(180deg, #7B86FF 0%, #6571F6 100%);
-}
+@keyframes guildsync-status-long-scroll {
+  from {
+    transform: translateX(0) translateY(-50%);
+  }
 
-.discord-welcome-wrap {
-  min-height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
+  to {
+    transform: translateX(calc(-1 * var(--long-scroll-distance))) translateY(-50%);
+  }
 }
-
-.discord-welcome-text {
-  color: #E5E7EB;
-  font-size: 15px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.discord-secondary-button {
-  height: 38px;
-  padding: 0 16px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #E5E7EB;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.discord-secondary-button:hover {
-  background: rgba(255, 255, 255, 0.13);
-}
-
-.status-message {
-  color: #94A3B8;
-  font-size: 12px;
-  font-weight: 400;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: calc(100vw - 120px);
-}
-
-.status-dot.connected {
-  background: #22c55e;
-  box-shadow:
-    0 0 0 4px rgba(34, 197, 94, 0.08),
-    0 0 12px rgba(34, 197, 94, 0.45);
-}
-

@@ -70,6 +70,7 @@ type GuildSyncUser struct {
 	Username      string `json:"username"`
 	DisplayName   string `json:"display_name"`
 	Avatar        string `json:"avatar"`
+	AvatarURL     string `json:"avatar_url"`
 	Email         string `json:"email,omitempty"`
 	Role          string `json:"role"`
 }

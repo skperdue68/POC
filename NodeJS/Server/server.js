@@ -27,6 +27,8 @@ const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'http://127.0.0
 const GUILDSYNC_JWT_SECRET = requiredEnv('GUILDSYNC_JWT_SECRET');
 const GUILDSYNC_TOKEN_TTL_SECONDS = Number(process.env.GUILDSYNC_TOKEN_TTL_SECONDS || 86400);
 
+const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
+
 
 const db = openDatabase();
 
@@ -50,7 +52,8 @@ app.get('/health', (req, res) => {
     ok: true,
     service: 'GuildSync Auth Server',
     host: HOST,
-    port: PORT
+    port: PORT,
+    current_client_version: CURRENT_GUILDSYNC_CLIENT_VERSION
   });
 });
 
@@ -85,6 +88,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
           username: dbUser.username,
           display_name: preferredUserName(dbUser),
           avatar: dbUser.avatar,
+          avatar_url: discordAvatarURL(dbUser.discord_user_id, dbUser.avatar),
           email: dbUser.email,
           role: dbUser.role
         }
@@ -96,6 +100,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
       username: dbUser.username,
       display_name: preferredUserName(dbUser),
       avatar: dbUser.avatar || '',
+      avatar_url: discordAvatarURL(dbUser.discord_user_id, dbUser.avatar),
       email: dbUser.email || '',
       role: dbUser.role || 'user'
     };
@@ -107,6 +112,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
         sub: guildSyncUser.discord_user_id,
         username: guildSyncUser.username,
         display_name: guildSyncUser.display_name,
+        avatar_url: guildSyncUser.avatar_url,
         role: guildSyncUser.role
       },
       GUILDSYNC_JWT_SECRET,
@@ -127,6 +133,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
     });
   } catch (error) {
     console.error('Discord desktop-token error:', error);
+
     return res.status(500).json({
       ok: false,
       error: error.message || 'Discord authentication failed.'
@@ -138,7 +145,9 @@ io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
 
   if (!token) {
-    return next(new Error('Missing GuildSync token.'));
+    socket.guildSyncAuthenticated = false;
+    socket.guildSyncUser = null;
+    return next();
   }
 
   try {
@@ -147,10 +156,12 @@ io.use((socket, next) => {
       audience: 'guildsync-desktop'
     });
 
+    socket.guildSyncAuthenticated = true;
     socket.guildSyncUser = {
       discord_user_id: claims.sub,
       username: claims.username,
       display_name: claims.display_name,
+      avatar_url: claims.avatar_url || '',
       role: claims.role
     };
 
@@ -162,11 +173,26 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   const user = socket.guildSyncUser;
-  console.log(`Socket connected: ${socket.id} ${user.display_name} (${user.discord_user_id})`);
 
-  socket.emit('guildsync:server-message', {
-    message: `Server accepted websocket connection for ${user.display_name}.`,
-    user
+  if (socket.guildSyncAuthenticated && user) {
+    console.log(`Socket connected: ${socket.id} ${user.display_name} (${user.discord_user_id})`);
+  } else {
+    console.log(`Socket connected: ${socket.id} unauthenticated`);
+  }
+
+  socket.on('guildsync:client-version', (payload = {}) => {
+    const clientVersion = String(payload.version || '').trim();
+    const updateRequired = isVersionLower(clientVersion, CURRENT_GUILDSYNC_CLIENT_VERSION);
+
+    socket.emit('guildsync:version-status', {
+      ok: true,
+      client_version: clientVersion,
+      latest_version: CURRENT_GUILDSYNC_CLIENT_VERSION,
+      update_required: updateRequired,
+      message: updateRequired
+        ? `GuildSync ${clientVersion || 'unknown'} is out of date. Latest version is ${CURRENT_GUILDSYNC_CLIENT_VERSION}.`
+        : `GuildSync ${clientVersion || 'unknown'} is current.`
+    });
   });
 
   socket.on('guildsync:ping', (payload, callback) => {
@@ -174,7 +200,8 @@ io.on('connection', (socket) => {
       ok: true,
       message: 'pong',
       received: payload || null,
-      user,
+      authenticated: Boolean(socket.guildSyncAuthenticated),
+      user: user || null,
       at: new Date().toISOString()
     };
 
@@ -186,13 +213,15 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', (reason) => {
-    console.log(`Socket disconnected: ${socket.id} ${reason}`);
+    const name = user?.display_name || 'unauthenticated';
+    console.log(`Socket disconnected: ${socket.id} ${name} ${reason}`);
   });
 });
 
 server.listen(PORT, HOST, () => {
   console.log(`GuildSync auth server listening at http://${HOST}:${PORT}`);
   console.log(`Discord redirect URI: ${DISCORD_REDIRECT_URI}`);
+  console.log(`Current GuildSync client version: ${CURRENT_GUILDSYNC_CLIENT_VERSION}`);
 });
 
 async function exchangeCodeWithDiscord(code, redirectURI) {
@@ -213,6 +242,7 @@ async function exchangeCodeWithDiscord(code, redirectURI) {
   });
 
   const text = await response.text();
+
   let json;
   try {
     json = JSON.parse(text);
@@ -239,6 +269,7 @@ async function fetchDiscordUser(accessToken) {
   });
 
   const text = await response.text();
+
   let json;
   try {
     json = JSON.parse(text);
@@ -259,9 +290,27 @@ function toGuildSyncUser(discordUser, allowedUser) {
     username: discordUser.username,
     display_name: discordUser.global_name || discordUser.username,
     avatar: discordUser.avatar || '',
+    avatar_url: discordAvatarURL(discordUser.id, discordUser.avatar),
     email: discordUser.email || '',
     role: allowedUser?.role || 'user'
   };
+}
+
+function discordAvatarURL(discordUserID, avatarHash) {
+  const userID = String(discordUserID || '').trim();
+  const avatar = String(avatarHash || '').trim();
+
+  if (!userID || !avatar) {
+    return '';
+  }
+
+  if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
+    return avatar;
+  }
+
+  const extension = avatar.startsWith('a_') ? 'gif' : 'png';
+
+  return `https://cdn.discordapp.com/avatars/${encodeURIComponent(userID)}/${encodeURIComponent(avatar)}.${extension}?size=128`;
 }
 
 function preferredUserName(user) {
@@ -283,13 +332,45 @@ function preferredUserName(user) {
   return 'Unknown User';
 }
 
+function isVersionLower(clientVersion, serverVersion) {
+  const client = parseVersion(clientVersion);
+  const server = parseVersion(serverVersion);
+
+  for (let i = 0; i < Math.max(client.length, server.length); i += 1) {
+    const clientPart = client[i] || 0;
+    const serverPart = server[i] || 0;
+
+    if (clientPart < serverPart) {
+      return true;
+    }
+
+    if (clientPart > serverPart) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function parseVersion(version) {
+  return String(version || '')
+    .trim()
+    .replace(/^v/i, '')
+    .split('.')
+    .map((part) => {
+      const match = part.match(/\d+/);
+      return match ? Number(match[0]) : 0;
+    });
+}
+
 function requiredEnv(name) {
   const value = process.env[name];
+
   if (!value) {
     console.error(`Missing required environment variable: ${name}`);
     console.error('Copy .env.example to .env and fill in the values.');
     process.exit(1);
   }
+
   return value;
 }
-

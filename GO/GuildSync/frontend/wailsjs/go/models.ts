@@ -23,6 +23,7 @@ export namespace main {
 	    username: string;
 	    display_name: string;
 	    avatar: string;
+	    avatar_url: string;
 	    email?: string;
 	    role: string;
 	
@@ -36,6 +37,7 @@ export namespace main {
 	        this.username = source["username"];
 	        this.display_name = source["display_name"];
 	        this.avatar = source["avatar"];
+	        this.avatar_url = source["avatar_url"];
 	        this.email = source["email"];
 	        this.role = source["role"];
 	    }

@@ -7,6 +7,7 @@ import { io } from 'socket.io-client';
 import {
   ShowMainWindow,
   SaveWindowState,
+  MaximizeWindow,
   MinimizeWindow,
   CloseWindow,
   StartDiscordLogin,
@@ -16,15 +17,38 @@ import {
 
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
+const GUILDSYNC_APP_VERSION = '1.0.2';
+const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+
+const TRANSIENT_MESSAGE_TTL_MS = 60 * 1000;
+const MESSAGE_VISIBLE_MS = 7000;
+const MESSAGE_FADE_MS = 1400;
+const LONG_MESSAGE_INITIAL_WAIT_MS = 2400;
+const LONG_MESSAGE_REPEAT_WAIT_MS = 4000;
+const LONG_MESSAGE_SCROLL_PIXELS_PER_SECOND = 38;
+
 const app = document.querySelector('#app');
 
 let saveTimer = null;
+let resizeObserver = null;
 let resizeHandlerAttached = false;
+let profileMenuOpen = false;
+let versionCheckTimer = null;
+
+let systemMessages = new Map();
+let systemMessageTimers = new Map();
+
+let activeSystemMessageID = '';
+let systemMessageDisplayActive = false;
+let systemMessageIsTransitioning = false;
+let systemMessageTimeouts = [];
+
 let guildSyncSession = {
   logged_in: false,
   allowed: false,
-  status_message: 'Not logged in.'
+  status_message: ''
 };
+
 let socket = null;
 
 function showSplash() {
@@ -38,21 +62,23 @@ function showSplash() {
     await ShowMainWindow();
     await loadExistingSession();
     showMainWindow();
+    connectSocket();
   }, 5000);
 }
 
 async function loadExistingSession() {
   try {
     guildSyncSession = await GetGuildSyncSession();
-    if (guildSyncSession?.logged_in && guildSyncSession?.allowed && guildSyncSession?.token) {
-      connectSocket();
-    }
   } catch (error) {
     guildSyncSession = {
       logged_in: false,
       allowed: false,
-      status_message: formatError(error)
+      status_message: ''
     };
+
+    addSystemMessage('session-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
   }
 }
 
@@ -82,12 +108,13 @@ function showMainWindow() {
           <img src="${guildSyncLogo}" alt="GuildSync" class="brand-logo" />
         </div>
 
-        <div class="version-footer-text">Version 1.0.1</div>
 
         <footer class="status-bar">
-          <div id="statusMessage" class="status-message">${escapeHtml(getStatusText())}</div>
+          <div id="statusMessageViewport" class="status-message-viewport" aria-live="polite">
+            <div id="statusMessageTrack" class="status-message-track"></div>
+          </div>
           <div class="status-spacer"></div>
-          <div id="statusDot" class="status-dot ${socket?.connected ? 'connected' : ''}" title="Status: ${socket?.connected ? 'Connected' : 'Ready'}"></div>
+          <div id="statusDot" class="status-dot" title="Websocket not connected"></div>
         </footer>
       </section>
     </main>
@@ -96,7 +123,6 @@ function showMainWindow() {
   document
     .querySelector('#minimizeButton')
     .addEventListener('click', async () => {
-      await SaveWindowState();
       await MinimizeWindow();
     });
 
@@ -107,17 +133,24 @@ function showMainWindow() {
       await CloseWindow();
     });
 
-  // Visual only for now, per your request.
   document
     .querySelector('#maximizeButton')
-    .addEventListener('click', () => {
-      // Intentionally left unwired for now.
+    .addEventListener('click', async () => {
+      await MaximizeWindow();
     });
 
   renderDiscordArea();
+  updateStatusDot();
+  requestSystemMessageDisplayUpdate();
 
   if (!resizeHandlerAttached) {
-    window.addEventListener('resize', debounceSaveWindowState);
+    window.addEventListener('resize', () => {
+      debounceSaveWindowState();
+      recalculateCurrentSystemMessage();
+    });
+
+    startWindowResizeObserver();
+
     resizeHandlerAttached = true;
   }
 }
@@ -128,18 +161,36 @@ function renderDiscordArea() {
     return;
   }
 
-  if (guildSyncSession?.logged_in && guildSyncSession?.allowed) {
-    const displayName = guildSyncSession.user?.display_name || guildSyncSession.user?.username || 'Discord User';
+  closeProfileMenu(false);
+
+  if (isAuthenticatedSession()) {
+    const user = guildSyncSession.user || {};
+    const displayName = getDisplayName();
+    const avatarURL = getAvatarURL(user);
+    const initials = getInitials(displayName);
+
     area.innerHTML = `
-      <div class="discord-welcome-wrap">
-        <div class="discord-welcome-text">Welcome ${escapeHtml(displayName)}</div>
-        <button id="discordLogoutButton" class="discord-secondary-button" type="button">Logout</button>
+      <div class="discord-profile-wrap">
+        <button id="discordAvatarButton" class="discord-avatar-button" type="button" title="Right-click for profile menu" aria-label="GuildSync profile menu">
+          ${avatarURL
+        ? `<img src="${escapeAttribute(avatarURL)}" alt="${escapeAttribute(displayName)}" class="discord-avatar-image" />`
+        : `<span class="discord-avatar-fallback">${escapeHtml(initials)}</span>`
+      }
+        </button>
+        <div id="discordProfileMenu" class="discord-profile-menu" aria-hidden="true"></div>
       </div>
     `;
 
-    document
-      .querySelector('#discordLogoutButton')
-      .addEventListener('click', logoutGuildSync);
+    const avatarButton = document.querySelector('#discordAvatarButton');
+
+    avatarButton.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      toggleProfileMenu();
+    });
+
+    avatarButton.addEventListener('click', () => {
+      toggleProfileMenu();
+    });
 
     return;
   }
@@ -160,106 +211,614 @@ function renderDiscordArea() {
     .addEventListener('click', startDiscordLogin);
 }
 
+function toggleProfileMenu() {
+  if (profileMenuOpen) {
+    closeProfileMenu();
+    return;
+  }
+
+  openProfileMenu();
+}
+
+function openProfileMenu() {
+  const menu = document.querySelector('#discordProfileMenu');
+  if (!menu) {
+    return;
+  }
+
+  const displayName = getDisplayName();
+  const rank = guildSyncSession.user?.role || 'member';
+
+  menu.innerHTML = `
+    <section class="profile-card">
+      <div class="profile-card-title">GuildSync Profile</div>
+      <div class="profile-row">
+        <span class="profile-label">Name</span>
+        <span class="profile-value">${escapeHtml(displayName)}</span>
+      </div>
+      <div class="profile-row">
+        <span class="profile-label">Rank</span>
+        <span class="profile-value">${escapeHtml(formatRank(rank))}</span>
+      </div>
+      <div class="profile-row">
+        <span class="profile-label">Client Version</span>
+        <span class="profile-value">${escapeHtml(GUILDSYNC_APP_VERSION)}</span>
+      </div>
+      <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>    </section>
+  `;
+
+  menu.classList.add('open');
+  menu.setAttribute('aria-hidden', 'false');
+  profileMenuOpen = true;
+
+  document
+    .querySelector('#discordLogoutButton')
+    .addEventListener('click', logoutGuildSync);
+
+  setTimeout(() => {
+    window.addEventListener('click', closeProfileMenuOnOutsideClick);
+    window.addEventListener('keydown', closeProfileMenuOnEscape);
+  }, 0);
+}
+
+function closeProfileMenu(removeListeners = true) {
+  const menu = document.querySelector('#discordProfileMenu');
+  if (menu) {
+    menu.classList.remove('open');
+    menu.setAttribute('aria-hidden', 'true');
+  }
+
+  profileMenuOpen = false;
+
+  if (removeListeners) {
+    window.removeEventListener('click', closeProfileMenuOnOutsideClick);
+    window.removeEventListener('keydown', closeProfileMenuOnEscape);
+  }
+}
+
+function closeProfileMenuOnOutsideClick(event) {
+  const wrap = document.querySelector('.discord-profile-wrap');
+  if (wrap && !wrap.contains(event.target)) {
+    closeProfileMenu();
+  }
+}
+
+function closeProfileMenuOnEscape(event) {
+  if (event.key === 'Escape') {
+    closeProfileMenu();
+  }
+}
+
 async function startDiscordLogin() {
   try {
-    setStatus('Opening Discord login...');
+    addSystemMessage('auth', 'Opening Discord login...', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
     const result = await StartDiscordLogin();
+
     if (result?.status_message) {
-      setStatus(result.status_message);
+      addSystemMessage('auth', result.status_message, {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
     }
+
+    updateStatusDot();
   } catch (error) {
-    setStatus(formatError(error));
+    addSystemMessage('auth-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
+    updateStatusDot();
   }
 }
 
 async function logoutGuildSync() {
   try {
-    disconnectSocket();
     guildSyncSession = await LogoutGuildSync();
+
+    addSystemMessage('auth', guildSyncSession.status_message || 'Logged out.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
     showMainWindow();
+    connectSocket();
   } catch (error) {
-    setStatus(formatError(error));
+    addSystemMessage('auth-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
+    updateStatusDot();
   }
 }
 
 function connectSocket() {
-  if (!guildSyncSession?.token) {
-    setStatus('Cannot connect websocket: no GuildSync token.');
-    return;
-  }
-
   const socketURL = guildSyncSession.socket_url || 'http://127.0.0.1:3001';
 
-  disconnectSocket();
+  disconnectSocket(false);
 
-  socket = io(socketURL, {
+  const socketOptions = {
     transports: ['websocket', 'polling'],
-    auth: {
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000
+  };
+
+  if (guildSyncSession?.token) {
+    socketOptions.auth = {
       token: guildSyncSession.token
-    }
-  });
+    };
+  }
+
+  socket = io(socketURL, socketOptions);
 
   socket.on('connect', () => {
-    setStatus(`Websocket connected as ${guildSyncSession.user?.display_name || guildSyncSession.user?.username || 'Discord User'}.`);
-    updateStatusDot(true);
+    updateStatusDot();
+    sendVersionCheck();
+    startVersionCheckTimer();
   });
 
-  socket.on('connect_error', (error) => {
-    setStatus(`Websocket authorization failed: ${error.message}`);
-    updateStatusDot(false);
+  socket.on('connect_error', () => {
+    updateStatusDot();
+    stopVersionCheckTimer();
   });
 
-  socket.on('disconnect', (reason) => {
-    setStatus(`Websocket disconnected: ${reason}`);
-    updateStatusDot(false);
+  socket.on('disconnect', () => {
+    updateStatusDot();
+    stopVersionCheckTimer();
   });
 
-  socket.on('guildsync:server-message', (payload) => {
-    if (payload?.message) {
-      setStatus(payload.message);
-    }
+  socket.on('guildsync:version-status', (payload) => {
+    handleVersionStatus(payload);
   });
 }
 
-function disconnectSocket() {
+function disconnectSocket(updateDot = true) {
+  stopVersionCheckTimer();
+
   if (socket) {
     socket.disconnect();
     socket = null;
   }
-  updateStatusDot(false);
-}
 
-function setStatus(message) {
-  guildSyncSession = {
-    ...guildSyncSession,
-    status_message: message
-  };
-
-  const status = document.querySelector('#statusMessage');
-  if (status) {
-    status.textContent = message || 'Ready';
+  if (updateDot) {
+    updateStatusDot();
   }
 }
 
-function getStatusText() {
-  return guildSyncSession?.status_message || 'Ready';
+function sendVersionCheck() {
+  if (!socket?.connected) {
+    return;
+  }
+
+  socket.emit('guildsync:client-version', {
+    version: GUILDSYNC_APP_VERSION
+  });
 }
 
-function updateStatusDot(connected) {
+function startVersionCheckTimer() {
+  stopVersionCheckTimer();
+
+  versionCheckTimer = window.setInterval(() => {
+    sendVersionCheck();
+  }, VERSION_CHECK_INTERVAL_MS);
+}
+
+function stopVersionCheckTimer() {
+  if (versionCheckTimer) {
+    window.clearInterval(versionCheckTimer);
+    versionCheckTimer = null;
+  }
+}
+
+function handleVersionStatus(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+
+  if (payload.update_required) {
+    const latestVersion = payload.latest_version || 'unknown';
+
+    addSystemMessage(
+      'version',
+      `GuildSync is out of date. Current version: ${GUILDSYNC_APP_VERSION}. Latest version: ${latestVersion}.`
+    );
+
+    return;
+  }
+
+  removeSystemMessage('version');
+}
+
+function addSystemMessage(id, text, options = {}) {
+  const cleanID = String(id || '').trim();
+  const cleanText = String(text || '').trim();
+
+  if (!cleanID || !cleanText) {
+    return;
+  }
+
+  systemMessages.set(cleanID, cleanText);
+
+  if (systemMessageTimers.has(cleanID)) {
+    window.clearTimeout(systemMessageTimers.get(cleanID));
+    systemMessageTimers.delete(cleanID);
+  }
+
+  if (options.ttlMs && Number(options.ttlMs) > 0) {
+    const timer = window.setTimeout(() => {
+      removeSystemMessage(cleanID);
+    }, Number(options.ttlMs));
+
+    systemMessageTimers.set(cleanID, timer);
+  }
+
+  requestSystemMessageDisplayUpdate();
+}
+
+function removeSystemMessage(id) {
+  const cleanID = String(id || '').trim();
+
+  if (!cleanID) {
+    return;
+  }
+
+  systemMessages.delete(cleanID);
+
+  if (systemMessageTimers.has(cleanID)) {
+    window.clearTimeout(systemMessageTimers.get(cleanID));
+    systemMessageTimers.delete(cleanID);
+  }
+
+  if (activeSystemMessageID === cleanID) {
+    fadeOutCurrentSystemMessage(() => {
+      activeSystemMessageID = '';
+      requestSystemMessageDisplayUpdate();
+    });
+
+    return;
+  }
+
+  requestSystemMessageDisplayUpdate();
+}
+
+function requestSystemMessageDisplayUpdate() {
+  const ids = getSystemMessageIDs();
+
+  if (ids.length === 0) {
+    if (systemMessageDisplayActive) {
+      fadeOutCurrentSystemMessage(clearSystemMessageDisplay);
+    } else {
+      clearSystemMessageDisplay();
+    }
+
+    return;
+  }
+
+  if (!systemMessageDisplayActive && !systemMessageIsTransitioning) {
+    showSystemMessage(ids[0]);
+  }
+}
+
+function getSystemMessageIDs() {
+  return Array.from(systemMessages.keys());
+}
+
+function getNextSystemMessageID() {
+  const ids = getSystemMessageIDs();
+
+  if (ids.length === 0) {
+    return '';
+  }
+
+  if (!activeSystemMessageID) {
+    return ids[0];
+  }
+
+  const currentIndex = ids.indexOf(activeSystemMessageID);
+
+  if (currentIndex < 0) {
+    return ids[0];
+  }
+
+  return ids[(currentIndex + 1) % ids.length];
+}
+
+function showSystemMessage(id) {
+  const track = document.querySelector('#statusMessageTrack');
+
+  if (!track || !systemMessages.has(id)) {
+    clearSystemMessageDisplay();
+    return;
+  }
+
+  clearSystemMessageTimeouts();
+
+  const message = systemMessages.get(id);
+
+  activeSystemMessageID = id;
+  systemMessageDisplayActive = true;
+  systemMessageIsTransitioning = true;
+
+  track.classList.remove('fade-in', 'fade-out', 'long-scroll');
+  track.style.removeProperty('--message-fade-duration');
+  track.style.removeProperty('--long-scroll-distance');
+  track.style.removeProperty('--long-scroll-duration');
+  track.style.opacity = '0';
+  track.style.transform = 'translateX(0) translateY(-50%)';
+  track.textContent = message;
+
+  track.style.setProperty('--message-fade-duration', `${MESSAGE_FADE_MS}ms`);
+
+  requestAnimationFrame(() => {
+    track.classList.add('fade-in');
+
+    track.addEventListener(
+      'animationend',
+      () => {
+        track.classList.remove('fade-in');
+        track.style.opacity = '1';
+        track.style.transform = 'translateX(0) translateY(-50%)';
+        systemMessageIsTransitioning = false;
+        scheduleCurrentSystemMessage();
+      },
+      { once: true }
+    );
+  });
+}
+
+function scheduleCurrentSystemMessage() {
+  const ids = getSystemMessageIDs();
+
+  if (!activeSystemMessageID || !systemMessages.has(activeSystemMessageID)) {
+    requestSystemMessageDisplayUpdate();
+    return;
+  }
+
+  if (ids.length <= 1) {
+    scheduleLongMessageScrollIfNeeded(false);
+    return;
+  }
+
+  scheduleLongMessageScrollIfNeeded(true);
+}
+
+function scheduleLongMessageScrollIfNeeded(rotateAfterDisplay) {
+  const viewport = document.querySelector('#statusMessageViewport');
+  const track = document.querySelector('#statusMessageTrack');
+
+  if (!viewport || !track) {
+    return;
+  }
+
+  const overflowDistance = Math.max(0, track.scrollWidth - viewport.clientWidth);
+
+  if (overflowDistance <= 0) {
+    if (rotateAfterDisplay) {
+      queueSystemMessageTimeout(() => {
+        fadeOutCurrentSystemMessage(() => {
+          const nextID = getNextSystemMessageID();
+          activeSystemMessageID = '';
+
+          if (nextID) {
+            showSystemMessage(nextID);
+          } else {
+            clearSystemMessageDisplay();
+          }
+        });
+      }, MESSAGE_VISIBLE_MS);
+    }
+
+    return;
+  }
+
+  queueSystemMessageTimeout(() => {
+    startLongMessageScroll(overflowDistance, rotateAfterDisplay);
+  }, LONG_MESSAGE_INITIAL_WAIT_MS);
+}
+
+function startLongMessageScroll(overflowDistance, rotateAfterDisplay) {
+  const track = document.querySelector('#statusMessageTrack');
+
+  if (!track || !activeSystemMessageID || !systemMessages.has(activeSystemMessageID)) {
+    return;
+  }
+
+  const durationSeconds = Math.max(
+    4,
+    Math.ceil(overflowDistance / LONG_MESSAGE_SCROLL_PIXELS_PER_SECOND)
+  );
+
+  track.style.setProperty('--long-scroll-distance', `${overflowDistance}px`);
+  track.style.setProperty('--long-scroll-duration', `${durationSeconds}s`);
+  track.classList.add('long-scroll');
+
+  track.addEventListener(
+    'animationend',
+    () => {
+      track.classList.remove('long-scroll');
+      track.style.transform = `translateX(-${overflowDistance}px) translateY(-50%)`;
+
+      if (rotateAfterDisplay) {
+        queueSystemMessageTimeout(() => {
+          fadeOutCurrentSystemMessage(() => {
+            const nextID = getNextSystemMessageID();
+            activeSystemMessageID = '';
+
+            if (nextID) {
+              showSystemMessage(nextID);
+            } else {
+              clearSystemMessageDisplay();
+            }
+          });
+        }, MESSAGE_VISIBLE_MS);
+
+        return;
+      }
+
+      queueSystemMessageTimeout(() => {
+        restartSingleLongMessageScroll();
+      }, LONG_MESSAGE_REPEAT_WAIT_MS);
+    },
+    { once: true }
+  );
+}
+
+function restartSingleLongMessageScroll() {
+  const viewport = document.querySelector('#statusMessageViewport');
+  const track = document.querySelector('#statusMessageTrack');
+
+  if (!viewport || !track || !activeSystemMessageID || !systemMessages.has(activeSystemMessageID)) {
+    return;
+  }
+
+  const ids = getSystemMessageIDs();
+
+  if (ids.length !== 1) {
+    requestSystemMessageDisplayUpdate();
+    return;
+  }
+
+  track.classList.remove('long-scroll');
+  track.style.removeProperty('--long-scroll-distance');
+  track.style.removeProperty('--long-scroll-duration');
+  track.style.transform = 'translateX(0) translateY(-50%)';
+
+  const overflowDistance = Math.max(0, track.scrollWidth - viewport.clientWidth);
+
+  if (overflowDistance <= 0) {
+    return;
+  }
+
+  queueSystemMessageTimeout(() => {
+    startLongMessageScroll(overflowDistance, false);
+  }, LONG_MESSAGE_INITIAL_WAIT_MS);
+}
+
+function fadeOutCurrentSystemMessage(callback) {
+  const track = document.querySelector('#statusMessageTrack');
+
+  clearSystemMessageTimeouts();
+
+  if (!track || !systemMessageDisplayActive) {
+    if (typeof callback === 'function') {
+      callback();
+    }
+
+    return;
+  }
+
+  systemMessageIsTransitioning = true;
+
+  track.classList.remove('fade-in', 'long-scroll');
+  track.style.setProperty('--message-fade-duration', `${MESSAGE_FADE_MS}ms`);
+  track.classList.add('fade-out');
+
+  track.addEventListener(
+    'animationend',
+    () => {
+      track.classList.remove('fade-out');
+      track.style.opacity = '0';
+      track.style.transform = 'translateX(0) translateY(-50%)';
+      systemMessageDisplayActive = false;
+      systemMessageIsTransitioning = false;
+
+      if (typeof callback === 'function') {
+        callback();
+      }
+    },
+    { once: true }
+  );
+}
+
+function clearSystemMessageDisplay() {
+  const track = document.querySelector('#statusMessageTrack');
+
+  clearSystemMessageTimeouts();
+
+  activeSystemMessageID = '';
+  systemMessageDisplayActive = false;
+  systemMessageIsTransitioning = false;
+
+  if (track) {
+    track.classList.remove('fade-in', 'fade-out', 'long-scroll');
+    track.style.removeProperty('--message-fade-duration');
+    track.style.removeProperty('--long-scroll-distance');
+    track.style.removeProperty('--long-scroll-duration');
+    track.style.opacity = '0';
+    track.style.transform = 'translateX(0) translateY(-50%)';
+    track.textContent = '';
+  }
+}
+
+function queueSystemMessageTimeout(callback, delay) {
+  const timer = window.setTimeout(() => {
+    systemMessageTimeouts = systemMessageTimeouts.filter((item) => item !== timer);
+    callback();
+  }, delay);
+
+  systemMessageTimeouts.push(timer);
+}
+
+function clearSystemMessageTimeouts() {
+  for (const timer of systemMessageTimeouts) {
+    window.clearTimeout(timer);
+  }
+
+  systemMessageTimeouts = [];
+}
+
+function recalculateCurrentSystemMessage() {
+  if (!systemMessageDisplayActive || systemMessageIsTransitioning || !activeSystemMessageID) {
+    return;
+  }
+
+  const currentID = activeSystemMessageID;
+
+  clearSystemMessageTimeouts();
+
+  showSystemMessage(currentID);
+}
+
+function updateStatusDot() {
   const dot = document.querySelector('#statusDot');
   if (!dot) {
     return;
   }
 
-  dot.classList.toggle('connected', Boolean(connected));
-  dot.title = connected ? 'Status: Connected' : 'Status: Ready';
+  dot.classList.remove('status-red', 'status-yellow', 'status-green');
+
+  if (!socket?.connected) {
+    dot.classList.add('status-red');
+    dot.title = 'Websocket not connected';
+    return;
+  }
+
+  if (!isAuthenticatedSession()) {
+    dot.classList.add('status-yellow');
+    dot.title = 'Websocket connected. User is not authenticated.';
+    return;
+  }
+
+  dot.classList.add('status-green');
+  dot.title = `Websocket connected. Authenticated as ${getDisplayName()}.`;
 }
 
 function wireGuildSyncEvents() {
   EventsOn('guildsync-login-complete', (session) => {
     guildSyncSession = session || { logged_in: false, allowed: false };
+
     renderDiscordArea();
-    setStatus(guildSyncSession.status_message || 'Logged in and authorized.');
+
+    addSystemMessage(
+      'auth',
+      guildSyncSession.status_message || `Logged in and authorized as ${getDisplayName()}.`,
+      {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      }
+    );
+
     connectSocket();
   });
 
@@ -267,30 +826,139 @@ function wireGuildSyncEvents() {
     guildSyncSession = {
       logged_in: false,
       allowed: false,
-      status_message: message || 'Access denied.'
+      status_message: ''
     };
+
     renderDiscordArea();
-    setStatus(guildSyncSession.status_message);
-    disconnectSocket();
+
+    addSystemMessage('auth', message || 'Access denied.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
+    connectSocket();
   });
 
   EventsOn('guildsync-login-failed', (message) => {
     guildSyncSession = {
       logged_in: false,
       allowed: false,
-      status_message: message || 'Login failed.'
+      status_message: ''
     };
+
     renderDiscordArea();
-    setStatus(guildSyncSession.status_message);
-    disconnectSocket();
+
+    addSystemMessage('auth', message || 'Login failed.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
+    connectSocket();
   });
+}
+
+function isAuthenticatedSession() {
+  return Boolean(guildSyncSession?.logged_in && guildSyncSession?.allowed && guildSyncSession?.token);
+}
+
+function getDisplayName() {
+  return guildSyncSession.user?.display_name || guildSyncSession.user?.username || 'Discord User';
+}
+
+function getAvatarURL(user) {
+  if (!user) {
+    return '';
+  }
+
+  if (user.avatar_url) {
+    return user.avatar_url;
+  }
+
+  const avatar = String(user.avatar || '').trim();
+  const discordUserID = String(user.discord_user_id || '').trim();
+
+  if (!avatar || !discordUserID) {
+    return '';
+  }
+
+  if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
+    return avatar;
+  }
+
+  const extension = avatar.startsWith('a_') ? 'gif' : 'png';
+
+  return `https://cdn.discordapp.com/avatars/${encodeURIComponent(discordUserID)}/${encodeURIComponent(avatar)}.${extension}?size=128`;
+}
+
+function getInitials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return 'GS';
+  }
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function formatRank(rank) {
+  return String(rank || 'member')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function startWindowResizeObserver() {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+
+  const target = document.querySelector('.main-window') || document.querySelector('#app');
+
+  if (!target || typeof ResizeObserver === 'undefined') {
+    return;
+  }
+
+  let lastWidth = Math.round(target.getBoundingClientRect().width);
+  let lastHeight = Math.round(target.getBoundingClientRect().height);
+
+  resizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+
+    if (!entry) {
+      return;
+    }
+
+    const width = Math.round(entry.contentRect.width);
+    const height = Math.round(entry.contentRect.height);
+
+    if (width === lastWidth && height === lastHeight) {
+      return;
+    }
+
+    lastWidth = width;
+    lastHeight = height;
+
+    debounceSaveWindowState();
+    recalculateCurrentSystemMessage();
+  });
+
+  resizeObserver.observe(target);
 }
 
 function debounceSaveWindowState() {
   clearTimeout(saveTimer);
 
   saveTimer = setTimeout(async () => {
-    await SaveWindowState();
+    try {
+      await SaveWindowState();
+    } catch {
+      // Ignore resize-save failures.
+    }
   }, 500);
 }
 
@@ -315,6 +983,9 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function escapeAttribute(value) {
+  return escapeHtml(value);
+}
+
 wireGuildSyncEvents();
 showSplash();
-

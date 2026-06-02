@@ -12,6 +12,8 @@ export function HideToTray():Promise<void>;
 
 export function LogoutGuildSync():Promise<main.GuildSyncSession>;
 
+export function MaximizeWindow():Promise<void>;
+
 export function MinimizeWindow():Promise<void>;
 
 export function QuitFromTray():Promise<void>;
@@ -20,6 +22,6 @@ export function SaveWindowState():Promise<void>;
 
 export function ShowFromTray():Promise<void>;
 
-export function ShowMainWindow():Promise<void>;
+export function ShowMainWindow():Promise<boolean>;
 
 export function StartDiscordLogin():Promise<main.GuildSyncSession>;
