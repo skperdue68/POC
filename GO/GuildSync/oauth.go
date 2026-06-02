@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -21,56 +22,10 @@ import (
 )
 
 const (
-	discordAPIBase      = "https://discord.com/api/v10"
 	discordAuthorizeURL = "https://discord.com/oauth2/authorize"
 	defaultRedirectURI  = "http://127.0.0.1:53682/callback"
+	defaultAuthServer   = "http://127.0.0.1:3001"
 )
-
-type DiscordOAuthConfig struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	RedirectURI  string `json:"redirect_uri"`
-}
-
-type DiscordTokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
-	RefreshToken string `json:"refresh_token"`
-	Scope        string `json:"scope"`
-}
-
-type DiscordUser struct {
-	ID            string `json:"id"`
-	Username      string `json:"username"`
-	Discriminator string `json:"discriminator"`
-	GlobalName    string `json:"global_name"`
-	Avatar        string `json:"avatar"`
-	Email         string `json:"email"`
-	Verified      bool   `json:"verified"`
-}
-
-type DiscordSession struct {
-	LoggedIn       bool        `json:"logged_in"`
-	User           DiscordUser `json:"user"`
-	AccessToken    string      `json:"access_token,omitempty"`
-	RefreshToken   string      `json:"refresh_token,omitempty"`
-	TokenType      string      `json:"token_type,omitempty"`
-	Scope          string      `json:"scope,omitempty"`
-	ExpiresAt      time.Time   `json:"expires_at,omitempty"`
-	LastLoginAt    time.Time   `json:"last_login_at,omitempty"`
-	StatusMessage  string      `json:"status_message,omitempty"`
-	AccessTokenSet bool        `json:"access_token_set"`
-}
-
-type PublicDiscordSession struct {
-	LoggedIn      bool        `json:"logged_in"`
-	User          DiscordUser `json:"user"`
-	Scope         string      `json:"scope,omitempty"`
-	ExpiresAt     time.Time   `json:"expires_at,omitempty"`
-	LastLoginAt   time.Time   `json:"last_login_at,omitempty"`
-	StatusMessage string      `json:"status_message,omitempty"`
-}
 
 type oauthRuntimeState struct {
 	mu     sync.Mutex
@@ -78,60 +33,157 @@ type oauthRuntimeState struct {
 	server *http.Server
 }
 
-func (a *App) StartDiscordLogin() (PublicDiscordSession, error) {
-	cfg, err := loadDiscordOAuthConfig()
+type GuildSyncClientConfig struct {
+	DiscordClientID string `json:"discord_client_id"`
+	RedirectURI     string `json:"redirect_uri"`
+	AuthServerURL   string `json:"auth_server_url"`
+	SocketURL       string `json:"socket_url"`
+}
+
+/*
+These defaults are safe to bundle into the desktop app.
+
+DO put these in the desktop app:
+- Discord Client ID
+- Redirect URI
+- Auth server URL
+- Socket URL
+
+DO NOT put these in the desktop app:
+- Discord Client Secret
+- GuildSync JWT secret
+- Database passwords
+- Admin keys
+
+The optional guildsync-client.json file can still override these values
+for development/testing.
+*/
+var defaultGuildSyncClientConfig = GuildSyncClientConfig{
+	DiscordClientID: "1511276915309281370",
+	RedirectURI:     defaultRedirectURI,
+	AuthServerURL:   defaultAuthServer,
+	SocketURL:       defaultAuthServer,
+}
+
+type GuildSyncUser struct {
+	DiscordUserID string `json:"discord_user_id"`
+	Username      string `json:"username"`
+	DisplayName   string `json:"display_name"`
+	Avatar        string `json:"avatar"`
+	Email         string `json:"email,omitempty"`
+	Role          string `json:"role"`
+}
+
+type GuildSyncSession struct {
+	LoggedIn      bool          `json:"logged_in"`
+	Allowed       bool          `json:"allowed"`
+	Token         string        `json:"token,omitempty"`
+	ExpiresAt     time.Time     `json:"expires_at,omitempty"`
+	User          GuildSyncUser `json:"user"`
+	SocketURL     string        `json:"socket_url"`
+	AuthServerURL string        `json:"auth_server_url"`
+	StatusMessage string        `json:"status_message"`
+}
+
+type desktopTokenRequest struct {
+	Code        string `json:"code"`
+	RedirectURI string `json:"redirect_uri"`
+}
+
+type desktopTokenResponse struct {
+	OK        bool          `json:"ok"`
+	Allowed   bool          `json:"allowed"`
+	Token     string        `json:"token"`
+	ExpiresAt time.Time     `json:"expires_at"`
+	User      GuildSyncUser `json:"user"`
+	Message   string        `json:"message"`
+	Error     string        `json:"error"`
+}
+
+func (a *App) StartDiscordLogin() (GuildSyncSession, error) {
+	cfg, err := LoadGuildSyncClientConfig()
 	if err != nil {
-		return PublicDiscordSession{}, err
+		return GuildSyncSession{}, err
 	}
 
 	state, err := randomState()
 	if err != nil {
-		return PublicDiscordSession{}, err
+		return GuildSyncSession{}, err
 	}
 
 	if err := a.startDiscordCallbackServer(cfg, state); err != nil {
-		return PublicDiscordSession{}, err
+		return GuildSyncSession{}, err
 	}
 
 	params := url.Values{}
 	params.Set("response_type", "code")
-	params.Set("client_id", cfg.ClientID)
+	params.Set("client_id", cfg.DiscordClientID)
 	params.Set("redirect_uri", cfg.RedirectURI)
 	params.Set("scope", "identify email")
 	params.Set("state", state)
 	params.Set("prompt", "consent")
 
-	authURL := discordAuthorizeURL + "?" + params.Encode()
-	runtime.BrowserOpenURL(a.ctx, authURL)
+	runtime.BrowserOpenURL(a.ctx, discordAuthorizeURL+"?"+params.Encode())
 
-	return PublicDiscordSession{
+	return GuildSyncSession{
 		LoggedIn:      false,
+		Allowed:       false,
+		SocketURL:     cfg.SocketURL,
+		AuthServerURL: cfg.AuthServerURL,
 		StatusMessage: "Discord login opened in your browser.",
 	}, nil
 }
 
-func (a *App) GetDiscordSession() (PublicDiscordSession, error) {
-	session, err := loadDiscordSession()
+func (a *App) GetGuildSyncSession() (GuildSyncSession, error) {
+	session, err := loadGuildSyncSession()
 	if err != nil {
-		return PublicDiscordSession{LoggedIn: false}, nil
+		cfg, _ := LoadGuildSyncClientConfig()
+
+		return GuildSyncSession{
+			LoggedIn:      false,
+			Allowed:       false,
+			SocketURL:     cfg.SocketURL,
+			AuthServerURL: cfg.AuthServerURL,
+			StatusMessage: "Not logged in.",
+		}, nil
 	}
 
-	return session.public(), nil
+	if session.ExpiresAt.Before(time.Now()) {
+		_ = DeleteGuildSyncSession()
+
+		cfg, _ := LoadGuildSyncClientConfig()
+
+		return GuildSyncSession{
+			LoggedIn:      false,
+			Allowed:       false,
+			SocketURL:     cfg.SocketURL,
+			AuthServerURL: cfg.AuthServerURL,
+			StatusMessage: "Session expired. Please log in again.",
+		}, nil
+	}
+
+	return session, nil
 }
 
-func (a *App) LogoutDiscord() (PublicDiscordSession, error) {
-	path, err := getDiscordSessionPath()
-	if err == nil {
-		_ = os.Remove(path)
-	}
+func (a *App) LogoutGuildSync() (GuildSyncSession, error) {
+	_ = DeleteGuildSyncSession()
 
-	return PublicDiscordSession{
+	cfg, _ := LoadGuildSyncClientConfig()
+
+	return GuildSyncSession{
 		LoggedIn:      false,
-		StatusMessage: "Logged out of Discord.",
+		Allowed:       false,
+		SocketURL:     cfg.SocketURL,
+		AuthServerURL: cfg.AuthServerURL,
+		StatusMessage: "Logged out.",
 	}, nil
 }
 
-func (a *App) startDiscordCallbackServer(cfg DiscordOAuthConfig, expectedState string) error {
+func (a *App) GetGuildSyncClientConfig() (GuildSyncClientConfig, error) {
+	return LoadGuildSyncClientConfig()
+}
+
+func (a *App) startDiscordCallbackServer(cfg GuildSyncClientConfig, expectedState string) error {
 	if a.oauth == nil {
 		a.oauth = &oauthRuntimeState{}
 	}
@@ -174,55 +226,101 @@ func (a *App) startDiscordCallbackServer(cfg DiscordOAuthConfig, expectedState s
 		errorText := r.URL.Query().Get("error")
 
 		if errorText != "" {
-			http.Error(w, "Discord login was cancelled or denied.", http.StatusBadRequest)
-			a.emitDiscordLoginFailed("Discord login was cancelled or denied.")
-			go a.stopDiscordCallbackServerSoon()
+			a.finishOAuthWithError(w, "Discord login was cancelled or denied.")
 			return
 		}
 
 		if code == "" {
-			http.Error(w, "missing Discord authorization code", http.StatusBadRequest)
-			a.emitDiscordLoginFailed("Discord did not return an authorization code.")
-			go a.stopDiscordCallbackServerSoon()
+			a.finishOAuthWithError(w, "Discord did not return an authorization code.")
 			return
 		}
 
 		if returnedState == "" || returnedState != expectedState {
-			http.Error(w, "invalid Discord OAuth state", http.StatusBadRequest)
-			a.emitDiscordLoginFailed("Discord login failed because the security state did not match.")
-			go a.stopDiscordCallbackServerSoon()
+			a.finishOAuthWithError(w, "Discord login failed because the security state did not match.")
 			return
 		}
 
-		session, err := completeDiscordLogin(cfg, code)
+		session, err := exchangeCodeWithGuildSyncServer(cfg, code)
 		if err != nil {
-			http.Error(w, "Discord login failed. You may close this tab and return to GuildSync.", http.StatusInternalServerError)
-			a.emitDiscordLoginFailed(err.Error())
-			go a.stopDiscordCallbackServerSoon()
+			a.finishOAuthWithError(w, err.Error())
 			return
 		}
 
-		if err := saveDiscordSession(session); err != nil {
-			http.Error(w, "Discord login worked, but GuildSync could not save the session.", http.StatusInternalServerError)
-			a.emitDiscordLoginFailed(err.Error())
-			go a.stopDiscordCallbackServerSoon()
+		if !session.Allowed {
+			a.finishOAuthWithDenied(w, session.StatusMessage)
+			return
+		}
+
+		if err := saveGuildSyncSession(session); err != nil {
+			a.finishOAuthWithError(w, "Login worked, but GuildSync could not save the session: "+err.Error())
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, `<!doctype html><html><head><title>GuildSync Discord Login</title></head><body style="font-family:Segoe UI,Arial,sans-serif;background:#0F172A;color:#E5E7EB;text-align:center;padding-top:80px;"><h1>Discord login complete</h1><p>You can close this browser tab and return to GuildSync.</p></body></html>`)
-
-		runtime.EventsEmit(a.ctx, "discord-login-complete", session.public())
+		_, _ = io.WriteString(
+			w,
+			htmlResultPage(
+				"GuildSync login complete",
+				"You are authenticated and approved to use GuildSync.",
+				"You can close this browser tab and return to GuildSync.",
+				"success",
+			),
+		)
+		runtime.EventsEmit(a.ctx, "guildsync-login-complete", session)
 		go a.stopDiscordCallbackServerSoon()
 	})
 
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			runtime.EventsEmit(a.ctx, "discord-login-failed", err.Error())
+			runtime.EventsEmit(a.ctx, "guildsync-login-failed", err.Error())
 		}
 	}()
 
 	return nil
+}
+
+func (a *App) finishOAuthWithError(w http.ResponseWriter, message string) {
+	if message == "" {
+		message = "GuildSync could not complete Discord login."
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+
+	_, _ = io.WriteString(
+		w,
+		htmlResultPage(
+			"GuildSync login issue",
+			message,
+			"You can close this browser tab and return to GuildSync.",
+			"error",
+		),
+	)
+
+	runtime.EventsEmit(a.ctx, "guildsync-login-failed", message)
+	go a.stopDiscordCallbackServerSoon()
+}
+
+func (a *App) finishOAuthWithDenied(w http.ResponseWriter, message string) {
+	if message == "" {
+		message = "Your Discord account was authenticated, but access to GuildSync is pending approval."
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+
+	_, _ = io.WriteString(
+		w,
+		htmlResultPage(
+			"GuildSync access pending",
+			message,
+			"Your access request has been recorded. You can close this browser tab and return to GuildSync.",
+			"pending",
+		),
+	)
+
+	runtime.EventsEmit(a.ctx, "guildsync-login-denied", message)
+	go a.stopDiscordCallbackServerSoon()
 }
 
 func (a *App) stopDiscordCallbackServerSoon() {
@@ -244,194 +342,195 @@ func (a *App) stopDiscordCallbackServerSoon() {
 	}
 }
 
-func (a *App) emitDiscordLoginFailed(message string) {
-	runtime.EventsEmit(a.ctx, "discord-login-failed", message)
-}
-
-func completeDiscordLogin(cfg DiscordOAuthConfig, code string) (DiscordSession, error) {
-	token, err := exchangeDiscordCode(cfg, code)
-	if err != nil {
-		return DiscordSession{}, err
+func exchangeCodeWithGuildSyncServer(cfg GuildSyncClientConfig, code string) (GuildSyncSession, error) {
+	payload := desktopTokenRequest{
+		Code:        code,
+		RedirectURI: cfg.RedirectURI,
 	}
 
-	user, err := fetchDiscordUser(token.AccessToken)
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return DiscordSession{}, err
+		return GuildSyncSession{}, err
 	}
 
-	now := time.Now()
+	endpoint := strings.TrimRight(cfg.AuthServerURL, "/") + "/api/auth/discord/desktop-token"
 
-	return DiscordSession{
-		LoggedIn:       true,
-		User:           user,
-		AccessToken:    token.AccessToken,
-		RefreshToken:   token.RefreshToken,
-		TokenType:      token.TokenType,
-		Scope:          token.Scope,
-		ExpiresAt:      now.Add(time.Duration(token.ExpiresIn) * time.Second),
-		LastLoginAt:    now,
-		StatusMessage:  "Logged in with Discord.",
-		AccessTokenSet: token.AccessToken != "",
-	}, nil
-}
-
-func exchangeDiscordCode(cfg DiscordOAuthConfig, code string) (DiscordTokenResponse, error) {
-	form := url.Values{}
-	form.Set("client_id", cfg.ClientID)
-	form.Set("client_secret", cfg.ClientSecret)
-	form.Set("grant_type", "authorization_code")
-	form.Set("code", code)
-	form.Set("redirect_uri", cfg.RedirectURI)
-
-	req, err := http.NewRequest(http.MethodPost, discordAPIBase+"/oauth2/token", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return DiscordTokenResponse{}, err
+		return GuildSyncSession{}, err
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 
-	client := http.Client{Timeout: 15 * time.Second}
+	client := http.Client{
+		Timeout: 20 * time.Second,
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return DiscordTokenResponse{}, fmt.Errorf("could not contact Discord token endpoint: %w", err)
+		return GuildSyncSession{}, fmt.Errorf("could not contact GuildSync auth server at %s: %w", cfg.AuthServerURL, err)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return DiscordTokenResponse{}, fmt.Errorf("Discord token exchange failed: %s", string(body))
+	var tokenResp desktopTokenResponse
+	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+		return GuildSyncSession{}, fmt.Errorf("GuildSync auth server returned an invalid response: %s", string(respBody))
 	}
 
-	var token DiscordTokenResponse
-	if err := json.Unmarshal(body, &token); err != nil {
-		return DiscordTokenResponse{}, err
+	if resp.StatusCode < 200 || resp.StatusCode > 299 || !tokenResp.OK {
+		if tokenResp.Error != "" {
+			return GuildSyncSession{}, errors.New(tokenResp.Error)
+		}
+
+		if tokenResp.Message != "" {
+			return GuildSyncSession{}, errors.New(tokenResp.Message)
+		}
+
+		return GuildSyncSession{}, fmt.Errorf("GuildSync auth server rejected login: %s", string(respBody))
 	}
 
-	if token.AccessToken == "" {
-		return DiscordTokenResponse{}, errors.New("Discord did not return an access token")
+	session := GuildSyncSession{
+		LoggedIn:      tokenResp.Allowed && tokenResp.Token != "",
+		Allowed:       tokenResp.Allowed,
+		Token:         tokenResp.Token,
+		ExpiresAt:     tokenResp.ExpiresAt,
+		User:          tokenResp.User,
+		SocketURL:     cfg.SocketURL,
+		AuthServerURL: cfg.AuthServerURL,
+		StatusMessage: tokenResp.Message,
 	}
 
-	return token, nil
+	if session.StatusMessage == "" && session.Allowed {
+		session.StatusMessage = "Logged in and authorized."
+	}
+
+	return session, nil
 }
 
-func fetchDiscordUser(accessToken string) (DiscordUser, error) {
-	req, err := http.NewRequest(http.MethodGet, discordAPIBase+"/users/@me", nil)
-	if err != nil {
-		return DiscordUser{}, err
+func LoadGuildSyncClientConfig() (GuildSyncClientConfig, error) {
+	// 1. Start with safe built-in defaults.
+	cfg := defaultGuildSyncClientConfig
+
+	// 2. Environment variables may override the built-in defaults.
+	// These are useful while developing.
+	if value := strings.TrimSpace(os.Getenv("GUILDSYNC_DISCORD_CLIENT_ID")); value != "" {
+		cfg.DiscordClientID = value
 	}
 
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	client := http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return DiscordUser{}, fmt.Errorf("could not contact Discord user endpoint: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return DiscordUser{}, fmt.Errorf("Discord user lookup failed: %s", string(body))
+	if value := strings.TrimSpace(os.Getenv("GUILDSYNC_DISCORD_REDIRECT_URI")); value != "" {
+		cfg.RedirectURI = value
 	}
 
-	var user DiscordUser
-	if err := json.Unmarshal(body, &user); err != nil {
-		return DiscordUser{}, err
+	if value := strings.TrimSpace(os.Getenv("GUILDSYNC_AUTH_SERVER_URL")); value != "" {
+		cfg.AuthServerURL = value
 	}
 
-	return user, nil
-}
-
-func loadDiscordOAuthConfig() (DiscordOAuthConfig, error) {
-	cfg := DiscordOAuthConfig{
-		ClientID:     strings.TrimSpace(os.Getenv("GUILDSYNC_DISCORD_CLIENT_ID")),
-		ClientSecret: strings.TrimSpace(os.Getenv("GUILDSYNC_DISCORD_CLIENT_SECRET")),
-		RedirectURI:  strings.TrimSpace(os.Getenv("GUILDSYNC_DISCORD_REDIRECT_URI")),
+	if value := strings.TrimSpace(os.Getenv("GUILDSYNC_SOCKET_URL")); value != "" {
+		cfg.SocketURL = value
 	}
 
-	if cfg.RedirectURI == "" {
-		cfg.RedirectURI = defaultRedirectURI
+	// 3. The optional config file may override both defaults and env vars.
+	// This file is no longer required, but it is still useful for testing.
+	fileCfg, err := loadGuildSyncClientConfigFile()
+	if err == nil {
+		if strings.TrimSpace(fileCfg.DiscordClientID) != "" {
+			cfg.DiscordClientID = strings.TrimSpace(fileCfg.DiscordClientID)
+		}
+
+		if strings.TrimSpace(fileCfg.RedirectURI) != "" {
+			cfg.RedirectURI = strings.TrimSpace(fileCfg.RedirectURI)
+		}
+
+		if strings.TrimSpace(fileCfg.AuthServerURL) != "" {
+			cfg.AuthServerURL = strings.TrimSpace(fileCfg.AuthServerURL)
+		}
+
+		if strings.TrimSpace(fileCfg.SocketURL) != "" {
+			cfg.SocketURL = strings.TrimSpace(fileCfg.SocketURL)
+		}
 	}
 
-	fileCfg, _ := loadDiscordOAuthConfigFile()
-
-	if cfg.ClientID == "" {
-		cfg.ClientID = fileCfg.ClientID
-	}
-
-	if cfg.ClientSecret == "" {
-		cfg.ClientSecret = fileCfg.ClientSecret
-	}
-
-	if strings.TrimSpace(os.Getenv("GUILDSYNC_DISCORD_REDIRECT_URI")) == "" && fileCfg.RedirectURI != "" {
-		cfg.RedirectURI = fileCfg.RedirectURI
-	}
-
-	cfg.ClientID = strings.TrimSpace(cfg.ClientID)
-	cfg.ClientSecret = strings.TrimSpace(cfg.ClientSecret)
+	cfg.DiscordClientID = strings.TrimSpace(cfg.DiscordClientID)
 	cfg.RedirectURI = strings.TrimSpace(cfg.RedirectURI)
+	cfg.AuthServerURL = strings.TrimSpace(cfg.AuthServerURL)
+	cfg.SocketURL = strings.TrimSpace(cfg.SocketURL)
 
-	if cfg.ClientID == "" {
-		return DiscordOAuthConfig{}, errors.New("missing Discord client ID. Set GUILDSYNC_DISCORD_CLIENT_ID or create discord-oauth.json")
+	if cfg.SocketURL == "" {
+		cfg.SocketURL = cfg.AuthServerURL
 	}
 
-	if cfg.ClientSecret == "" {
-		return DiscordOAuthConfig{}, errors.New("missing Discord client secret. Set GUILDSYNC_DISCORD_CLIENT_SECRET or create discord-oauth.json")
+	if cfg.DiscordClientID == "" || cfg.DiscordClientID == "PASTE_YOUR_DISCORD_CLIENT_ID_HERE" {
+		return cfg, errors.New("missing Discord client ID. Set it in defaultGuildSyncClientConfig, GUILDSYNC_DISCORD_CLIENT_ID, or guildsync-client.json")
 	}
 
 	if cfg.RedirectURI == "" {
-		cfg.RedirectURI = defaultRedirectURI
+		return cfg, errors.New("missing Discord redirect URI")
 	}
 
-	redirectURL, err := url.Parse(cfg.RedirectURI)
-	if err != nil || redirectURL.Scheme == "" || redirectURL.Host == "" || redirectURL.Path == "" {
-		return DiscordOAuthConfig{}, errors.New("invalid Discord redirect URI")
+	if cfg.AuthServerURL == "" {
+		return cfg, errors.New("missing GuildSync auth server URL")
+	}
+
+	if cfg.SocketURL == "" {
+		return cfg, errors.New("missing GuildSync socket URL")
+	}
+
+	if _, err := url.ParseRequestURI(cfg.RedirectURI); err != nil {
+		return cfg, fmt.Errorf("invalid redirect URI: %w", err)
+	}
+
+	if _, err := url.ParseRequestURI(cfg.AuthServerURL); err != nil {
+		return cfg, fmt.Errorf("invalid GuildSync auth server URL: %w", err)
+	}
+
+	if _, err := url.ParseRequestURI(cfg.SocketURL); err != nil {
+		return cfg, fmt.Errorf("invalid GuildSync socket URL: %w", err)
 	}
 
 	return cfg, nil
 }
 
-func loadDiscordOAuthConfigFile() (DiscordOAuthConfig, error) {
-	path, err := getDiscordOAuthConfigPath()
+func loadGuildSyncClientConfigFile() (GuildSyncClientConfig, error) {
+	path, err := getGuildSyncClientConfigPath()
 	if err != nil {
-		return DiscordOAuthConfig{}, err
+		return GuildSyncClientConfig{}, err
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return DiscordOAuthConfig{}, err
+		return GuildSyncClientConfig{}, err
 	}
 
-	var cfg DiscordOAuthConfig
+	var cfg GuildSyncClientConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return DiscordOAuthConfig{}, err
+		return GuildSyncClientConfig{}, err
 	}
 
 	return cfg, nil
 }
 
-func getDiscordOAuthConfigPath() (string, error) {
+func getGuildSyncClientConfigPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Join(configDir, "GuildSync", "discord-oauth.json"), nil
+	return filepath.Join(configDir, "GuildSync", "guildsync-client.json"), nil
 }
 
-func getDiscordSessionPath() (string, error) {
+func getGuildSyncSessionPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Join(configDir, "GuildSync", "discord-session.json"), nil
+	return filepath.Join(configDir, "GuildSync", "guildsync-session.json"), nil
 }
 
-func saveDiscordSession(session DiscordSession) error {
-	path, err := getDiscordSessionPath()
+func saveGuildSyncSession(session GuildSyncSession) error {
+	path, err := getGuildSyncSessionPath()
 	if err != nil {
 		return err
 	}
@@ -448,38 +547,33 @@ func saveDiscordSession(session DiscordSession) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-func loadDiscordSession() (DiscordSession, error) {
-	path, err := getDiscordSessionPath()
+func loadGuildSyncSession() (GuildSyncSession, error) {
+	path, err := getGuildSyncSessionPath()
 	if err != nil {
-		return DiscordSession{}, err
+		return GuildSyncSession{}, err
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return DiscordSession{}, err
+		return GuildSyncSession{}, err
 	}
 
-	var session DiscordSession
+	var session GuildSyncSession
 	if err := json.Unmarshal(data, &session); err != nil {
-		return DiscordSession{}, err
-	}
-
-	if session.ExpiresAt.Before(time.Now()) {
-		return DiscordSession{}, errors.New("Discord session expired")
+		return GuildSyncSession{}, err
 	}
 
 	return session, nil
 }
 
-func (s DiscordSession) public() PublicDiscordSession {
-	return PublicDiscordSession{
-		LoggedIn:      s.LoggedIn,
-		User:          s.User,
-		Scope:         s.Scope,
-		ExpiresAt:     s.ExpiresAt,
-		LastLoginAt:   s.LastLoginAt,
-		StatusMessage: s.StatusMessage,
+func DeleteGuildSyncSession() error {
+	path, err := getGuildSyncSessionPath()
+	if err != nil {
+		return err
 	}
+
+	_ = os.Remove(path)
+	return nil
 }
 
 func randomState() (string, error) {
@@ -490,4 +584,60 @@ func randomState() (string, error) {
 	}
 
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func htmlResultPage(title string, message string, subMessage string, pageType string) string {
+	accentColor := "#22c55e"
+	badgeText := "Authenticated"
+
+	if pageType == "pending" {
+		accentColor = "#f59e0b"
+		badgeText = "Pending Approval"
+	}
+
+	if pageType == "error" {
+		accentColor = "#ef4444"
+		badgeText = "Login Issue"
+	}
+
+	return `<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>` + htmlEscape(title) + `</title>
+</head>
+<body style="margin:0;min-height:100vh;font-family:Segoe UI,Arial,sans-serif;background:linear-gradient(180deg,#0F172A 0%,#111C3D 100%);color:#E5E7EB;display:flex;align-items:center;justify-content:center;">
+	<div style="width:min(560px,calc(100vw - 40px));background:rgba(15,23,42,0.82);border:1px solid rgba(255,255,255,0.14);border-radius:24px;box-shadow:0 24px 80px rgba(0,0,0,0.45);padding:42px 38px;text-align:center;">
+		<div style="width:72px;height:72px;border-radius:999px;margin:0 auto 24px auto;background:` + accentColor + `22;border:1px solid ` + accentColor + `66;display:flex;align-items:center;justify-content:center;box-shadow:0 0 30px ` + accentColor + `33;">
+			<div style="width:28px;height:28px;border-radius:999px;background:` + accentColor + `;box-shadow:0 0 18px ` + accentColor + `99;"></div>
+		</div>
+
+		<div style="display:inline-flex;align-items:center;justify-content:center;padding:7px 13px;border-radius:999px;background:` + accentColor + `22;color:` + accentColor + `;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:18px;">
+			` + htmlEscape(badgeText) + `
+		</div>
+
+		<h1 style="margin:0 0 14px 0;font-size:30px;line-height:1.2;font-weight:700;color:#F8FAFC;">
+			` + htmlEscape(title) + `
+		</h1>
+
+		<p style="margin:0 auto 18px auto;max-width:460px;font-size:16px;line-height:1.55;color:#CBD5E1;">
+			` + htmlEscape(message) + `
+		</p>
+
+		<p style="margin:0 auto;max-width:460px;font-size:14px;line-height:1.5;color:#94A3B8;">
+			` + htmlEscape(subMessage) + `
+		</p>
+	</div>
+</body>
+</html>`
+}
+
+func htmlEscape(value string) string {
+	value = strings.ReplaceAll(value, "&", "&amp;")
+	value = strings.ReplaceAll(value, "<", "&lt;")
+	value = strings.ReplaceAll(value, ">", "&gt;")
+	value = strings.ReplaceAll(value, `"`, "&quot;")
+
+	return value
 }

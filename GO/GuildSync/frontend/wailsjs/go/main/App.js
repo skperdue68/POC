@@ -6,16 +6,20 @@ export function CloseWindow() {
   return window['go']['main']['App']['CloseWindow']();
 }
 
-export function GetDiscordSession() {
-  return window['go']['main']['App']['GetDiscordSession']();
+export function GetGuildSyncClientConfig() {
+  return window['go']['main']['App']['GetGuildSyncClientConfig']();
+}
+
+export function GetGuildSyncSession() {
+  return window['go']['main']['App']['GetGuildSyncSession']();
 }
 
 export function HideToTray() {
   return window['go']['main']['App']['HideToTray']();
 }
 
-export function LogoutDiscord() {
-  return window['go']['main']['App']['LogoutDiscord']();
+export function LogoutGuildSync() {
+  return window['go']['main']['App']['LogoutGuildSync']();
 }
 
 export function MinimizeWindow() {

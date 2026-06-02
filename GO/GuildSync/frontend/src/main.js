@@ -1,121 +1,111 @@
 import './style.css';
+import splashImage from './assets/splash.png';
+import appIcon from './assets/icon.png';
+import guildSyncLogo from './assets/GuildSync-LogoH.png';
+import { io } from 'socket.io-client';
 
 import {
-  CloseWindow,
-  GetDiscordSession,
-  LogoutDiscord,
-  MinimizeWindow,
-  SaveWindowState,
   ShowMainWindow,
-  StartDiscordLogin
+  SaveWindowState,
+  MinimizeWindow,
+  CloseWindow,
+  StartDiscordLogin,
+  GetGuildSyncSession,
+  LogoutGuildSync
 } from '../wailsjs/go/main/App';
 
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
-import guildSyncLogo from './assets/guildsync-logo.png';
-import splashImage from './assets/splash.png';
-
-const SPLASH_DURATION_MS = 3000;
-const VERSION_TEXT = 'Version 1.0.1';
+const app = document.querySelector('#app');
 
 let saveTimer = null;
 let resizeHandlerAttached = false;
-let discordSession = {
-  logged_in: false
+let guildSyncSession = {
+  logged_in: false,
+  allowed: false,
+  status_message: 'Not logged in.'
 };
+let socket = null;
 
-async function showSplash() {
-  document.querySelector('#app').innerHTML = `
-    <div class="splash-screen">
-      <img class="splash-image" src="${splashImage}" alt="GuildSync loading" />
-    </div>
+function showSplash() {
+  app.innerHTML = `
+    <main class="splash-screen">
+      <img src="${splashImage}" alt="GuildSync Splash" class="splash-image" />
+    </main>
   `;
 
   setTimeout(async () => {
     await ShowMainWindow();
-    await loadDiscordSession();
+    await loadExistingSession();
     showMainWindow();
-  }, SPLASH_DURATION_MS);
+  }, 5000);
 }
 
-async function loadDiscordSession() {
+async function loadExistingSession() {
   try {
-    discordSession = await GetDiscordSession();
-  } catch {
-    discordSession = {
-      logged_in: false
+    guildSyncSession = await GetGuildSyncSession();
+    if (guildSyncSession?.logged_in && guildSyncSession?.allowed && guildSyncSession?.token) {
+      connectSocket();
+    }
+  } catch (error) {
+    guildSyncSession = {
+      logged_in: false,
+      allowed: false,
+      status_message: formatError(error)
     };
   }
 }
 
-async function startDiscordLogin() {
-  try {
-    setDiscordStatus('Opening Discord login...');
-    const result = await StartDiscordLogin();
-
-    if (result?.status_message) {
-      setDiscordStatus(result.status_message);
-    }
-  } catch (error) {
-    setDiscordStatus(formatError(error));
-  }
-}
-
-async function logoutDiscord() {
-  try {
-    discordSession = await LogoutDiscord();
-    showMainWindow();
-  } catch (error) {
-    setDiscordStatus(formatError(error));
-  }
-}
-
 function showMainWindow() {
-  document.querySelector('#app').innerHTML = `
-    <div class="main-window">
+  app.innerHTML = `
+    <main class="main-window">
       <header class="title-bar">
         <div class="title-bar-drag-region">
-          <img class="title-icon" src="${guildSyncLogo}" alt="" />
+          <img src="${appIcon}" alt="" class="title-icon" />
           <span class="app-title">GuildSync</span>
         </div>
 
         <div class="window-buttons">
-          <button id="minimizeButton" class="window-button" type="button" aria-label="Minimize">−</button>
-          <button id="maximizeButton" class="window-button" type="button" aria-label="Maximize">□</button>
-          <button id="closeButton" class="window-button close-button" type="button" aria-label="Close">×</button>
+          <button id="minimizeButton" class="window-button" title="Minimize">−</button>
+          <button id="maximizeButton" class="window-button" title="Maximize">□</button>
+          <button id="closeButton" class="window-button close-button" title="Close to tray">×</button>
         </div>
       </header>
 
-      <main class="main-surface">
-        <section class="top-strip">
+      <section class="main-surface">
+        <div class="top-strip">
           <div class="top-strip-spacer"></div>
           <div id="discordArea" class="discord-area"></div>
-        </section>
+        </div>
 
-        <section class="brand-wrap" aria-label="GuildSync">
-          <img class="brand-logo" src="${guildSyncLogo}" alt="GuildSync" />
-        </section>
+        <div class="brand-wrap">
+          <img src="${guildSyncLogo}" alt="GuildSync" class="brand-logo" />
+        </div>
 
-        <div class="version-footer-text">${VERSION_TEXT}</div>
+        <div class="version-footer-text">Version 1.0.1</div>
 
         <footer class="status-bar">
-          <div id="statusMessage" class="status-message">
-            ${escapeHtml(discordSession?.status_message || 'Ready')}
-          </div>
+          <div id="statusMessage" class="status-message">${escapeHtml(getStatusText())}</div>
           <div class="status-spacer"></div>
-          <div class="status-dot" title="Ready"></div>
+          <div id="statusDot" class="status-dot ${socket?.connected ? 'connected' : ''}" title="Status: ${socket?.connected ? 'Connected' : 'Ready'}"></div>
         </footer>
-      </main>
-    </div>
+      </section>
+    </main>
   `;
 
   document
     .querySelector('#minimizeButton')
-    .addEventListener('click', MinimizeWindow);
+    .addEventListener('click', async () => {
+      await SaveWindowState();
+      await MinimizeWindow();
+    });
 
   document
     .querySelector('#closeButton')
-    .addEventListener('click', CloseWindow);
+    .addEventListener('click', async () => {
+      await SaveWindowState();
+      await CloseWindow();
+    });
 
   // Visual only for now, per your request.
   document
@@ -138,8 +128,8 @@ function renderDiscordArea() {
     return;
   }
 
-  if (discordSession?.logged_in) {
-    const displayName = discordSession.user?.global_name || discordSession.user?.username || 'Discord User';
+  if (guildSyncSession?.logged_in && guildSyncSession?.allowed) {
+    const displayName = guildSyncSession.user?.display_name || guildSyncSession.user?.username || 'Discord User';
     area.innerHTML = `
       <div class="discord-welcome-wrap">
         <div class="discord-welcome-text">Welcome ${escapeHtml(displayName)}</div>
@@ -149,7 +139,7 @@ function renderDiscordArea() {
 
     document
       .querySelector('#discordLogoutButton')
-      .addEventListener('click', logoutDiscord);
+      .addEventListener('click', logoutGuildSync);
 
     return;
   }
@@ -170,9 +160,78 @@ function renderDiscordArea() {
     .addEventListener('click', startDiscordLogin);
 }
 
-function setDiscordStatus(message) {
-  discordSession = {
-    ...discordSession,
+async function startDiscordLogin() {
+  try {
+    setStatus('Opening Discord login...');
+    const result = await StartDiscordLogin();
+    if (result?.status_message) {
+      setStatus(result.status_message);
+    }
+  } catch (error) {
+    setStatus(formatError(error));
+  }
+}
+
+async function logoutGuildSync() {
+  try {
+    disconnectSocket();
+    guildSyncSession = await LogoutGuildSync();
+    showMainWindow();
+  } catch (error) {
+    setStatus(formatError(error));
+  }
+}
+
+function connectSocket() {
+  if (!guildSyncSession?.token) {
+    setStatus('Cannot connect websocket: no GuildSync token.');
+    return;
+  }
+
+  const socketURL = guildSyncSession.socket_url || 'http://127.0.0.1:3001';
+
+  disconnectSocket();
+
+  socket = io(socketURL, {
+    transports: ['websocket', 'polling'],
+    auth: {
+      token: guildSyncSession.token
+    }
+  });
+
+  socket.on('connect', () => {
+    setStatus(`Websocket connected as ${guildSyncSession.user?.display_name || guildSyncSession.user?.username || 'Discord User'}.`);
+    updateStatusDot(true);
+  });
+
+  socket.on('connect_error', (error) => {
+    setStatus(`Websocket authorization failed: ${error.message}`);
+    updateStatusDot(false);
+  });
+
+  socket.on('disconnect', (reason) => {
+    setStatus(`Websocket disconnected: ${reason}`);
+    updateStatusDot(false);
+  });
+
+  socket.on('guildsync:server-message', (payload) => {
+    if (payload?.message) {
+      setStatus(payload.message);
+    }
+  });
+}
+
+function disconnectSocket() {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  updateStatusDot(false);
+}
+
+function setStatus(message) {
+  guildSyncSession = {
+    ...guildSyncSession,
     status_message: message
   };
 
@@ -182,16 +241,48 @@ function setDiscordStatus(message) {
   }
 }
 
-function wireDiscordEvents() {
-  EventsOn('discord-login-complete', (session) => {
-    discordSession = session || { logged_in: false };
-    setDiscordStatus(discordSession.status_message || 'Logged in with Discord.');
+function getStatusText() {
+  return guildSyncSession?.status_message || 'Ready';
+}
+
+function updateStatusDot(connected) {
+  const dot = document.querySelector('#statusDot');
+  if (!dot) {
+    return;
+  }
+
+  dot.classList.toggle('connected', Boolean(connected));
+  dot.title = connected ? 'Status: Connected' : 'Status: Ready';
+}
+
+function wireGuildSyncEvents() {
+  EventsOn('guildsync-login-complete', (session) => {
+    guildSyncSession = session || { logged_in: false, allowed: false };
     renderDiscordArea();
+    setStatus(guildSyncSession.status_message || 'Logged in and authorized.');
+    connectSocket();
   });
 
-  EventsOn('discord-login-failed', (message) => {
-    setDiscordStatus(message || 'Discord login failed.');
+  EventsOn('guildsync-login-denied', (message) => {
+    guildSyncSession = {
+      logged_in: false,
+      allowed: false,
+      status_message: message || 'Access denied.'
+    };
     renderDiscordArea();
+    setStatus(guildSyncSession.status_message);
+    disconnectSocket();
+  });
+
+  EventsOn('guildsync-login-failed', (message) => {
+    guildSyncSession = {
+      logged_in: false,
+      allowed: false,
+      status_message: message || 'Login failed.'
+    };
+    renderDiscordArea();
+    setStatus(guildSyncSession.status_message);
+    disconnectSocket();
   });
 }
 
@@ -205,7 +296,7 @@ function debounceSaveWindowState() {
 
 function formatError(error) {
   if (!error) {
-    return 'Unknown Discord login error.';
+    return 'Unknown error.';
   }
 
   if (typeof error === 'string') {
@@ -224,5 +315,6 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-wireDiscordEvents();
+wireGuildSyncEvents();
 showSplash();
+

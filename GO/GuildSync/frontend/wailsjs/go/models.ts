@@ -1,50 +1,69 @@
 export namespace main {
 	
-	export class DiscordUser {
-	    id: string;
-	    username: string;
-	    discriminator: string;
-	    global_name: string;
-	    avatar: string;
-	    email: string;
-	    verified: boolean;
+	export class GuildSyncClientConfig {
+	    discord_client_id: string;
+	    redirect_uri: string;
+	    auth_server_url: string;
+	    socket_url: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new DiscordUser(source);
+	        return new GuildSyncClientConfig(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.username = source["username"];
-	        this.discriminator = source["discriminator"];
-	        this.global_name = source["global_name"];
-	        this.avatar = source["avatar"];
-	        this.email = source["email"];
-	        this.verified = source["verified"];
+	        this.discord_client_id = source["discord_client_id"];
+	        this.redirect_uri = source["redirect_uri"];
+	        this.auth_server_url = source["auth_server_url"];
+	        this.socket_url = source["socket_url"];
 	    }
 	}
-	export class PublicDiscordSession {
-	    logged_in: boolean;
-	    user: DiscordUser;
-	    scope?: string;
-	    // Go type: time
-	    expires_at?: any;
-	    // Go type: time
-	    last_login_at?: any;
-	    status_message?: string;
+	export class GuildSyncUser {
+	    discord_user_id: string;
+	    username: string;
+	    display_name: string;
+	    avatar: string;
+	    email?: string;
+	    role: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new PublicDiscordSession(source);
+	        return new GuildSyncUser(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.discord_user_id = source["discord_user_id"];
+	        this.username = source["username"];
+	        this.display_name = source["display_name"];
+	        this.avatar = source["avatar"];
+	        this.email = source["email"];
+	        this.role = source["role"];
+	    }
+	}
+	export class GuildSyncSession {
+	    logged_in: boolean;
+	    allowed: boolean;
+	    token?: string;
+	    // Go type: time
+	    expires_at?: any;
+	    user: GuildSyncUser;
+	    socket_url: string;
+	    auth_server_url: string;
+	    status_message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuildSyncSession(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.logged_in = source["logged_in"];
-	        this.user = this.convertValues(source["user"], DiscordUser);
-	        this.scope = source["scope"];
+	        this.allowed = source["allowed"];
+	        this.token = source["token"];
 	        this.expires_at = this.convertValues(source["expires_at"], null);
-	        this.last_login_at = this.convertValues(source["last_login_at"], null);
+	        this.user = this.convertValues(source["user"], GuildSyncUser);
+	        this.socket_url = source["socket_url"];
+	        this.auth_server_url = source["auth_server_url"];
 	        this.status_message = source["status_message"];
 	    }
 	
