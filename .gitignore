@@ -1,0 +1,28 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs / env
+*.log
+.env
+.env.*
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Wails / Go build output
+GO/GuildSync/build/bin/
+GO/GuildSync/frontend/dist/
+GO/GuildSync/frontend/node_modules/
+GO/Filewatcher/*.exe
+
+# Go
+*.exe
+*.test
+*.out
+coverage.out

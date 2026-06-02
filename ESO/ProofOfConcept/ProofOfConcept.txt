@@ -1,0 +1,9 @@
+## Title: ProofOfConcept
+## APIVersion: 101047 101048 101049 101050
+## Version: 1.0.0
+## Author: @YourAccountName
+## SavedVariables: ProofOfConcept
+
+## DependsOn: LibHistoire
+
+ProofOfConcept.lua
