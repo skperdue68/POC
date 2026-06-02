@@ -4,11 +4,13 @@ import {main} from '../models';
 
 export function CloseWindow():Promise<void>;
 
-export function GetDiscordSession():Promise<main.PublicDiscordSession>;
+export function GetGuildSyncClientConfig():Promise<main.GuildSyncClientConfig>;
+
+export function GetGuildSyncSession():Promise<main.GuildSyncSession>;
 
 export function HideToTray():Promise<void>;
 
-export function LogoutDiscord():Promise<main.PublicDiscordSession>;
+export function LogoutGuildSync():Promise<main.GuildSyncSession>;
 
 export function MinimizeWindow():Promise<void>;
 
@@ -20,4 +22,4 @@ export function ShowFromTray():Promise<void>;
 
 export function ShowMainWindow():Promise<void>;
 
-export function StartDiscordLogin():Promise<main.PublicDiscordSession>;
+export function StartDiscordLogin():Promise<main.GuildSyncSession>;
