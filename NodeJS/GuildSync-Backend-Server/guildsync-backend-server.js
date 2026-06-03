@@ -9,13 +9,14 @@ import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 
 import {
-  openLoginDatabase,
+  GUILDSYNC_LOGIN_DB_PATH,
+  openLoginDB,
   upsertLoginUser,
-  openAppDataDatabase,
+
+  GUILDSYNC_APPDATA_DB_PATH,
+  openApplicationDB,
   processDiscordRolesPayload,
-  LOGIN_DB_PATH,
-  GUILDSYNC_DB_PATH,
-} from './database.js';
+} from './guildsync-database-actions.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,16 +56,6 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-app.get('/health', (req, res) => {
-  res.json({
-    ok: true,
-    service: 'GuildSync Auth Server',
-    host: HOST,
-    port: PORT,
-    current_client_version: CURRENT_GUILDSYNC_CLIENT_VERSION
-  });
-});
-
 app.post('/api/auth/discord/desktop-token', async (req, res) => {
   try {
     const { code, redirect_uri: redirectURI } = req.body || {};
@@ -94,6 +85,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
         user: {
           discord_user_id: dbUser.discord_user_id,
           username: dbUser.username,
+          global_name: dbUser.global_name,
           display_name: preferredUserName(dbUser),
           avatar: dbUser.avatar,
           avatar_url: discordAvatarURL(dbUser.discord_user_id, dbUser.avatar),
@@ -106,6 +98,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
     const guildSyncUser = {
       discord_user_id: dbUser.discord_user_id,
       username: dbUser.username,
+      global_name: dbUser.global_name,
       display_name: preferredUserName(dbUser),
       avatar: dbUser.avatar || '',
       avatar_url: discordAvatarURL(dbUser.discord_user_id, dbUser.avatar),
@@ -119,7 +112,8 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
       {
         sub: guildSyncUser.discord_user_id,
         username: guildSyncUser.username,
-        display_name: guildSyncUser.display_name,
+        gobal_name: guildSyncUser.global_name,
+        display_name: preferredUserName(dbUser),
         avatar_url: guildSyncUser.avatar_url,
         role: guildSyncUser.role
       },
@@ -149,6 +143,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
   }
 });
 
+// Authentication Middleware
 io.use((socket, next) => {
   const auth = socket.handshake.auth || {};
   const token = auth.token;
@@ -193,7 +188,7 @@ io.use((socket, next) => {
     });
 
     socket.guildSyncAuthenticated = true;
-    socket.guildSyncAuthType = 'desktop-user';
+    socket.guildSyncAuthType = 'GuildSync user';
     socket.guildSyncUser = {
       discord_user_id: claims.sub,
       username: claims.username,
@@ -212,15 +207,15 @@ io.on('connection', (socket) => {
   const user = socket.guildSyncUser;
 
   if (socket.guildSyncAuthType === 'discord-bot') {
-    console.log(`Socket connected: ${socket.id} Discord bot`);
+    console.log(`Connection: ${socket.id} => Discord bot`);
   } else if (socket.guildSyncAuthenticated && user) {
-    console.log(`Socket connected: ${socket.id} ${user.display_name} (${user.discord_user_id})`);
+    console.log(`Connection: ${socket.id} => ${user.display_name} (${user.discord_user_id}) GuildSync User`);
   } else {
-    console.log(`Socket connected: ${socket.id} unauthenticated`);
+    console.log(`Connection: ${socket.id} => Unauthenticated`);
   }
 
 
-  socket.on('guildsync:discord-roles', (payload = {}, callback) => {
+  socket.on('guildsync:sending-discord-roles', (payload = {}, callback) => {
     if (socket.guildSyncAuthType !== 'discord-bot') {
       const response = {
         ok: false,
@@ -238,7 +233,7 @@ io.on('connection', (socket) => {
     }
 
     try {
-      const result = processDiscordRolesPayload(db2, payload);
+      const result = processDiscordRolesPayload(applicationDB, payload);
 
       console.log(
         `Received Discord roles: ${result.roles_processed} role(s) processed.`
@@ -273,9 +268,6 @@ io.on('connection', (socket) => {
     }
   });
 
-
-
-
   socket.on('guildsync:client-version', (payload = {}) => {
     const clientVersion = String(payload.version || '').trim();
     const updateRequired = isVersionLower(clientVersion, CURRENT_GUILDSYNC_CLIENT_VERSION);
@@ -291,33 +283,16 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('guildsync:ping', (payload, callback) => {
-    const response = {
-      ok: true,
-      message: 'pong',
-      received: payload || null,
-      authenticated: Boolean(socket.guildSyncAuthenticated),
-      user: user || null,
-      at: new Date().toISOString()
-    };
-
-    if (typeof callback === 'function') {
-      callback(response);
-    } else {
-      socket.emit('guildsync:pong', response);
-    }
-  });
-
   socket.on('disconnect', (reason) => {
     let name = 'unauthenticated';
 
     if (socket.guildSyncAuthType === 'discord-bot') {
-      name = 'Discord bot';
+      name = 'Discord Bot';
     } else if (user?.display_name) {
-      name = user.display_name;
+      name = user.display_name + ' GuildSync User';
     }
 
-    console.log(`Socket disconnected: ${socket.id} ${name} ${reason}`);
+    console.log(`Disconnected: ${socket.id} => ${name} ${reason}`);
   });
 });
 
@@ -391,7 +366,7 @@ function toGuildSyncUser(discordUser, allowedUser) {
   return {
     discord_user_id: discordUser.id,
     username: discordUser.username,
-    display_name: discordUser.global_name || discordUser.username,
+    global_name: discordUser.global_name,
     avatar: discordUser.avatar || '',
     avatar_url: discordAvatarURL(discordUser.id, discordUser.avatar),
     email: discordUser.email || '',
@@ -417,14 +392,14 @@ function discordAvatarURL(discordUserID, avatarHash) {
 }
 
 function preferredUserName(user) {
-  const guildMemberName = String(user.guild_member_name || '').trim();
-  if (guildMemberName) {
-    return guildMemberName;
+  const guild_member_name = String(user.guild_member_name || '').trim();
+  if (guild_member_name) {
+    return guild_member_name;
   }
 
-  const displayName = String(user.display_name || '').trim();
-  if (displayName) {
-    return displayName;
+  const global_name = String(user.global_name || '').trim();
+  if (global_name) {
+    return global_name;
   }
 
   const username = String(user.username || '').trim();
