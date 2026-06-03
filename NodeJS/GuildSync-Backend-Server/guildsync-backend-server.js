@@ -9,9 +9,12 @@ import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 
 import {
-  openDatabase,
-  upsertDiscordUser,
-  DB_PATH
+  openLoginDatabase,
+  upsertLoginUser,
+  openAppDataDatabase,
+  processDiscordRolesPayload,
+  LOGIN_DB_PATH,
+  GUILDSYNC_DB_PATH,
 } from './database.js';
 
 
@@ -27,13 +30,18 @@ const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'http://127.0.0
 const GUILDSYNC_JWT_SECRET = requiredEnv('GUILDSYNC_JWT_SECRET');
 const GUILDSYNC_TOKEN_TTL_SECONDS = Number(process.env.GUILDSYNC_TOKEN_TTL_SECONDS || 86400);
 
+const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
+
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
 
 
-const db = openDatabase();
+const db = openLoginDatabase();
 
-console.log(`SQLite database ready: ${DB_PATH}`);
+console.log(`SQLite database ready: ${LOGIN_DB_PATH}`);
 
+const db2 = openAppDataDatabase();
+
+console.log(`SQLite database ready: ${GUILDSYNC_DB_PATH}`)
 
 const app = express();
 const server = http.createServer(app);
@@ -76,7 +84,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
 
     const discordToken = await exchangeCodeWithDiscord(code, effectiveRedirectURI);
     const discordUser = await fetchDiscordUser(discordToken.access_token);
-    const dbUser = upsertDiscordUser(db, discordUser);
+    const dbUser = upsertLoginUser(db, discordUser);
 
     if (!dbUser.allowed) {
       return res.status(403).json({
@@ -142,10 +150,38 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
 });
 
 io.use((socket, next) => {
-  const token = socket.handshake.auth?.token;
+  const auth = socket.handshake.auth || {};
+  const token = auth.token;
+
+  socket.guildSyncAuthenticated = false;
+  socket.guildSyncAuthType = 'anonymous';
+  socket.guildSyncUser = null;
+  socket.guildSyncBot = null;
+
+  if (auth.source === 'discord-bot') {
+    const botKey = String(auth.botKey || '').trim();
+
+    if (!botKey) {
+      return next(new Error('Missing GuildSync bot socket key.'));
+    }
+
+    if (botKey !== GUILDSYNC_BOT_SOCKET_KEY) {
+      return next(new Error('Invalid GuildSync bot socket key.'));
+    }
+
+    socket.guildSyncAuthenticated = true;
+    socket.guildSyncAuthType = 'discord-bot';
+    socket.guildSyncBot = {
+      source: 'discord-bot',
+      connected_at: new Date().toISOString()
+    };
+
+    return next();
+  }
 
   if (!token) {
     socket.guildSyncAuthenticated = false;
+    socket.guildSyncAuthType = 'anonymous';
     socket.guildSyncUser = null;
     return next();
   }
@@ -157,6 +193,7 @@ io.use((socket, next) => {
     });
 
     socket.guildSyncAuthenticated = true;
+    socket.guildSyncAuthType = 'desktop-user';
     socket.guildSyncUser = {
       discord_user_id: claims.sub,
       username: claims.username,
@@ -174,11 +211,70 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const user = socket.guildSyncUser;
 
-  if (socket.guildSyncAuthenticated && user) {
+  if (socket.guildSyncAuthType === 'discord-bot') {
+    console.log(`Socket connected: ${socket.id} Discord bot`);
+  } else if (socket.guildSyncAuthenticated && user) {
     console.log(`Socket connected: ${socket.id} ${user.display_name} (${user.discord_user_id})`);
   } else {
     console.log(`Socket connected: ${socket.id} unauthenticated`);
   }
+
+
+  socket.on('guildsync:discord-roles', (payload = {}, callback) => {
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        error: 'Only the authenticated Discord bot can send Discord roles.',
+        at: new Date().toISOString()
+      };
+
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-roles-result', response);
+      }
+
+      return;
+    }
+
+    try {
+      const result = processDiscordRolesPayload(db2, payload);
+
+      console.log(
+        `Received Discord roles: ${result.roles_processed} role(s) processed.`
+      );
+
+      const response = {
+        ok: true,
+        message: 'Discord roles received and saved.',
+        roles_processed: result.roles_processed,
+        at: new Date().toISOString()
+      };
+
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-roles-result', response);
+      }
+    } catch (error) {
+      console.error('Failed to process guildsync:discord-roles payload:', error);
+
+      const response = {
+        ok: false,
+        error: error.message || 'Failed to process Discord roles payload.',
+        at: new Date().toISOString()
+      };
+
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-roles-result', response);
+      }
+    }
+  });
+
+
+
 
   socket.on('guildsync:client-version', (payload = {}) => {
     const clientVersion = String(payload.version || '').trim();
@@ -213,7 +309,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', (reason) => {
-    const name = user?.display_name || 'unauthenticated';
+    let name = 'unauthenticated';
+
+    if (socket.guildSyncAuthType === 'discord-bot') {
+      name = 'Discord bot';
+    } else if (user?.display_name) {
+      name = user.display_name;
+    }
+
     console.log(`Socket disconnected: ${socket.id} ${name} ${reason}`);
   });
 });

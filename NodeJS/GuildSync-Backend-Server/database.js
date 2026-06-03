@@ -7,12 +7,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-export const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'guildsync.db');
+export const LOGIN_DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'guildsyncloginusers.db');
+export const GUILDSYNC_DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'guildsyncappdata.db');
 
-export function openDatabase() {
+export function openLoginDatabase() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  const db = new Database(DB_PATH);
+  const db = new Database(LOGIN_DB_PATH);
 
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
@@ -44,7 +45,7 @@ export function openDatabase() {
   return db;
 }
 
-export function upsertDiscordUser(db, discordUser) {
+export function upsertLoginUser(db, discordUser) {
   const now = new Date().toISOString();
 
   const existing = db.prepare(`
@@ -145,4 +146,81 @@ export function denyUser(db, discordUserId) {
   `).run(now, discordUserId);
 
   return result.changes > 0;
+}
+
+export function processDiscordRolesPayload(db2, payload) {
+  const roles = Array.isArray(payload.roles) ? payload.roles : [];
+
+  const upsertRole = db2.prepare(`INSERT INTO roles (role_id, role_name) VALUES (@role_id, @role_name) ON CONFLICT(role_id) DO UPDATE SET role_name = excluded.role_name`);
+
+  const transaction = db2.transaction(() => {
+    for (const role of roles) {
+      const roleID = String(role.role_id || role.id || '').trim();
+      const roleName = String(role.role_name || role.name || '').trim();
+
+      if (!roleID) {
+        continue;
+      }
+
+      upsertRole.run({
+        role_id: roleID,
+        role_name: roleName || 'Unnamed Role'
+      });
+    }
+  });
+
+  transaction();
+  ensureRoleColumnsOnMembersTable(db2, roles);
+
+  return {
+    roles_processed: roles.length
+  };
+}
+
+export function openAppDataDatabase() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+
+  const db2 = new Database(GUILDSYNC_DB_PATH);
+
+  db2.pragma('journal_mode = WAL');
+  db2.pragma('busy_timeout = 5000');
+  db2.pragma('foreign_keys = ON');
+
+  db2.exec(`
+    CREATE TABLE IF NOT EXISTS roles (role_id TEXT PRIMARY KEY, role_name TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS discordMembers (discord_id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT, server_nickname TEXT);
+    CREATE INDEX IF NOT EXISTS idx_roles ON roles (role_name);
+    CREATE INDEX IF NOT EXISTS idx_discord_members ON discordMembers (username);
+  `);
+
+  return db2;
+}
+
+export function upsertDiscordRoles(db2, role) {
+  const existing = db.prepare(`SELECT * FROM roles WHERE role_id = ?`).get(role.id);
+  if (!existing) {
+    db2.prepare(`INSERT INTO roles (role_id, role_name) VALUES (?, ?)`).run(role.id, role.name);
+    return db2.prepare(`SELECT * FROM roles WHERE role_id = ? `).get(role.id);
+  } else {
+    db2.prepare(`UPDATE roles SET role_name = ? WHERE role_id = ? `).run(role.name, role.id);
+    return db2.prepare(`SELECT * FROM roles WHERE role_id = ?`).get(role.id);
+  }
+}
+
+function ensureRoleColumnsOnMembersTable(db2, roles) {
+  const existingColumns = db2.prepare(`PRAGMA table_info(discordMembers)`).all().map(column => column.name);
+  const existingColumnSet = new Set(existingColumns);
+  for (const role of roles) {
+    const columnName = 'r_' + `${role.role_id}`;
+    if (!existingColumnSet.has(columnName)) {
+      db2.prepare(`ALTER TABLE discordMembers ADD COLUMN ${quoteIdentifier(columnName)} BOOLEAN NOT NULL DEFAULT 0`).run();
+      existingColumnSet.add(columnName);
+    }
+  }
+
+  return db2;
+}
+
+function quoteIdentifier(identifier) {
+  return `"${String(identifier).replaceAll('"', '""')}"`;
 }
