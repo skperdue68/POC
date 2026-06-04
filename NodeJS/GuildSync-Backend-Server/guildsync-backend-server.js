@@ -218,19 +218,25 @@ io.on('connection', (socket) => {
 
 
   socket.on('guildsync:sending-discord-roles', (payload = {}, callback) => {
-    // Only the Discord bot can send the roles
     if (socket.guildSyncAuthType !== 'discord-bot') {
       const response = {
         ok: false,
         message: 'Only the authenticated Discord bot can send Discord roles.',
         at: new Date().toLocaleString()
       };
-      socket.emit('guildsync:discord-roles-result', response);
+
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-roles-result', response);
+      }
+
       return;
     }
 
     try {
       const result = upsertDiscordRoles(applicationDB, payload);
+
       console.log(
         `Received Discord roles: ${result.roles_processed} role(s) processed.`
       );
@@ -241,9 +247,14 @@ io.on('connection', (socket) => {
         roles_processed: result.roles_processed,
         at: new Date().toLocaleString()
       };
-      io.to('GuildSyncDiscordBot').emit('guildsync:discord-roles-result', response);
+
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-roles-result', response);
+      }
     } catch (error) {
-      console.error('Failed to process guildsync:discord-roles payload:', error);
+      console.error('Failed to process guildsync:sending-discord-roles payload:', error);
 
       const response = {
         ok: false,
@@ -251,25 +262,42 @@ io.on('connection', (socket) => {
         at: new Date().toLocaleString()
       };
 
-      socket.emit('guildsync:discord-roles-result', response);
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-roles-result', response);
+      }
     }
   });
+
   socket.on('guildsync:sending-discord-members', (payload = {}, callback) => {
-    // Only the Discord bot can send the members
     if (socket.guildSyncAuthType !== 'discord-bot') {
       const response = {
         ok: false,
         message: 'Only the authenticated Discord bot can send Discord members.',
         at: new Date().toLocaleString()
       };
-      socket.emit('guildsync:discord-members-result', response);
+
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-members-result', response);
+      }
+
       return;
     }
 
     try {
-      const result = upsertDiscordMembers(applicationDB, payload);
+      const members = Array.isArray(payload.members)
+        ? payload.members
+        : Array.isArray(payload)
+          ? payload
+          : [];
+
+      const result = upsertDiscordMembers(applicationDB, members);
+
       console.log(
-        `Received Discord members: ${result.members_processed} member(s) processed. ${result.members_removed} members removed.`
+        `Received Discord members: ${result.members_processed} member(s) processed. ${result.members_removed} member(s) removed.`
       );
 
       const response = {
@@ -279,16 +307,26 @@ io.on('connection', (socket) => {
         members_removed: result.members_removed,
         at: new Date().toLocaleString()
       };
-      socket.emit('guildsync:discord-members-result', response);
+
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-members-result', response);
+      }
     } catch (error) {
-      console.error('Failed to process guildsync:discord-members payload:', error);
+      console.error('Failed to process guildsync:sending-discord-members payload:', error);
 
       const response = {
         ok: false,
         message: error.message || 'Failed to process Discord members payload.',
         at: new Date().toLocaleString()
       };
-      io.to('GuildSyncDiscordBot').emit('guildsync:discord-members-result', response);
+
+      if (typeof callback === 'function') {
+        callback(response);
+      } else {
+        socket.emit('guildsync:discord-members-result', response);
+      }
     }
   });
 

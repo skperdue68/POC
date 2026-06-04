@@ -1,9 +1,9 @@
 import dotenv from 'dotenv';
-import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url'
+import { fileURLToPath } from 'url';
 import { io } from 'socket.io-client';
 import { Log } from './helper.js';
+import { syncDiscordRolesAndMembers } from './discord-sync.js';
 
 import {
   Client,
@@ -25,6 +25,7 @@ dotenv.config({
 
 const {
   DISCORD_TOKEN,
+  DISCORD_GUILD_ID,
   GUILDSYNC_SOCKET_URL,
   GUILDSYNC_BOT_KEY
 } = process.env;
@@ -69,7 +70,7 @@ guildSyncSocket.on('disconnect', reason => {
 });
 
 guildSyncSocket.on('connect_error', error => {
-  console.error('GuildSync websocket connection error:', error.message);
+  Log(`GuildSync websocket connection error: ${error.message}`);
 });
 
 const client = new Client({
@@ -84,15 +85,37 @@ client.commands = new Collection();
 
 const commands = [
   members,
-  roles,
+  roles
 ];
 
 for (const command of commands) {
   client.commands.set(command.data.name, command);
 }
 
-client.once(Events.ClientReady, readyClient => {
+let startupSyncDone = false;
+
+client.once(Events.ClientReady, async readyClient => {
   Log(`GuildSync bot logged in as ${readyClient.user.tag}`);
+
+  if (startupSyncDone) {
+    return;
+  }
+
+  startupSyncDone = true;
+
+  try {
+    Log('Starting automatic Discord role/member sync on bot startup...');
+
+    const guild = await getStartupGuild(readyClient);
+
+    const result = await syncDiscordRolesAndMembers(guild, guildSyncSocket);
+
+    Log(
+      `Automatic startup sync completed. Roles: ${result.roles_processed}, Members: ${result.members_processed}, Removed: ${result.members_removed}`
+    );
+  } catch (error) {
+    Log(`Automatic startup sync failed: ${error.message}`);
+  }
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -105,7 +128,7 @@ client.on(Events.InteractionCreate, async interaction => {
   if (!command) {
     await interaction.reply({
       content: 'Unknown command.',
-      ephemeral: true
+      flags: [MessageFlags.Ephemeral]
     });
     return;
   }
@@ -113,11 +136,11 @@ client.on(Events.InteractionCreate, async interaction => {
   try {
     await command.execute(interaction, guildSyncSocket);
   } catch (error) {
-    console.error(`Error running /${interaction.commandName}:`, error);
+    Log(`Error running /${interaction.commandName}: ${error.message}`);
 
     const message = {
       content: 'There was an error running that command.',
-      ephemeral: true
+      flags: [MessageFlags.Ephemeral]
     };
 
     if (interaction.replied || interaction.deferred) {
@@ -127,6 +150,38 @@ client.on(Events.InteractionCreate, async interaction => {
     }
   }
 });
+
+async function getStartupGuild(discordClient) {
+  if (DISCORD_GUILD_ID) {
+    Log(`Using DISCORD_GUILD_ID from .env: ${DISCORD_GUILD_ID}`);
+
+    return await discordClient.guilds.fetch(DISCORD_GUILD_ID);
+  }
+
+  Log('DISCORD_GUILD_ID not set. Trying to auto-detect Discord server...');
+
+  const guilds = await discordClient.guilds.fetch();
+
+  if (guilds.size === 0) {
+    throw new Error('Discord bot is not in any servers.');
+  }
+
+  if (guilds.size > 1) {
+    const guildList = [...guilds.values()]
+      .map((guild) => `${guild.name} (${guild.id})`)
+      .join(', ');
+
+    throw new Error(
+      `Discord bot is in ${guilds.size} servers. Set DISCORD_GUILD_ID in .env so I know which one to sync. Servers found: ${guildList}`
+    );
+  }
+
+  const guildSummary = guilds.first();
+
+  Log(`Auto-detected Discord server: ${guildSummary.name} (${guildSummary.id})`);
+
+  return await discordClient.guilds.fetch(guildSummary.id);
+}
 
 async function waitForSocketConnection(socket, timeoutMs = 30000) {
   if (socket.connected) {
@@ -145,8 +200,7 @@ async function waitForSocketConnection(socket, timeoutMs = 30000) {
     }
 
     function onConnectError(error) {
-      console.error('GuildSync websocket connection attempt failed:', error.message);
-      // Do not reject here. Socket.IO may retry automatically.
+      Log(`GuildSync websocket connection attempt failed: ${error.message}`);
     }
 
     function cleanup() {
@@ -163,12 +217,11 @@ async function waitForSocketConnection(socket, timeoutMs = 30000) {
 try {
   Log('Waiting for GuildSync websocket connection...');
   await waitForSocketConnection(guildSyncSocket, 30000);
+
   Log('GuildSync websocket connected. Starting Discord bot...');
   await client.login(DISCORD_TOKEN);
 } catch (error) {
-  console.error(error.message);
-  console.error('Discord bot was not started because GuildSync websocket is unavailable.');
+  Log(error.message);
+  Log('Discord bot was not started because GuildSync websocket is unavailable.');
   process.exit(1);
 }
-
-
