@@ -157,3 +157,96 @@ export async function syncDiscordRolesAndMembers(guild, guildSyncSocket) {
     members_removed: memberResults.members_removed
   };
 }
+
+export function discordRoleToPayload(role) {
+  return {
+    role_id: role.id,
+    role_name: role.name,
+    role_color: role.color
+  };
+}
+
+export function discordMemberToPayload(member) {
+  const roles = [];
+
+  for (const role of member.roles.cache.values()) {
+    if (role.id === member.guild.id) {
+      continue; // removes @everyone
+    }
+
+    roles.push(role.id);
+  }
+
+  return {
+    discord_id: member.user.id,
+    avatar: member.user.avatar ?? '',
+    username: member.user.username,
+    global_name: member.user.globalName ?? '',
+    server_nickname: member.nickname ?? '',
+    roles
+  };
+}
+
+export async function sendDiscordRoleUpsert(role, guildSyncSocket) {
+  if (!role || role.id === role.guild.id) {
+    return null;
+  }
+
+  return await emitWithAck(
+    guildSyncSocket,
+    'guildsync:discord-role-upsert',
+    {
+      guild_id: role.guild.id,
+      guild_name: role.guild.name,
+      role: discordRoleToPayload(role)
+    }
+  );
+}
+
+export async function sendDiscordRoleDelete(role, guildSyncSocket) {
+  if (!role || role.id === role.guild.id) {
+    return null;
+  }
+
+  return await emitWithAck(
+    guildSyncSocket,
+    'guildsync:discord-role-delete',
+    {
+      guild_id: role.guild.id,
+      guild_name: role.guild.name,
+      role_id: role.id
+    }
+  );
+}
+
+export async function sendDiscordMemberUpsert(member, guildSyncSocket) {
+  if (!member || member.user?.bot) {
+    return null;
+  }
+
+  return await emitWithAck(
+    guildSyncSocket,
+    'guildsync:discord-member-upsert',
+    {
+      guild_id: member.guild.id,
+      guild_name: member.guild.name,
+      member: discordMemberToPayload(member)
+    }
+  );
+}
+
+export async function sendDiscordMemberDelete(member, guildSyncSocket) {
+  if (!member || member.user?.bot) {
+    return null;
+  }
+
+  return await emitWithAck(
+    guildSyncSocket,
+    'guildsync:discord-member-delete',
+    {
+      guild_id: member.guild.id,
+      guild_name: member.guild.name,
+      discord_id: member.user.id
+    }
+  );
+}

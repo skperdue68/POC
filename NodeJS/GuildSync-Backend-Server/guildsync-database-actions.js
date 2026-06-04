@@ -378,16 +378,200 @@ export async function upsertDiscordMembers(applicationDB, payload) {
     connection.release();
   }
 
-  await setSetting(
-    applicationDB,
-    'discord_refresh',
-    new Date().toISOString()
-  );
+  await setDiscordRefreshNow(applicationDB);
 
   return {
     members_processed: members.length,
     members_removed: membersRemoved,
     member_roles_processed: memberRolesProcessed
+  };
+}
+
+
+export async function upsertDiscordMember(applicationDB, member) {
+  const discordID = String(member?.discord_id || member?.id || '').trim();
+
+  if (!discordID) {
+    return {
+      members_processed: 0,
+      member_roles_processed: 0
+    };
+  }
+
+  const connection = await applicationDB.getConnection();
+  let memberRolesProcessed = 0;
+
+  try {
+    await connection.beginTransaction();
+
+    await connection.execute(
+      `
+        INSERT INTO discordmembers (
+          discord_id,
+          avatar,
+          username,
+          global_name,
+          server_nickname,
+          import_current
+        )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?
+        )
+        ON DUPLICATE KEY UPDATE
+          avatar = VALUES(avatar),
+          username = VALUES(username),
+          global_name = VALUES(global_name),
+          server_nickname = VALUES(server_nickname),
+          import_current = VALUES(import_current)
+      `,
+      [
+        discordID,
+        member.avatar || null,
+        member.username || '',
+        member.global_name || null,
+        member.server_nickname || null,
+        1
+      ]
+    );
+
+    await connection.execute(
+      `
+        DELETE FROM discordmemberroles
+        WHERE discord_id = ?
+      `,
+      [discordID]
+    );
+
+    const roleIDs = getRoleIDsFromMember(member);
+
+    for (const roleID of roleIDs) {
+      await connection.execute(
+        `
+          INSERT IGNORE INTO discordmemberroles (
+            discord_id,
+            role_id
+          )
+          VALUES (
+            ?,
+            ?
+          )
+        `,
+        [
+          discordID,
+          roleID
+        ]
+      );
+
+      memberRolesProcessed += 1;
+    }
+
+    await connection.commit();
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  await setDiscordRefreshNow(applicationDB);
+
+  return {
+    members_processed: 1,
+    member_roles_processed: memberRolesProcessed
+  };
+}
+
+export async function deleteDiscordMember(applicationDB, discordID) {
+  const memberID = String(discordID || '').trim();
+
+  if (!memberID) {
+    return {
+      members_removed: 0
+    };
+  }
+
+  const [result] = await applicationDB.execute(
+    `
+      DELETE FROM discordmembers
+      WHERE discord_id = ?
+    `,
+    [memberID]
+  );
+
+  await setDiscordRefreshNow(applicationDB);
+
+  return {
+    members_removed: result.affectedRows || 0
+  };
+}
+
+export async function upsertDiscordRole(applicationDB, role) {
+  const roleID = String(role?.role_id || role?.id || '').trim();
+  const roleName = String(role?.role_name || role?.name || '').trim();
+  const roleColor = role?.role_color ?? null;
+
+  if (!roleID) {
+    return {
+      roles_processed: 0
+    };
+  }
+
+  await applicationDB.execute(
+    `
+      INSERT INTO discordroles (
+        role_id,
+        role_name,
+        role_color
+      )
+      VALUES (
+        ?,
+        ?,
+        ?
+      )
+      ON DUPLICATE KEY UPDATE
+        role_name = VALUES(role_name),
+        role_color = VALUES(role_color)
+    `,
+    [
+      roleID,
+      roleName || 'Unnamed Role',
+      roleColor
+    ]
+  );
+
+  await setDiscordRefreshNow(applicationDB);
+
+  return {
+    roles_processed: 1
+  };
+}
+
+export async function deleteDiscordRole(applicationDB, roleID) {
+  const discordRoleID = String(roleID || '').trim();
+
+  if (!discordRoleID) {
+    return {
+      roles_removed: 0
+    };
+  }
+
+  const [result] = await applicationDB.execute(
+    `
+      DELETE FROM discordroles
+      WHERE role_id = ?
+    `,
+    [discordRoleID]
+  );
+
+  await setDiscordRefreshNow(applicationDB);
+
+  return {
+    roles_removed: result.affectedRows || 0
   };
 }
 
@@ -510,6 +694,14 @@ function requiredDatabaseEnv(name) {
   }
 
   return value;
+}
+
+async function setDiscordRefreshNow(db) {
+  await setSetting(
+    db,
+    'discord_refresh',
+    new Date().toISOString()
+  );
 }
 
 async function setSetting(db, data, value) {

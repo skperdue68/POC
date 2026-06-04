@@ -3,7 +3,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { io } from 'socket.io-client';
 import { Log } from './helper.js';
-import { syncDiscordRolesAndMembers } from './discord-sync.js';
+import {
+  sendDiscordMemberDelete,
+  sendDiscordMemberUpsert,
+  sendDiscordRoleDelete,
+  sendDiscordRoleUpsert,
+  syncDiscordRolesAndMembers
+} from './discord-sync.js';
 
 import {
   Client,
@@ -193,6 +199,95 @@ client.on(Events.InteractionCreate, async interaction => {
     }
   }
 });
+
+
+client.on(Events.GuildMemberAdd, async member => {
+  await handleDiscordLiveUpdate(
+    `Discord member joined: ${member.user.tag} (${member.user.id})`,
+    async () => await sendDiscordMemberUpsert(member, guildSyncSocket)
+  );
+});
+
+client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
+  await handleDiscordLiveUpdate(
+    `Discord member updated: ${newMember.user.tag} (${newMember.user.id})`,
+    async () => await sendDiscordMemberUpsert(newMember, guildSyncSocket)
+  );
+});
+
+client.on(Events.GuildMemberRemove, async member => {
+  await handleDiscordLiveUpdate(
+    `Discord member left: ${member.user.tag} (${member.user.id})`,
+    async () => await sendDiscordMemberDelete(member, guildSyncSocket)
+  );
+});
+
+
+client.on(Events.UserUpdate, async (oldUser, newUser) => {
+  await handleDiscordLiveUpdate(
+    `Discord user updated: ${newUser.tag} (${newUser.id})`,
+    async () => {
+      const guild = await getStartupGuild(client);
+      const member = await guild.members.fetch(newUser.id).catch(() => null);
+
+      if (!member) {
+        Log(`Discord user updated but is not in sync guild: ${newUser.tag} (${newUser.id})`);
+        return null;
+      }
+
+      return await sendDiscordMemberUpsert(member, guildSyncSocket);
+    }
+  );
+});
+
+client.on(Events.GuildRoleCreate, async role => {
+  await handleDiscordLiveUpdate(
+    `Discord role created: ${role.name} (${role.id})`,
+    async () => await sendDiscordRoleUpsert(role, guildSyncSocket)
+  );
+});
+
+client.on(Events.GuildRoleUpdate, async (oldRole, newRole) => {
+  await handleDiscordLiveUpdate(
+    `Discord role updated: ${newRole.name} (${newRole.id})`,
+    async () => await sendDiscordRoleUpsert(newRole, guildSyncSocket)
+  );
+});
+
+client.on(Events.GuildRoleDelete, async role => {
+  await handleDiscordLiveUpdate(
+    `Discord role deleted: ${role.name} (${role.id})`,
+    async () => await sendDiscordRoleDelete(role, guildSyncSocket)
+  );
+});
+
+
+async function handleDiscordLiveUpdate(description, action) {
+  if (!client.isReady()) {
+    Log(`${description} skipped: Discord client is not ready yet.`);
+    return;
+  }
+
+  if (!guildSyncSocket.connected) {
+    Log(`${description} skipped: GuildSync websocket is not connected.`);
+    return;
+  }
+
+  try {
+    Log(description);
+
+    const result = await action();
+
+    if (result?.ok === false) {
+      throw new Error(result.message || 'GuildSync rejected Discord live update.');
+    }
+
+    Log(`${description} sent to GuildSync.`);
+  } catch (error) {
+    Log(`${description} failed: ${error.message}`);
+  }
+}
+
 
 async function runStartupSyncIfReady(reason) {
   if (startupSyncDone) {

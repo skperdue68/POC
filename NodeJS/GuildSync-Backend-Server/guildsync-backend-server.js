@@ -13,6 +13,10 @@ import {
   openAppDataDB,
   upsertDiscordRoles,
   upsertDiscordMembers,
+  upsertDiscordMember,
+  deleteDiscordMember,
+  upsertDiscordRole,
+  deleteDiscordRole,
   getDiscordDataDate,
   getDiscordMemberDataJSON
 } from './guildsync-database-actions.js';
@@ -318,6 +322,176 @@ io.on('connection', (socket) => {
       sendSocketResponse(socket, 'guildsync:discord-members-result', callback, response);
     }
   });
+
+  socket.on('guildsync:discord-member-upsert', async (payload = {}, callback) => {
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'Only the authenticated Discord bot can upsert Discord members.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-upsert-result', callback, response);
+      return;
+    }
+
+    try {
+      const result = await upsertDiscordMember(applicationDB, payload.member || payload);
+
+      Log(
+        `Discord member upsert received: ${result.members_processed} member(s) processed.`
+      );
+
+      const response = {
+        ok: true,
+        message: 'Discord member saved.',
+        members_processed: result.members_processed,
+        member_roles_processed: result.member_roles_processed,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-upsert-result', callback, response);
+
+      await broadcastDiscordMemberDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:discord-member-upsert payload:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to upsert Discord member.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-upsert-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:discord-member-delete', async (payload = {}, callback) => {
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'Only the authenticated Discord bot can delete Discord members.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-delete-result', callback, response);
+      return;
+    }
+
+    try {
+      const result = await deleteDiscordMember(applicationDB, payload.discord_id || payload.id);
+
+      Log(
+        `Discord member delete received: ${result.members_removed} member(s) removed.`
+      );
+
+      const response = {
+        ok: true,
+        message: 'Discord member deleted.',
+        members_removed: result.members_removed,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-delete-result', callback, response);
+
+      await broadcastDiscordMemberDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:discord-member-delete payload:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to delete Discord member.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-delete-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:discord-role-upsert', async (payload = {}, callback) => {
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'Only the authenticated Discord bot can upsert Discord roles.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-role-upsert-result', callback, response);
+      return;
+    }
+
+    try {
+      const result = await upsertDiscordRole(applicationDB, payload.role || payload);
+
+      Log(
+        `Discord role upsert received: ${result.roles_processed} role(s) processed.`
+      );
+
+      const response = {
+        ok: true,
+        message: 'Discord role saved.',
+        roles_processed: result.roles_processed,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-role-upsert-result', callback, response);
+
+      await broadcastDiscordMemberDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:discord-role-upsert payload:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to upsert Discord role.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-role-upsert-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:discord-role-delete', async (payload = {}, callback) => {
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'Only the authenticated Discord bot can delete Discord roles.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-role-delete-result', callback, response);
+      return;
+    }
+
+    try {
+      const result = await deleteDiscordRole(applicationDB, payload.role_id || payload.id);
+
+      Log(
+        `Discord role delete received: ${result.roles_removed} role(s) removed.`
+      );
+
+      const response = {
+        ok: true,
+        message: 'Discord role deleted.',
+        roles_removed: result.roles_removed,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-role-delete-result', callback, response);
+
+      await broadcastDiscordMemberDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:discord-role-delete payload:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to delete Discord role.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-role-delete-result', callback, response);
+    }
+  });
+
 
   socket.on('guildsync:client-version', (payload = {}) => {
     const clientVersion = String(payload.version || '').trim();
