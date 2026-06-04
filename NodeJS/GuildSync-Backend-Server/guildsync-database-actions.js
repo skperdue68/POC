@@ -349,11 +349,6 @@ export async function upsertDiscordMembers(applicationDB, payload) {
       );
 
       const roleIDs = getRoleIDsFromMember(member);
-      console.log('Member role import:', {
-        discordID,
-        username: member.username,
-        roleIDs
-      });
 
       for (const roleID of roleIDs) {
         await connection.execute(

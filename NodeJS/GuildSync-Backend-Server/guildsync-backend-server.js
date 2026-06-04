@@ -209,6 +209,20 @@ io.on('connection', (socket) => {
 
   const user = socket.guildSyncUser;
 
+  if (socket.guildSyncAuthType !== 'discord-bot') {
+    socket.join('GuildSyncClient');
+
+    if (socket.guildSyncAuthenticated && user) {
+      socket.join('GuildSyncClientAuthenticated');
+
+      if (user.discord_user_id) {
+        socket.join(String(user.discord_user_id));
+      }
+    } else {
+      socket.join('GuildSyncClientUnauthenticated');
+    }
+  }
+
   if (socket.guildSyncAuthType === 'discord-bot') {
     Log(`Connection: ${socket.id} => Discord bot`);
     discordBotConnected = true;
@@ -290,6 +304,8 @@ io.on('connection', (socket) => {
       };
 
       sendSocketResponse(socket, 'guildsync:discord-members-result', callback, response);
+
+      await broadcastDiscordMemberDataUpdate();
     } catch (error) {
       Log('Failed to process guildsync:sending-discord-members payload:', error);
 
@@ -316,6 +332,102 @@ io.on('connection', (socket) => {
         ? `GuildSync ${clientVersion || 'unknown'} is out of date. Latest version is ${CURRENT_GUILDSYNC_CLIENT_VERSION}.`
         : `GuildSync ${clientVersion || 'unknown'} is current.`
     });
+  });
+
+  socket.on('guildsync:request-discord-data-refresh', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to refresh Discord data.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-data-refresh-result', callback, response);
+      return;
+    }
+
+    if (!discordBotSocketId) {
+      const response = {
+        ok: false,
+        message: 'The GuildSync Discord bot is not connected, so Discord data cannot be refreshed.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-data-refresh-result', callback, response);
+      return;
+    }
+
+    const botSocket = io.sockets.sockets.get(discordBotSocketId);
+
+    if (!botSocket?.connected) {
+      discordBotConnected = false;
+      discordBotSocketId = null;
+
+      const response = {
+        ok: false,
+        message: 'The GuildSync Discord bot connection is no longer active.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-data-refresh-result', callback, response);
+      return;
+    }
+
+    try {
+      const requestorName = socket.guildSyncUser.display_name || socket.guildSyncUser.username || socket.guildSyncUser.discord_user_id;
+
+      Log(
+        `Discord data refresh requested by ${requestorName}. Forwarding request to Discord bot.`
+      );
+
+      emitDiscordRefreshStatus(
+        `Discord data refresh requested by ${requestorName}. Waiting for the Discord bot to sync roles and members.`
+      );
+
+      const botResponse = await emitToSocketWithAck(
+        botSocket,
+        'guildsync:request-discord-sync',
+        {
+          requested_by: socket.guildSyncUser.discord_user_id,
+          requested_by_name: socket.guildSyncUser.display_name || socket.guildSyncUser.username || '',
+          requested_at: new Date().toISOString()
+        },
+        180000
+      );
+
+      if (!botResponse?.ok) {
+        throw new Error(botResponse?.message || 'The Discord bot failed to refresh Discord data.');
+      }
+
+      emitDiscordRefreshStatus(
+        `Discord bot sync completed. Roles: ${botResponse.roles_processed || 0}, Members: ${botResponse.members_processed || 0}, Removed: ${botResponse.members_removed || 0}. Loading updated data.`
+      );
+
+      const response = {
+        ok: true,
+        message: 'Discord data refresh completed.',
+        roles_processed: botResponse.roles_processed || 0,
+        members_processed: botResponse.members_processed || 0,
+        members_removed: botResponse.members_removed || 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-data-refresh-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-discord-data-refresh:', error);
+
+      emitDiscordRefreshStatus(
+        error.message || 'Discord data refresh failed.'
+      );
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to refresh Discord data.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-data-refresh-result', callback, response);
+    }
   });
 
   socket.on('guildsync:request-discord-data-date', async (payload = {}, callback) => {
@@ -380,6 +492,9 @@ io.on('connection', (socket) => {
 
     if (socket.guildSyncAuthType === 'discord-bot') {
       name = 'Discord Bot';
+      discordBotConnected = false;
+      discordBotSocketId = null;
+      discordBotConnectedAt = null;
     } else if (user?.display_name) {
       name = user.display_name + ' GuildSync User';
     }
@@ -393,6 +508,54 @@ server.listen(PORT, HOST, () => {
   Log(`Discord redirect URI: ${DISCORD_REDIRECT_URI}`);
   Log(`Current GuildSync client version: ${CURRENT_GUILDSYNC_CLIENT_VERSION}`);
 });
+
+function emitDiscordRefreshStatus(message) {
+  io.to('GuildSyncClient').emit('guildsync:discord-refresh-status', {
+    ok: true,
+    message,
+    at: new Date().toLocaleString()
+  });
+}
+
+async function broadcastDiscordMemberDataUpdate() {
+  try {
+    const [members, refreshDate] = await Promise.all([
+      getDiscordMemberDataJSON(applicationDB),
+      getDiscordDataDate(applicationDB)
+    ]);
+
+    io.to('GuildSyncClient').emit('guildsync:discord-member-data-updated', {
+      ok: true,
+      message: 'Discord member data updated.',
+      members,
+      members_returned: members.length,
+      last_refresh: refreshDate?.value || null,
+      at: new Date().toLocaleString()
+    });
+
+    Log(`Broadcast Discord member data update to GuildSync clients. Members: ${members.length}`);
+  } catch (error) {
+    Log('Failed to broadcast Discord member data update:', error);
+  }
+}
+
+function emitToSocketWithAck(targetSocket, eventName, payload = {}, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    if (!targetSocket?.connected) {
+      reject(new Error('Target websocket is not connected.'));
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      reject(new Error(`${eventName} did not respond within ${timeoutMs}ms.`));
+    }, timeoutMs);
+
+    targetSocket.emit(eventName, payload, (response) => {
+      clearTimeout(timeout);
+      resolve(response);
+    });
+  });
+}
 
 function sendSocketResponse(socket, eventName, callback, response) {
   if (typeof callback === 'function') {

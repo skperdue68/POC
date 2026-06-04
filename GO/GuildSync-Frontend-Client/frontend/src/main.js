@@ -51,6 +51,18 @@ let guildSyncSession = {
 
 let socket = null;
 
+let discordMembers = [];
+let discordLastRefreshValue = null;
+let discordDataLoading = false;
+let discordRefreshRequestRunning = false;
+let discordDataError = '';
+let discordSearchText = '';
+let discordSelectedRoleNames = new Set();
+let discordSortColumn = 'username';
+let discordSortDirection = 'asc';
+let discordSearchSelectionStart = null;
+let discordSearchSelectionEnd = null;
+
 const GUILDSYNC_TABS = [
   { id: 'discord-members', label: 'Discord Member Data', icon: 'discord' },
   { id: 'eso-members', label: 'ESO Member Data', icon: 'swords' },
@@ -157,6 +169,7 @@ function showMainWindow() {
 
   renderDiscordArea();
   wireGuildSyncTabs();
+  wireDiscordMemberDataPanel();
   updateStatusDot();
   requestSystemMessageDisplayUpdate();
 
@@ -216,6 +229,10 @@ function getGuildSyncTabIcon(icon) {
 function renderGuildSyncTabContent() {
   const activeTab = GUILDSYNC_TABS.find((tab) => tab.id === activeGuildSyncTab) || GUILDSYNC_TABS[0];
 
+  if (activeTab.id === 'discord-members') {
+    return renderDiscordMemberDataPanel();
+  }
+
   return `
     <div class="guildsync-tab-panel" data-active-tab="${escapeAttribute(activeTab.id)}">
       <div class="guildsync-tab-panel-placeholder">
@@ -240,7 +257,7 @@ function wireGuildSyncTabs() {
   });
 }
 
-function renderGuildSyncTabLayout() {
+function renderGuildSyncTabLayout(options = {}) {
   const tabBar = document.querySelector('.guildsync-tabs');
   const content = document.querySelector('#guildSyncTabContent');
 
@@ -253,6 +270,693 @@ function renderGuildSyncTabLayout() {
   }
 
   wireGuildSyncTabs();
+  wireDiscordMemberDataPanel();
+
+  if (options.restoreDiscordSearchFocus) {
+    restoreDiscordSearchFocus();
+  }
+
+  if (activeGuildSyncTab === 'discord-members' && socket?.connected && discordMembers.length === 0 && !discordDataLoading) {
+    refreshDiscordData({ silent: true });
+  }
+}
+
+function renderDiscordMemberDataPanel() {
+  const filteredMembers = getFilteredDiscordMembers();
+  const allRoleNames = getAllDiscordRoleNames();
+  const selectedRoleNames = Array.from(discordSelectedRoleNames);
+
+  return `
+    <div class="guildsync-tab-panel discord-member-panel" data-active-tab="discord-members">
+      <div class="discord-data-header">
+        <div>
+          <h2 class="discord-data-title">Discord Member Data</h2>
+          <p class="discord-data-subtitle">Manage and view Discord member information.</p>
+        </div>
+        <div class="discord-data-actions">
+          <span id="discordLastRefreshText" class="discord-last-refresh">Last Refresh: ${escapeHtml(formatDiscordRefreshDate(discordLastRefreshValue))}</span>
+          <button id="refreshDiscordDataButton" class="refresh-discord-button" type="button" ${discordDataLoading || discordRefreshRequestRunning ? 'disabled' : ''}>
+            <span class="refresh-discord-icon" aria-hidden="true">↻</span>
+            <span>${discordRefreshRequestRunning ? 'Refreshing...' : 'Refresh Discord Data'}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="discord-data-body">
+        <div class="discord-filter-row">
+          <label class="discord-search-wrap" for="discordMemberSearch">
+            <span class="discord-search-icon" aria-hidden="true">⌕</span>
+            <input id="discordMemberSearch" class="discord-search-input" type="search" placeholder="Search username, global name, or server nickname..." value="${escapeAttribute(discordSearchText)}" />
+          </label>
+
+          <div class="discord-role-filter-wrap">
+            <label class="discord-filter-label" for="discordRoleFilter">Roles</label>
+            <select id="discordRoleFilter" class="discord-role-select">
+              <option value="">Add role filter...</option>
+              ${allRoleNames
+      .filter((roleName) => !discordSelectedRoleNames.has(roleName))
+      .map((roleName) => `<option value="${escapeAttribute(roleName)}">${escapeHtml(roleName)}</option>`)
+      .join('')}
+            </select>
+            <div class="discord-selected-roles">
+              ${selectedRoleNames.length === 0
+      ? '<span class="discord-no-role-filter">All roles</span>'
+      : selectedRoleNames
+        .map((roleName) => renderRoleFilterChip(roleName))
+        .join('')}
+            </div>
+          </div>
+
+          <button id="clearDiscordFiltersButton" class="clear-discord-filters-button" type="button">Clear Filters</button>
+          <div class="discord-results-count">${filteredMembers.length} result${filteredMembers.length === 1 ? '' : 's'}</div>
+        </div>
+
+        <div class="discord-member-table-shell">
+          <table class="discord-member-table">
+            <thead>
+              <tr>
+                ${renderDiscordSortableHeader('username', 'Username')}
+                ${renderDiscordSortableHeader('global_name', 'Global Name')}
+                ${renderDiscordSortableHeader('server_nickname', 'Server Nickname')}
+                ${renderDiscordSortableHeader('roles', 'Roles')}
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredMembers.length > 0
+      ? filteredMembers.map((member) => renderDiscordMemberRow(member)).join('')
+      : renderEmptyDiscordMemberRow()}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireDiscordMemberDataPanel() {
+  if (activeGuildSyncTab !== 'discord-members') {
+    return;
+  }
+
+  const refreshButton = document.querySelector('#refreshDiscordDataButton');
+  if (refreshButton) {
+    refreshButton.addEventListener('click', () => requestDiscordDataRefresh());
+  }
+
+  const searchInput = document.querySelector('#discordMemberSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', (event) => {
+      discordSearchText = event.target.value || '';
+      discordSearchSelectionStart = event.target.selectionStart;
+      discordSearchSelectionEnd = event.target.selectionEnd;
+      renderGuildSyncTabLayout({ restoreDiscordSearchFocus: true });
+    });
+  }
+
+  document.querySelectorAll('[data-discord-sort-column]').forEach((button) => {
+    button.addEventListener('click', () => {
+      setDiscordSort(button.dataset.discordSortColumn || 'username');
+    });
+  });
+
+  const roleSelect = document.querySelector('#discordRoleFilter');
+  if (roleSelect) {
+    roleSelect.addEventListener('change', (event) => {
+      const roleName = String(event.target.value || '').trim();
+      if (roleName) {
+        discordSelectedRoleNames.add(roleName);
+        renderGuildSyncTabLayout();
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-remove-role-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const roleName = button.dataset.removeRoleFilter || '';
+      discordSelectedRoleNames.delete(roleName);
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  const clearButton = document.querySelector('#clearDiscordFiltersButton');
+  if (clearButton) {
+    clearButton.addEventListener('click', () => {
+      discordSearchText = '';
+      discordSelectedRoleNames.clear();
+      renderGuildSyncTabLayout();
+    });
+  }
+}
+
+
+async function requestDiscordDataRefresh() {
+  if (!socket?.connected) {
+    addSystemMessage('discord-refresh-error', 'GuildSync websocket is not connected.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  discordRefreshRequestRunning = true;
+  renderGuildSyncTabLayout();
+
+  addSystemMessage('discord-refresh-requested', 'Refresh request sent to GuildSync backend. Waiting for the Discord bot to sync roles and members...', {
+    ttlMs: 180000
+  });
+
+  try {
+    const response = await emitSocketWithAck(
+      'guildsync:request-discord-data-refresh',
+      {
+        requested_by: guildSyncSession?.user?.display_name || guildSyncSession?.user?.username || 'GuildSync Client',
+        requested_at: new Date().toISOString()
+      },
+      180000
+    );
+
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Unable to request Discord data refresh.');
+    }
+
+    addSystemMessage('discord-refresh-requested', response.message || 'Discord data refresh completed.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
+    // The backend broadcasts updated member data to every client after the bot finishes.
+    // This follow-up fetch keeps this client correct even if the broadcast was missed.
+    await refreshDiscordData({ silent: true });
+  } catch (error) {
+    addSystemMessage('discord-refresh-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    discordRefreshRequestRunning = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function refreshDiscordLastRefreshDate() {
+  if (!socket?.connected) {
+    return;
+  }
+
+  const dateResponse = await emitSocketWithAck('guildsync:request-discord-data-date', {});
+
+  if (dateResponse?.ok) {
+    discordLastRefreshValue = dateResponse.value || null;
+  }
+}
+
+async function handleDiscordMemberDataUpdated(payload = {}) {
+  if (!payload?.ok) {
+    return;
+  }
+
+  discordMembers = normalizeDiscordMembers(payload.members);
+
+  if (payload.last_refresh) {
+    discordLastRefreshValue = payload.last_refresh;
+  }
+
+  try {
+    await refreshDiscordLastRefreshDate();
+  } catch {
+    // The member data is still valid even if the date follow-up request fails.
+  }
+
+  if (activeGuildSyncTab === 'discord-members') {
+    renderGuildSyncTabLayout();
+  }
+
+  addSystemMessage('discord-data-updated', `Discord data updated. Loaded ${discordMembers.length} member record${discordMembers.length === 1 ? '' : 's'}.`, {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
+async function refreshDiscordData(options = {}) {
+  const silent = Boolean(options.silent);
+
+  if (!socket?.connected) {
+    addSystemMessage('discord-data-error', 'GuildSync websocket is not connected.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  discordDataLoading = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    const [dateResponse, memberResponse] = await Promise.all([
+      emitSocketWithAck('guildsync:request-discord-data-date', {}),
+      emitSocketWithAck('guildsync:request-discord-member-dataJSON', {})
+    ]);
+
+    if (!dateResponse?.ok) {
+      throw new Error(dateResponse?.message || 'Unable to retrieve Discord refresh date.');
+    }
+
+    if (!memberResponse?.ok) {
+      throw new Error(memberResponse?.message || 'Unable to retrieve Discord member data.');
+    }
+
+    discordLastRefreshValue = dateResponse.value || null;
+    discordMembers = normalizeDiscordMembers(memberResponse.members);
+
+    if (!silent) {
+      addSystemMessage('discord-data', `Loaded ${discordMembers.length} Discord member record${discordMembers.length === 1 ? '' : 's'}.`, {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
+  } catch (error) {
+    addSystemMessage('discord-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    discordDataLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+function emitSocketWithAck(eventName, payload = {}, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    if (!socket?.connected) {
+      reject(new Error('GuildSync websocket is not connected.'));
+      return;
+    }
+
+    let finished = false;
+
+    const timer = window.setTimeout(() => {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+      reject(new Error(`${eventName} timed out.`));
+    }, timeoutMs);
+
+    socket.emit(eventName, payload, (response) => {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+      window.clearTimeout(timer);
+      resolve(response);
+    });
+  });
+}
+
+function normalizeDiscordMembers(members) {
+  if (!Array.isArray(members)) {
+    return [];
+  }
+
+  return members
+    .map((member) => ({
+      discord_id: String(member?.discord_id || member?.id || '').trim(),
+      username: String(member?.username || '').trim(),
+      global_name: String(member?.global_name || '').trim(),
+      server_nickname: String(member?.server_nickname || '').trim(),
+      avatar: String(member?.avatar || '').trim(),
+      roles: Array.isArray(member?.roles) ? member.roles.map(normalizeDiscordRole).filter(Boolean) : []
+    }))
+    .filter((member) => member.discord_id || member.username || member.global_name || member.server_nickname)
+    .sort((a, b) => getMemberSortName(a).localeCompare(getMemberSortName(b), undefined, { sensitivity: 'base' }));
+}
+
+function normalizeDiscordRole(role) {
+  if (!role || typeof role !== 'object') {
+    return null;
+  }
+
+  const roleID = String(role.role_id || role.id || '').trim();
+  const roleName = String(role.role_name || role.name || 'Unnamed Role').trim();
+  const roleColor = role.role_color ?? role.color ?? null;
+
+  return {
+    role_id: roleID,
+    role_name: roleName || 'Unnamed Role',
+    role_color: roleColor
+  };
+}
+
+function getFilteredDiscordMembers() {
+  const search = discordSearchText.trim().toLowerCase();
+  const selectedRoleNames = Array.from(discordSelectedRoleNames);
+
+  const filteredMembers = discordMembers.filter((member) => {
+    if (search) {
+      const haystack = [
+        member.username,
+        member.global_name,
+        member.server_nickname,
+        member.discord_id,
+        ...member.roles.map((role) => role.role_name)
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      if (!haystack.includes(search)) {
+        return false;
+      }
+    }
+
+    if (selectedRoleNames.length > 0) {
+      const memberRoleNames = new Set(member.roles.map((role) => role.role_name));
+      return selectedRoleNames.every((roleName) => memberRoleNames.has(roleName));
+    }
+
+    return true;
+  });
+
+  return sortDiscordMembers(filteredMembers);
+}
+
+function sortDiscordMembers(members) {
+  const directionMultiplier = discordSortDirection === 'desc' ? -1 : 1;
+
+  return [...members].sort((a, b) => {
+    const valueA = getDiscordSortValue(a, discordSortColumn);
+    const valueB = getDiscordSortValue(b, discordSortColumn);
+    const comparison = valueA.localeCompare(valueB, undefined, {
+      sensitivity: 'base',
+      numeric: true
+    });
+
+    if (comparison !== 0) {
+      return comparison * directionMultiplier;
+    }
+
+    return getMemberSortName(a).localeCompare(getMemberSortName(b), undefined, {
+      sensitivity: 'base',
+      numeric: true
+    });
+  });
+}
+
+function getDiscordSortValue(member, column) {
+  if (column === 'global_name') {
+    return member.global_name || '';
+  }
+
+  if (column === 'server_nickname') {
+    return member.server_nickname || '';
+  }
+
+  if (column === 'roles') {
+    return (member.roles || [])
+      .map((role) => role.role_name || '')
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .join(' ');
+  }
+
+  return member.username || member.discord_id || '';
+}
+
+function setDiscordSort(column) {
+  const allowedColumns = new Set(['username', 'global_name', 'server_nickname', 'roles']);
+  const nextColumn = allowedColumns.has(column) ? column : 'username';
+
+  if (discordSortColumn === nextColumn) {
+    discordSortDirection = discordSortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    discordSortColumn = nextColumn;
+    discordSortDirection = 'asc';
+  }
+
+  renderGuildSyncTabLayout();
+}
+
+function renderDiscordSortableHeader(column, label) {
+  const isActive = discordSortColumn === column;
+  const directionText = discordSortDirection === 'asc' ? 'ascending' : 'descending';
+  const arrow = isActive
+    ? discordSortDirection === 'asc'
+      ? '▲'
+      : '▼'
+    : '↕';
+
+  return `
+    <th aria-sort="${isActive ? directionText : 'none'}">
+      <button
+        class="discord-sort-header${isActive ? ' active' : ''}"
+        type="button"
+        data-discord-sort-column="${escapeAttribute(column)}"
+        title="Sort ${escapeAttribute(label)} ${isActive && discordSortDirection === 'asc' ? 'descending' : 'ascending'}"
+      >
+        <span>${escapeHtml(label)}</span>
+        <span class="discord-sort-arrow" aria-hidden="true">${arrow}</span>
+      </button>
+    </th>
+  `;
+}
+
+function restoreDiscordSearchFocus() {
+  const searchInput = document.querySelector('#discordMemberSearch');
+
+  if (!searchInput) {
+    return;
+  }
+
+  searchInput.focus({ preventScroll: true });
+
+  if (typeof searchInput.setSelectionRange === 'function') {
+    const start = Number.isInteger(discordSearchSelectionStart)
+      ? discordSearchSelectionStart
+      : searchInput.value.length;
+    const end = Number.isInteger(discordSearchSelectionEnd)
+      ? discordSearchSelectionEnd
+      : start;
+
+    searchInput.setSelectionRange(start, end);
+  }
+}
+
+function getAllDiscordRoleNames() {
+  const roleNames = new Set();
+
+  for (const member of discordMembers) {
+    for (const role of member.roles) {
+      if (role.role_name) {
+        roleNames.add(role.role_name);
+      }
+    }
+  }
+
+  return Array.from(roleNames).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function renderDiscordMemberRow(member) {
+  const avatarURL = getDiscordMemberAvatarURL(member);
+  const displayName = getMemberSortName(member);
+  const roles = member.roles || [];
+
+  return `
+    <tr>
+      <td>
+        <div class="discord-member-cell">
+          <div class="discord-member-avatar">
+            ${avatarURL
+      ? `<img src="${escapeAttribute(avatarURL)}" alt="${escapeAttribute(displayName)}" />`
+      : `<span>${escapeHtml(getInitials(displayName))}</span>`}
+          </div>
+          <span>${escapeHtml(member.username || member.discord_id || 'Unknown')}</span>
+        </div>
+      </td>
+      <td>${escapeHtml(member.global_name || '')}</td>
+      <td>${escapeHtml(member.server_nickname || '')}</td>
+      <td>
+        <div class="discord-member-roles">
+          ${roles.length > 0
+      ? roles.map((role) => renderDiscordRoleBadge(role)).join('')
+      : '<span class="discord-no-roles">No roles</span>'}
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderEmptyDiscordMemberRow() {
+  const message = discordDataLoading
+    ? 'Loading Discord member data...'
+    : 'No Discord members found.';
+
+  return `
+    <tr>
+      <td colspan="4" class="discord-empty-row">${escapeHtml(message)}</td>
+    </tr>
+  `;
+}
+
+function renderDiscordRoleBadge(role) {
+  const hexColor = discordRoleColorToHex(role.role_color);
+  const textColor = getReadableTextColor(hexColor);
+  const roleStyle = buildFilledRoleStyle(hexColor, textColor);
+
+  return `
+    <span
+      class="discord-role-badge"
+      title="${escapeAttribute(role.role_name)}"
+      style="${roleStyle}"
+    >${escapeHtml(role.role_name)}</span>
+  `;
+}
+
+function renderRoleFilterChip(roleName) {
+  const role = findRoleByName(roleName);
+  const hexColor = discordRoleColorToHex(role?.role_color);
+  const textColor = getReadableTextColor(hexColor);
+  const roleStyle = buildFilledRoleStyle(hexColor, textColor);
+
+  return `
+    <button
+      class="discord-role-filter-chip"
+      type="button"
+      data-remove-role-filter="${escapeAttribute(roleName)}"
+      style="${roleStyle}"
+      title="Remove ${escapeAttribute(roleName)} filter"
+    >
+      <span>${escapeHtml(roleName)}</span>
+      <span aria-hidden="true">×</span>
+    </button>
+  `;
+}
+
+function findRoleByName(roleName) {
+  for (const member of discordMembers) {
+    const role = member.roles.find((item) => item.role_name === roleName);
+    if (role) {
+      return role;
+    }
+  }
+
+  return null;
+}
+
+function discordRoleColorToHex(decimalColor) {
+  const colorNumber = Number(decimalColor);
+
+  if (!Number.isFinite(colorNumber) || colorNumber <= 0) {
+    return '#64748b';
+  }
+
+  return `#${Math.max(0, Math.min(0xFFFFFF, Math.trunc(colorNumber))).toString(16).padStart(6, '0')}`;
+}
+
+
+function buildFilledRoleStyle(hexColor, textColor) {
+  return [
+    `--role-fill-top: ${mixHexColor(hexColor, '#ffffff', 0.16)}`,
+    `--role-fill-bottom: ${mixHexColor(hexColor, '#000000', 0.10)}`,
+    `--role-fill-glow: ${hexToRgba(hexColor, 0.28)}`,
+    `--role-fill-edge: ${hexToRgba(hexColor, 0.46)}`,
+    `color: ${textColor}`
+  ].join('; ');
+}
+
+function mixHexColor(hexColor, mixWithHexColor, amount) {
+  const base = parseHexColor(hexColor) || parseHexColor('#64748b');
+  const mix = parseHexColor(mixWithHexColor) || parseHexColor('#ffffff');
+  const ratio = Math.max(0, Math.min(1, Number(amount) || 0));
+
+  const red = Math.round(base.red + (mix.red - base.red) * ratio);
+  const green = Math.round(base.green + (mix.green - base.green) * ratio);
+  const blue = Math.round(base.blue + (mix.blue - base.blue) * ratio);
+
+  return `#${toHexPair(red)}${toHexPair(green)}${toHexPair(blue)}`;
+}
+
+function parseHexColor(hexColor) {
+  const hex = String(hexColor || '').replace('#', '');
+
+  if (!/^[0-9a-f]{6}$/i.test(hex)) {
+    return null;
+  }
+
+  return {
+    red: parseInt(hex.slice(0, 2), 16),
+    green: parseInt(hex.slice(2, 4), 16),
+    blue: parseInt(hex.slice(4, 6), 16)
+  };
+}
+
+function toHexPair(value) {
+  return Math.max(0, Math.min(255, value)).toString(16).padStart(2, '0');
+}
+
+function hexToRgba(hexColor, alpha) {
+  const hex = String(hexColor || '#64748b').replace('#', '');
+  const value = /^[0-9a-f]{6}$/i.test(hex) ? hex : '64748b';
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function getReadableTextColor(hexColor) {
+  const hex = String(hexColor || '#64748b').replace('#', '');
+
+  if (!/^[0-9a-f]{6}$/i.test(hex)) {
+    return '#E5E7EB';
+  }
+
+  const red = parseInt(hex.slice(0, 2), 16);
+  const green = parseInt(hex.slice(2, 4), 16);
+  const blue = parseInt(hex.slice(4, 6), 16);
+  const brightness = (red * 299 + green * 587 + blue * 114) / 1000;
+
+  return brightness > 150 ? '#0F172A' : '#F8FAFC';
+}
+
+function getDiscordMemberAvatarURL(member) {
+  const avatar = String(member?.avatar || '').trim();
+  const discordID = String(member?.discord_id || '').trim();
+
+  if (!avatar) {
+    return '';
+  }
+
+  if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
+    return avatar;
+  }
+
+  if (!discordID) {
+    return '';
+  }
+
+  const extension = avatar.startsWith('a_') ? 'gif' : 'png';
+
+  return `https://cdn.discordapp.com/avatars/${encodeURIComponent(discordID)}/${encodeURIComponent(avatar)}.${extension}?size=64`;
+}
+
+function getMemberSortName(member) {
+  return member.server_nickname || member.global_name || member.username || member.discord_id || 'Unknown';
+}
+
+function formatDiscordRefreshDate(value) {
+  const cleanValue = String(value || '').trim();
+
+  if (!cleanValue) {
+    return 'Not refreshed yet';
+  }
+
+  const date = new Date(cleanValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return cleanValue;
+  }
+
+  return date.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
 }
 
 function renderDiscordArea() {
@@ -456,6 +1160,10 @@ function connectSocket() {
   socket.on('connect', () => {
     updateStatusDot();
     sendVersionCheck();
+
+    if (activeGuildSyncTab === 'discord-members') {
+      refreshDiscordData({ silent: true });
+    }
     startVersionCheckTimer();
   });
 
@@ -471,6 +1179,20 @@ function connectSocket() {
 
   socket.on('guildsync:version-status', (payload) => {
     handleVersionStatus(payload);
+  });
+
+  socket.on('guildsync:discord-member-data-updated', (payload) => {
+    handleDiscordMemberDataUpdated(payload);
+  });
+
+  socket.on('guildsync:discord-refresh-status', (payload = {}) => {
+    const message = String(payload.message || '').trim();
+
+    if (message) {
+      addSystemMessage('discord-refresh-status', message, {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
   });
 }
 

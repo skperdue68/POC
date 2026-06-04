@@ -56,25 +56,6 @@ const guildSyncSocket = io(GUILDSYNC_SOCKET_URL, {
   timeout: 10000
 });
 
-guildSyncSocket.on('connect', async () => {
-  Log(`Connected to GuildSync websocket as ${guildSyncSocket.id}`);
-
-  guildSyncSocket.emit('discord-bot-online', {
-    botName: 'GuildSync Discord Bot',
-    connectedAt: new Date().toISOString()
-  });
-
-  await runStartupSyncIfReady('websocket connected');
-});
-
-guildSyncSocket.on('disconnect', reason => {
-  Log(`Disconnected from GuildSync websocket: ${reason}`);
-});
-
-guildSyncSocket.on('connect_error', error => {
-  Log(`GuildSync websocket connection error: ${error.message}`);
-});
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -95,6 +76,84 @@ for (const command of commands) {
 
 let startupSyncDone = false;
 let startupSyncRunning = false;
+let requestedSyncRunning = false;
+
+guildSyncSocket.on('connect', async () => {
+  Log(`Connected to GuildSync websocket as ${guildSyncSocket.id}`);
+
+  guildSyncSocket.emit('discord-bot-online', {
+    botName: 'GuildSync Discord Bot',
+    connectedAt: new Date().toISOString()
+  });
+
+  await runStartupSyncIfReady('websocket connected');
+});
+
+guildSyncSocket.on('disconnect', reason => {
+  Log(`Disconnected from GuildSync websocket: ${reason}`);
+});
+
+guildSyncSocket.on('connect_error', error => {
+  Log(`GuildSync websocket connection error: ${error.message}`);
+});
+
+guildSyncSocket.on('guildsync:request-discord-sync', async (payload = {}, callback) => {
+  const respond = typeof callback === 'function'
+    ? callback
+    : () => { };
+
+  if (requestedSyncRunning || startupSyncRunning) {
+    respond({
+      ok: false,
+      message: 'A Discord role/member sync is already running.'
+    });
+    return;
+  }
+
+  if (!client.isReady()) {
+    respond({
+      ok: false,
+      message: 'Discord client is not ready yet.'
+    });
+    return;
+  }
+
+  if (!guildSyncSocket.connected) {
+    respond({
+      ok: false,
+      message: 'GuildSync websocket is not connected.'
+    });
+    return;
+  }
+
+  requestedSyncRunning = true;
+
+  try {
+    Log(
+      `Manual Discord sync requested by GuildSync backend. Requested by: ${payload.requested_by_name || payload.requested_by || 'unknown'}`
+    );
+
+    const guild = await getStartupGuild(client);
+    const result = await syncDiscordRolesAndMembers(guild, guildSyncSocket);
+
+    respond({
+      ok: true,
+      message: 'Discord role/member sync completed.',
+      roles_processed: result.roles_processed,
+      members_processed: result.members_processed,
+      members_removed: result.members_removed
+    });
+  } catch (error) {
+    Log(`Manual Discord sync failed: ${error.message}`);
+
+    respond({
+      ok: false,
+      message: error.message || 'Discord role/member sync failed.'
+    });
+  } finally {
+    requestedSyncRunning = false;
+  }
+});
 
 client.once(Events.ClientReady, async readyClient => {
   Log(`GuildSync bot logged in as ${readyClient.user.tag}`);
@@ -140,7 +199,7 @@ async function runStartupSyncIfReady(reason) {
     return;
   }
 
-  if (startupSyncRunning) {
+  if (startupSyncRunning || requestedSyncRunning) {
     return;
   }
 
