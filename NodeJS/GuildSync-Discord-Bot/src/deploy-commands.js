@@ -1,22 +1,12 @@
 import 'dotenv/config';
 import { REST, Routes } from 'discord.js';
 
-import * as ping from './commands/ping.js';
-import * as status from './commands/status.js';
 import * as members from './commands/members.js';
 import * as roles from './commands/roles.js';
-import * as addRole from './commands/add-role.js';
-import * as removeRole from './commands/remove-role.js';
-import * as dmUser from './commands/dm-user.js';
 
 const commands = [
-  ping.data.toJSON(),
-  status.data.toJSON(),
   members.data.toJSON(),
   roles.data.toJSON(),
-  addRole.data.toJSON(),
-  removeRole.data.toJSON(),
-  dmUser.data.toJSON()
 ];
 
 const {

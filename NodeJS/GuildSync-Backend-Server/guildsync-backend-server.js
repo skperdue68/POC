@@ -9,13 +9,14 @@ import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 
 import {
-  GUILDSYNC_LOGIN_DB_PATH,
+  LOGIN_DB_PATH,
   openLoginDB,
   upsertLoginUser,
 
-  GUILDSYNC_APPDATA_DB_PATH,
-  openApplicationDB,
-  processDiscordRolesPayload,
+  GUILDSYNC_DB_PATH,
+  openAppDataDB,
+  upsertDiscordRoles,
+  upsertDiscordMembers
 } from './guildsync-database-actions.js';
 
 
@@ -36,11 +37,11 @@ const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
 
 
-const db = openLoginDatabase();
+const loginDB = openLoginDB();
 
 console.log(`SQLite database ready: ${LOGIN_DB_PATH}`);
 
-const db2 = openAppDataDatabase();
+const applicationDB = openAppDataDB();
 
 console.log(`SQLite database ready: ${GUILDSYNC_DB_PATH}`)
 
@@ -75,7 +76,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
 
     const discordToken = await exchangeCodeWithDiscord(code, effectiveRedirectURI);
     const discordUser = await fetchDiscordUser(discordToken.access_token);
-    const dbUser = upsertLoginUser(db, discordUser);
+    const dbUser = upsertLoginUser(loginDB, discordUser);
 
     if (!dbUser.allowed) {
       return res.status(403).json({
@@ -208,6 +209,7 @@ io.on('connection', (socket) => {
 
   if (socket.guildSyncAuthType === 'discord-bot') {
     console.log(`Connection: ${socket.id} => Discord bot`);
+    socket.join('GuildSyncDiscordBot');
   } else if (socket.guildSyncAuthenticated && user) {
     console.log(`Connection: ${socket.id} => ${user.display_name} (${user.discord_user_id}) GuildSync User`);
   } else {
@@ -216,25 +218,19 @@ io.on('connection', (socket) => {
 
 
   socket.on('guildsync:sending-discord-roles', (payload = {}, callback) => {
+    // Only the Discord bot can send the roles
     if (socket.guildSyncAuthType !== 'discord-bot') {
       const response = {
         ok: false,
-        error: 'Only the authenticated Discord bot can send Discord roles.',
-        at: new Date().toISOString()
+        message: 'Only the authenticated Discord bot can send Discord roles.',
+        at: new Date().toLocaleString()
       };
-
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-roles-result', response);
-      }
-
+      socket.emit('guildsync:discord-roles-result', response);
       return;
     }
 
     try {
-      const result = processDiscordRolesPayload(applicationDB, payload);
-
+      const result = upsertDiscordRoles(applicationDB, payload);
       console.log(
         `Received Discord roles: ${result.roles_processed} role(s) processed.`
       );
@@ -243,28 +239,56 @@ io.on('connection', (socket) => {
         ok: true,
         message: 'Discord roles received and saved.',
         roles_processed: result.roles_processed,
-        at: new Date().toISOString()
+        at: new Date().toLocaleString()
       };
-
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-roles-result', response);
-      }
+      io.to('GuildSyncDiscordBot').emit('guildsync:discord-roles-result', response);
     } catch (error) {
       console.error('Failed to process guildsync:discord-roles payload:', error);
 
       const response = {
         ok: false,
-        error: error.message || 'Failed to process Discord roles payload.',
-        at: new Date().toISOString()
+        message: error.message || 'Failed to process Discord roles payload.',
+        at: new Date().toLocaleString()
       };
 
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-roles-result', response);
-      }
+      socket.emit('guildsync:discord-roles-result', response);
+    }
+  });
+  socket.on('guildsync:sending-discord-members', (payload = {}, callback) => {
+    // Only the Discord bot can send the members
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'Only the authenticated Discord bot can send Discord members.',
+        at: new Date().toLocaleString()
+      };
+      socket.emit('guildsync:discord-members-result', response);
+      return;
+    }
+
+    try {
+      const result = upsertDiscordMembers(applicationDB, payload);
+      console.log(
+        `Received Discord members: ${result.members_processed} member(s) processed. ${result.members_removed} members removed.`
+      );
+
+      const response = {
+        ok: true,
+        message: 'Discord members received and saved.',
+        members_processed: result.members_processed,
+        members_removed: result.members_removed,
+        at: new Date().toLocaleString()
+      };
+      socket.emit('guildsync:discord-members-result', response);
+    } catch (error) {
+      console.error('Failed to process guildsync:discord-members payload:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to process Discord members payload.',
+        at: new Date().toLocaleString()
+      };
+      io.to('GuildSyncDiscordBot').emit('guildsync:discord-members-result', response);
     }
   });
 

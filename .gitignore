@@ -7,7 +7,7 @@ Thumbs.db
 # Logs / env
 *.log
 .env
-.env.*
+.env
 
 # Node
 node_modules/
@@ -29,6 +29,10 @@ NodeJS/Guildsync-Server/data/
 *.test
 *.out
 *.env
+*.db
+*.db-wal
+*.db-shm
+
 
 
 coverage.out

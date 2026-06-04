@@ -133,10 +133,7 @@ export function upsertLoginUser(loginDB, discordUser) {
   `).get(discordUser.id);
 }
 
-
-
-
-export function openApplicationDatabase() {
+export function openAppDataDB() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 
   const applicationDB = new Database(GUILDSYNC_DB_PATH);
@@ -160,7 +157,7 @@ export function openApplicationDatabase() {
   return applicationDB;
 }
 
-export function processDiscordRolesPayload(applicationDB, payload) {
+export function upsertDiscordRoles(applicationDB, payload) {
   const roles = Array.isArray(payload.roles) ? payload.roles : [];
 
   const upsertRole = applicationDB.prepare(`
@@ -192,42 +189,14 @@ export function processDiscordRolesPayload(applicationDB, payload) {
     }
   });
   transaction();
-
-
-
-  ensureRoleColumnsOnMembersTable(applicationDB, roles);
+  addRoleColumnsToMembers(applicationDB, roles);
 
   return {
     roles_processed: roles.length
   };
 }
 
-export function upsertDiscordRoles(applicationDB, role) {
-  applicationDB
-    .prepare(`
-      INSERT INTO roles (
-        role_id,
-        role_name
-      )
-      VALUES (
-        ?,
-        ?
-      )
-      ON CONFLICT(role_id) DO UPDATE SET
-        role_name = excluded.role_name
-    `)
-    .run(role.id, role.name);
-
-  return applicationDB
-    .prepare(`
-      SELECT *
-      FROM roles
-      WHERE role_id = ?
-    `)
-    .get(role.id);
-}
-
-function ensureRoleColumnsOnMembersTable(applicationDB, roles) {
+function addRoleColumnsToMembers(applicationDB, roles) {
   const existingColumns = applicationDB
     .prepare(`
       PRAGMA table_info(discordMembers)
@@ -254,6 +223,118 @@ function ensureRoleColumnsOnMembersTable(applicationDB, roles) {
   }
 
   return applicationDB;
+}
+
+export function upsertDiscordMembers(applicationDB, members) {
+  if (!Array.isArray(members) || members.length === 0) {
+    return {
+      members_processed: 0,
+      members_removed: 0
+    };
+  }
+
+  const existingColumns = applicationDB
+    .prepare(`
+      PRAGMA table_info(discordMembers)
+    `)
+    .all()
+    .map((column) => column.name);
+
+  const existingColumnSet = new Set(existingColumns);
+
+  if (!existingColumnSet.has('isImported')) {
+    applicationDB
+      .prepare(`
+        ALTER TABLE discordMembers
+        ADD COLUMN isImported BOOLEAN NOT NULL DEFAULT 0
+      `)
+      .run();
+  }
+
+  applicationDB
+    .prepare(`
+      UPDATE discordMembers
+      SET isImported = 0
+    `)
+    .run();
+
+  const baseColumns = [
+    'discord_id',
+    'username',
+    'global_name',
+    'server_nickname',
+    'isImported'
+  ];
+
+  const roleColumns = [
+    ...new Set(
+      members.flatMap((member) =>
+        Object.keys(member).filter((key) => key.startsWith('r_'))
+      )
+    )
+  ];
+
+  const columns = [
+    ...baseColumns,
+    ...roleColumns
+  ];
+
+  const quotedColumns = columns
+    .map((column) => quoteIdentifier(column))
+    .join(', ');
+
+  const placeholders = columns
+    .map(() => '?')
+    .join(', ');
+
+  const replaceMember = applicationDB.prepare(`
+    REPLACE INTO discordMembers (
+      ${quotedColumns}
+    )
+    VALUES (
+      ${placeholders}
+    )
+  `);
+
+  const transaction = applicationDB.transaction(() => {
+    for (const member of members) {
+      const values = columns.map((column) => {
+        if (column === 'isImported') {
+          return 1;
+        }
+
+        if (column.startsWith('r_')) {
+          return member[column] ? 1 : 0;
+        }
+
+        return member[column] ?? '';
+      });
+
+      replaceMember.run(...values);
+    }
+  });
+
+  transaction();
+
+  const deleted_records =
+    applicationDB.prepare(`
+        DELETE FROM discordMembers
+        WHERE isImported = 0
+      `)
+      .run();
+
+  applicationDB
+    .prepare(`
+        ALTER TABLE discordMembers
+        DROP COLUMN isImported
+      `)
+    .run();
+
+
+  return {
+    members_processed: members.length,
+    members_removed: deleted_records.changes
+  };
 }
 
 function quoteIdentifier(identifier) {

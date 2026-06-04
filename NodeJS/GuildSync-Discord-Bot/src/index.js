@@ -1,7 +1,9 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url'
 import { io } from 'socket.io-client';
+import { Log } from './helper.js';
 
 import {
   Client,
@@ -11,13 +13,8 @@ import {
   MessageFlags
 } from 'discord.js';
 
-import * as ping from './commands/ping.js';
-import * as status from './commands/status.js';
 import * as members from './commands/members.js';
 import * as roles from './commands/roles.js';
-import * as addRole from './commands/add-role.js';
-import * as removeRole from './commands/remove-role.js';
-import * as dmUser from './commands/dm-user.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,7 +56,7 @@ const guildSyncSocket = io(GUILDSYNC_SOCKET_URL, {
 });
 
 guildSyncSocket.on('connect', () => {
-  console.log(`Connected to GuildSync websocket as ${guildSyncSocket.id}`);
+  Log(`Connected to GuildSync websocket as ${guildSyncSocket.id}`);
 
   guildSyncSocket.emit('discord-bot-online', {
     botName: 'GuildSync Discord Bot',
@@ -68,7 +65,7 @@ guildSyncSocket.on('connect', () => {
 });
 
 guildSyncSocket.on('disconnect', reason => {
-  console.log(`Disconnected from GuildSync websocket: ${reason}`);
+  Log(`Disconnected from GuildSync websocket: ${reason}`);
 });
 
 guildSyncSocket.on('connect_error', error => {
@@ -86,13 +83,8 @@ const client = new Client({
 client.commands = new Collection();
 
 const commands = [
-  ping,
-  status,
   members,
   roles,
-  addRole,
-  removeRole,
-  dmUser
 ];
 
 for (const command of commands) {
@@ -100,7 +92,7 @@ for (const command of commands) {
 }
 
 client.once(Events.ClientReady, readyClient => {
-  console.log(`GuildSync bot logged in as ${readyClient.user.tag}`);
+  Log(`GuildSync bot logged in as ${readyClient.user.tag}`);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -169,15 +161,14 @@ async function waitForSocketConnection(socket, timeoutMs = 30000) {
 }
 
 try {
-  console.log('Waiting for GuildSync websocket connection...');
-
+  Log('Waiting for GuildSync websocket connection...');
   await waitForSocketConnection(guildSyncSocket, 30000);
-
-  console.log('GuildSync websocket connected. Starting Discord bot...');
-
+  Log('GuildSync websocket connected. Starting Discord bot...');
   await client.login(DISCORD_TOKEN);
 } catch (error) {
   console.error(error.message);
   console.error('Discord bot was not started because GuildSync websocket is unavailable.');
   process.exit(1);
 }
+
+
