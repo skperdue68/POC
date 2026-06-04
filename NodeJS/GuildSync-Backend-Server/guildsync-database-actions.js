@@ -416,6 +416,83 @@ function getRoleIDsFromMember(member) {
   return [...roleIDs];
 }
 
+export async function getDiscordDataDate(applicationDB) {
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        data,
+        value
+      FROM settings
+      WHERE data = ?
+      LIMIT 1
+    `,
+    [
+      'discord_refresh'
+    ]
+  );
+
+  return rows[0] || {
+    data: 'discord_refresh',
+    value: null
+  };
+}
+
+export async function getDiscordMemberDataJSON(applicationDB) {
+  const [rows] = await applicationDB.execute(`
+    SELECT JSON_ARRAYAGG(
+      JSON_OBJECT(
+        'discord_id', member_rows.discord_id,
+        'username', member_rows.username,
+        'global_name', member_rows.global_name,
+        'server_nickname', member_rows.server_nickname,
+        'avatar', member_rows.avatar,
+        'roles', member_rows.roles
+      )
+    ) AS members_json
+    FROM (
+      SELECT
+        dm.discord_id,
+        dm.username,
+        dm.global_name,
+        dm.server_nickname,
+        dm.avatar,
+        COALESCE(r.roles, JSON_ARRAY()) AS roles
+      FROM discordmembers dm
+      LEFT JOIN (
+        SELECT
+          dmr.discord_id,
+          JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'role_id', dr.role_id,
+              'role_name', dr.role_name,
+              'role_color', dr.role_color
+            )
+          ) AS roles
+        FROM discordmemberroles dmr
+        JOIN discordroles dr
+          ON dmr.role_id = dr.role_id
+        GROUP BY dmr.discord_id
+      ) r
+        ON dm.discord_id = r.discord_id
+      ORDER BY
+        dm.server_nickname,
+        dm.username
+    ) AS member_rows
+  `);
+
+  const membersJson = rows[0]?.members_json;
+
+  if (!membersJson) {
+    return [];
+  }
+
+  if (typeof membersJson === 'string') {
+    return JSON.parse(membersJson);
+  }
+
+  return membersJson;
+}
+
 async function safeRollback(connection) {
   try {
     await connection.rollback();

@@ -12,9 +12,10 @@ import {
 
   openAppDataDB,
   upsertDiscordRoles,
-  upsertDiscordMembers
+  upsertDiscordMembers,
+  getDiscordDataDate,
+  getDiscordMemberDataJSON
 } from './guildsync-database-actions.js';
-
 
 let discordBotConnected = false;
 let discordBotSocketId = null;
@@ -316,6 +317,63 @@ io.on('connection', (socket) => {
         : `GuildSync ${clientVersion || 'unknown'} is current.`
     });
   });
+
+  socket.on('guildsync:request-discord-data-date', async (payload = {}, callback) => {
+    try {
+      const result = await getDiscordDataDate(applicationDB);
+
+      const response = {
+        ok: true,
+        message: 'Discord refresh date retrieved.',
+        data: result?.data || 'discord_refresh',
+        value: result?.value || null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-data-date-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-discord-data-date:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to retrieve Discord refresh date.',
+        data: 'discord_refresh',
+        value: null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-data-date-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:request-discord-member-dataJSON', async (payload = {}, callback) => {
+    try {
+      const members = await getDiscordMemberDataJSON(applicationDB);
+
+      const response = {
+        ok: true,
+        message: 'Discord member data retrieved.',
+        members,
+        members_returned: members.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-data-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-discord-member-data:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to retrieve Discord member data.',
+        members: [],
+        members_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-data-result', callback, response);
+    }
+  });
+
 
   socket.on('disconnect', (reason) => {
     let name = 'unauthenticated';
