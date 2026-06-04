@@ -21,7 +21,7 @@ GO/GuildSync-Client/frontend/dist/
 GO/GuildSync-Client/frontend/wailsjs/
 GO/GuildSync-Client/frontend/node_modules/
 GO/Filewatcher/*.exe
-*/dist/*
+GO/GuildSync-Client/frontend/dist/*
 NodeJS/Guildsync-Server/data/
 
 # Go
