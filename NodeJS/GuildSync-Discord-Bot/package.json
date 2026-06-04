@@ -2,10 +2,10 @@
   "name": "guildsync-discord-bot",
   "version": "1.0.0",
   "description": "GuildSync Discord bot",
-  "main": "src/index.js",
+  "main": "src/guildsync-discord-bot.js",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node src/guildsync-discord-bot.js",
     "deploy": "node src/deploy-commands.js"
   },
   "dependencies": {

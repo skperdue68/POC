@@ -1,11 +1,9 @@
 import 'dotenv/config';
 import { REST, Routes } from 'discord.js';
 
-import * as members from './commands/members.js';
 import * as roles from './commands/roles.js';
 
 const commands = [
-  members.data.toJSON(),
   roles.data.toJSON(),
 ];
 

@@ -51,6 +51,15 @@ let guildSyncSession = {
 
 let socket = null;
 
+const GUILDSYNC_TABS = [
+  { id: 'discord-members', label: 'Discord Member Data', icon: 'discord' },
+  { id: 'eso-members', label: 'ESO Member Data', icon: 'swords' },
+  { id: 'settings', label: 'Settings', icon: 'gear' },
+  { id: 'more', label: 'More', icon: 'more' }
+];
+
+let activeGuildSyncTab = GUILDSYNC_TABS[0].id;
+
 function showSplash() {
   app.innerHTML = `
     <main class="splash-screen">
@@ -108,6 +117,13 @@ function showMainWindow() {
           <img src="${guildSyncLogo}" alt="GuildSync" class="brand-logo" />
         </div>
 
+        <nav class="guildsync-tabs" aria-label="GuildSync sections">
+          ${renderGuildSyncTabs()}
+        </nav>
+
+        <section id="guildSyncTabContent" class="guildsync-tab-content" aria-live="polite">
+          ${renderGuildSyncTabContent()}
+        </section>
 
         <footer class="status-bar">
           <div id="statusMessageViewport" class="status-message-viewport" aria-live="polite">
@@ -140,6 +156,7 @@ function showMainWindow() {
     });
 
   renderDiscordArea();
+  wireGuildSyncTabs();
   updateStatusDot();
   requestSystemMessageDisplayUpdate();
 
@@ -153,6 +170,89 @@ function showMainWindow() {
 
     resizeHandlerAttached = true;
   }
+}
+
+
+function renderGuildSyncTabs() {
+  return GUILDSYNC_TABS
+    .map((tab) => {
+      const isActive = tab.id === activeGuildSyncTab;
+
+      return `
+        <button
+          class="guildsync-tab${isActive ? ' active' : ''}"
+          type="button"
+          data-tab-id="${escapeAttribute(tab.id)}"
+          aria-selected="${isActive ? 'true' : 'false'}"
+        >
+          <span class="guildsync-tab-icon" aria-hidden="true">${getGuildSyncTabIcon(tab.icon)}</span>
+          <span class="guildsync-tab-label">${escapeHtml(tab.label)}</span>
+        </button>
+      `;
+    })
+    .join('');
+}
+
+function getGuildSyncTabIcon(icon) {
+  if (icon === 'discord') {
+    return `
+      <svg class="guildsync-tab-svg" viewBox="0 0 127.14 96.36" xmlns="http://www.w3.org/2000/svg">
+        <path fill="currentColor" d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,33.35-1.71,57.98.54,82.26A105.73,105.73,0,0,0,32.71,96.36a77.7,77.7,0,0,0,6.89-11.26,68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2A75.57,75.57,0,0,0,95.73,78c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.25A105.25,105.25,0,0,0,126.6,82.25C129.24,54.09,122.09,29.69,107.7,8.07ZM42.45,65.69C35.93,65.69,30.6,59.77,30.6,52.49s5.23-13.2,11.85-13.2S54.3,45.21,54.3,52.49,49.06,65.69,42.45,65.69Zm42.24,0c-6.52,0-11.85-5.92-11.85-13.2s5.24-13.2,11.85-13.2S96.54,45.21,96.54,52.49,91.3,65.69,84.69,65.69Z"/>
+      </svg>
+    `;
+  }
+
+  if (icon === 'swords') {
+    return '⚔';
+  }
+
+  if (icon === 'gear') {
+    return '⚙';
+  }
+
+  return '…';
+}
+
+function renderGuildSyncTabContent() {
+  const activeTab = GUILDSYNC_TABS.find((tab) => tab.id === activeGuildSyncTab) || GUILDSYNC_TABS[0];
+
+  return `
+    <div class="guildsync-tab-panel" data-active-tab="${escapeAttribute(activeTab.id)}">
+      <div class="guildsync-tab-panel-placeholder">
+        ${escapeHtml(activeTab.label)} content will appear here.
+      </div>
+    </div>
+  `;
+}
+
+function wireGuildSyncTabs() {
+  document.querySelectorAll('.guildsync-tab').forEach((tabButton) => {
+    tabButton.addEventListener('click', () => {
+      const nextTab = tabButton.dataset.tabId;
+
+      if (!nextTab || nextTab === activeGuildSyncTab) {
+        return;
+      }
+
+      activeGuildSyncTab = nextTab;
+      renderGuildSyncTabLayout();
+    });
+  });
+}
+
+function renderGuildSyncTabLayout() {
+  const tabBar = document.querySelector('.guildsync-tabs');
+  const content = document.querySelector('#guildSyncTabContent');
+
+  if (tabBar) {
+    tabBar.innerHTML = renderGuildSyncTabs();
+  }
+
+  if (content) {
+    content.innerHTML = renderGuildSyncTabContent();
+  }
+
+  wireGuildSyncTabs();
 }
 
 function renderDiscordArea() {

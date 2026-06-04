@@ -1,7 +1,4 @@
 import 'dotenv/config';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
@@ -9,20 +6,19 @@ import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 
 import {
-  LOGIN_DB_PATH,
+  GUILDSYNC_DB_NAME,
   openLoginDB,
   upsertLoginUser,
 
-  GUILDSYNC_DB_PATH,
   openAppDataDB,
   upsertDiscordRoles,
   upsertDiscordMembers
 } from './guildsync-database-actions.js';
 
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+let discordBotConnected = false;
+let discordBotSocketId = null;
+let discordBotConnectedAt = null;
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 3001);
 
@@ -36,14 +32,18 @@ const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
 
+let loginDB;
+let applicationDB;
 
-const loginDB = openLoginDB();
+try {
+  loginDB = await openLoginDB();
+  applicationDB = await openAppDataDB();
 
-console.log(`SQLite database ready: ${LOGIN_DB_PATH}`);
-
-const applicationDB = openAppDataDB();
-
-console.log(`SQLite database ready: ${GUILDSYNC_DB_PATH}`)
+  Log(`MariaDB database ready: ${GUILDSYNC_DB_NAME}`);
+} catch (error) {
+  Log('Failed to initialize MariaDB:', error);
+  process.exit(1);
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -76,7 +76,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
 
     const discordToken = await exchangeCodeWithDiscord(code, effectiveRedirectURI);
     const discordUser = await fetchDiscordUser(discordToken.access_token);
-    const dbUser = upsertLoginUser(loginDB, discordUser);
+    const dbUser = await upsertLoginUser(loginDB, discordUser);
 
     if (!dbUser.allowed) {
       return res.status(403).json({
@@ -113,7 +113,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
       {
         sub: guildSyncUser.discord_user_id,
         username: guildSyncUser.username,
-        gobal_name: guildSyncUser.global_name,
+        global_name: guildSyncUser.global_name,
         display_name: preferredUserName(dbUser),
         avatar_url: guildSyncUser.avatar_url,
         role: guildSyncUser.role
@@ -135,7 +135,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
       message: `Logged in and authorized as ${guildSyncUser.display_name}.`
     });
   } catch (error) {
-    console.error('Discord desktop-token error:', error);
+    Log('Discord desktop-token error:', error);
 
     return res.status(500).json({
       ok: false,
@@ -205,19 +205,22 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
+  discordBotConnected = true;
+  discordBotSocketId = socket.id;
+  discordBotConnectedAt = new Date().toISOString();
+
   const user = socket.guildSyncUser;
 
   if (socket.guildSyncAuthType === 'discord-bot') {
-    console.log(`Connection: ${socket.id} => Discord bot`);
+    Log(`Connection: ${socket.id} => Discord bot`);
     socket.join('GuildSyncDiscordBot');
   } else if (socket.guildSyncAuthenticated && user) {
-    console.log(`Connection: ${socket.id} => ${user.display_name} (${user.discord_user_id}) GuildSync User`);
+    Log(`Connection: ${socket.id} => ${user.display_name} (${user.discord_user_id}) GuildSync User`);
   } else {
-    console.log(`Connection: ${socket.id} => Unauthenticated`);
+    Log(`Connection: ${socket.id} => Unauthenticated`);
   }
 
-
-  socket.on('guildsync:sending-discord-roles', (payload = {}, callback) => {
+  socket.on('guildsync:sending-discord-roles', async (payload = {}, callback) => {
     if (socket.guildSyncAuthType !== 'discord-bot') {
       const response = {
         ok: false,
@@ -225,19 +228,14 @@ io.on('connection', (socket) => {
         at: new Date().toLocaleString()
       };
 
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-roles-result', response);
-      }
-
+      sendSocketResponse(socket, 'guildsync:discord-roles-result', callback, response);
       return;
     }
 
     try {
-      const result = upsertDiscordRoles(applicationDB, payload);
+      const result = await upsertDiscordRoles(applicationDB, payload);
 
-      console.log(
+      Log(
         `Received Discord roles: ${result.roles_processed} role(s) processed.`
       );
 
@@ -248,13 +246,9 @@ io.on('connection', (socket) => {
         at: new Date().toLocaleString()
       };
 
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-roles-result', response);
-      }
+      sendSocketResponse(socket, 'guildsync:discord-roles-result', callback, response);
     } catch (error) {
-      console.error('Failed to process guildsync:sending-discord-roles payload:', error);
+      Log('Failed to process guildsync:sending-discord-roles payload:', error);
 
       const response = {
         ok: false,
@@ -262,15 +256,11 @@ io.on('connection', (socket) => {
         at: new Date().toLocaleString()
       };
 
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-roles-result', response);
-      }
+      sendSocketResponse(socket, 'guildsync:discord-roles-result', callback, response);
     }
   });
 
-  socket.on('guildsync:sending-discord-members', (payload = {}, callback) => {
+  socket.on('guildsync:sending-discord-members', async (payload = {}, callback) => {
     if (socket.guildSyncAuthType !== 'discord-bot') {
       const response = {
         ok: false,
@@ -278,25 +268,14 @@ io.on('connection', (socket) => {
         at: new Date().toLocaleString()
       };
 
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-members-result', response);
-      }
-
+      sendSocketResponse(socket, 'guildsync:discord-members-result', callback, response);
       return;
     }
 
     try {
-      const members = Array.isArray(payload.members)
-        ? payload.members
-        : Array.isArray(payload)
-          ? payload
-          : [];
+      const result = await upsertDiscordMembers(applicationDB, payload);
 
-      const result = upsertDiscordMembers(applicationDB, members);
-
-      console.log(
+      Log(
         `Received Discord members: ${result.members_processed} member(s) processed. ${result.members_removed} member(s) removed.`
       );
 
@@ -308,13 +287,9 @@ io.on('connection', (socket) => {
         at: new Date().toLocaleString()
       };
 
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-members-result', response);
-      }
+      sendSocketResponse(socket, 'guildsync:discord-members-result', callback, response);
     } catch (error) {
-      console.error('Failed to process guildsync:sending-discord-members payload:', error);
+      Log('Failed to process guildsync:sending-discord-members payload:', error);
 
       const response = {
         ok: false,
@@ -322,11 +297,7 @@ io.on('connection', (socket) => {
         at: new Date().toLocaleString()
       };
 
-      if (typeof callback === 'function') {
-        callback(response);
-      } else {
-        socket.emit('guildsync:discord-members-result', response);
-      }
+      sendSocketResponse(socket, 'guildsync:discord-members-result', callback, response);
     }
   });
 
@@ -354,15 +325,24 @@ io.on('connection', (socket) => {
       name = user.display_name + ' GuildSync User';
     }
 
-    console.log(`Disconnected: ${socket.id} => ${name} ${reason}`);
+    Log(`Disconnected: ${socket.id} => ${name} ${reason}`);
   });
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`GuildSync auth server listening at http://${HOST}:${PORT}`);
-  console.log(`Discord redirect URI: ${DISCORD_REDIRECT_URI}`);
-  console.log(`Current GuildSync client version: ${CURRENT_GUILDSYNC_CLIENT_VERSION}`);
+  Log(`GuildSync auth server listening at http://${HOST}:${PORT}`);
+  Log(`Discord redirect URI: ${DISCORD_REDIRECT_URI}`);
+  Log(`Current GuildSync client version: ${CURRENT_GUILDSYNC_CLIENT_VERSION}`);
 });
+
+function sendSocketResponse(socket, eventName, callback, response) {
+  if (typeof callback === 'function') {
+    callback(response);
+    return;
+  }
+
+  socket.emit(eventName, response);
+}
 
 async function exchangeCodeWithDiscord(code, redirectURI) {
   const body = new URLSearchParams({
@@ -507,10 +487,15 @@ function requiredEnv(name) {
   const value = process.env[name];
 
   if (!value) {
-    console.error(`Missing required environment variable: ${name}`);
-    console.error('Copy .env.example to .env and fill in the values.');
+    Log(`Missing required environment variable: ${name}`);
+    Log('Copy .env.example to .env and fill in the values.');
     process.exit(1);
   }
 
   return value;
+}
+
+export function Log(message) {
+  const timestamp = new Date().toLocaleString();
+  console.log(`${timestamp} [GUILDSYNC-NODE] ${message}`);
 }
