@@ -24,7 +24,7 @@ import (
 const (
 	discordAuthorizeURL = "https://discord.com/oauth2/authorize"
 	defaultRedirectURI  = "http://127.0.0.1:53682/callback"
-	defaultAuthServer   = "http://127.0.0.1:3001"
+	defaultAuthServer   = "https://guildsync.perdues.me"
 )
 
 type oauthRuntimeState struct {
