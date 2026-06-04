@@ -205,15 +205,16 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  discordBotConnected = true;
-  discordBotSocketId = socket.id;
-  discordBotConnectedAt = new Date().toISOString();
 
   const user = socket.guildSyncUser;
 
   if (socket.guildSyncAuthType === 'discord-bot') {
     Log(`Connection: ${socket.id} => Discord bot`);
+    discordBotConnected = true;
+    discordBotSocketId = socket.id;
+    discordBotConnectedAt = new Date().toISOString();
     socket.join('GuildSyncDiscordBot');
+
   } else if (socket.guildSyncAuthenticated && user) {
     Log(`Connection: ${socket.id} => ${user.display_name} (${user.discord_user_id}) GuildSync User`);
   } else {

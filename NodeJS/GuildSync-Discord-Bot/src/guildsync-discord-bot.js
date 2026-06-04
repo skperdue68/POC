@@ -30,17 +30,17 @@ const {
 } = process.env;
 
 if (!DISCORD_TOKEN) {
-  console.error('Missing DISCORD_TOKEN in .env');
+  Log('Missing DISCORD_TOKEN in .env');
   process.exit(1);
 }
 
 if (!GUILDSYNC_SOCKET_URL) {
-  console.error('Missing GUILDSYNC_SOCKET_URL in .env');
+  Log('Missing GUILDSYNC_SOCKET_URL in .env');
   process.exit(1);
 }
 
 if (!GUILDSYNC_BOT_KEY) {
-  console.error('Missing GUILDSYNC_BOT_KEY in .env');
+  Log('Missing GUILDSYNC_BOT_KEY in .env');
   process.exit(1);
 }
 

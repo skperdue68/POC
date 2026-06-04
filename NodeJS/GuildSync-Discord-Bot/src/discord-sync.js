@@ -70,7 +70,8 @@ export async function syncDiscordRolesAndMembers(guild, guildSyncSocket) {
     .sort((a, b) => b.position - a.position)
     .map((role) => ({
       role_id: role.id,
-      role_name: role.name
+      role_name: role.name,
+      role_color: role.color
     }));
 
   const rolesPayload = {
@@ -105,22 +106,23 @@ export async function syncDiscordRolesAndMembers(guild, guildSyncSocket) {
       return nameA.localeCompare(nameB);
     })
     .map((member) => {
-      const roleColumns = {};
+      const roles = [];
 
       for (const role of member.roles.cache.values()) {
         if (role.id === guild.id) {
           continue; // removes @everyone
         }
 
-        roleColumns[`r_${role.id}`] = 1;
+        roles.push(role.id);
       }
 
       return {
         discord_id: member.user.id,
+        avatar: member.user.avatar ?? '',
         username: member.user.username,
         global_name: member.user.globalName ?? '',
         server_nickname: member.nickname ?? '',
-        ...roleColumns
+        roles
       };
     });
 

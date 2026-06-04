@@ -65,39 +65,53 @@ async function createAndInitializePool() {
 
 async function initializeSchema(db) {
   await db.query(`
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS guildsyncusers (
       discord_user_id VARCHAR(32) PRIMARY KEY,
       username VARCHAR(255) NOT NULL,
       global_name VARCHAR(255),
-      guild_user_name VARCHAR(255),
+      guild_member_name VARCHAR(255),
       email VARCHAR(255),
       avatar TEXT,
       allowed TINYINT(1) NOT NULL DEFAULT 0,
       role VARCHAR(50) NOT NULL DEFAULT 'user',
       requested_at VARCHAR(32) NOT NULL,
       approved_at VARCHAR(32),
-      last_login_at VARCHAR(32),
-      updated_at VARCHAR(32) NOT NULL
+      last_login_at VARCHAR(32)
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS roles (
+    CREATE TABLE IF NOT EXISTS discordroles (
       role_id VARCHAR(32) PRIMARY KEY,
-      role_name VARCHAR(255) NOT NULL
+      role_name VARCHAR(255) NOT NULL,
+      role_color VARCHAR(32)
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS discordMembers (
+    CREATE TABLE IF NOT EXISTS discordmembers (
       discord_id VARCHAR(32) PRIMARY KEY,
       username VARCHAR(255) NOT NULL,
       global_name VARCHAR(255),
-      server_nickname VARCHAR(255)
+      server_nickname VARCHAR(255),
+      avatar TEXT NULL,
+      import_current BOOLEAN NOT NULL DEFAULT FALSE
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS discordmemberroles (
+      discord_id VARCHAR(32),
+      role_id VARCHAR(32),
+      PRIMARY KEY (discord_id, role_id),
+      CONSTRAINT discordmembers_to_discordmemberroles FOREIGN KEY (discord_id) REFERENCES discordmembers (discord_id) ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT discordroles_to_discordmemberroles FOREIGN KEY (role_id) REFERENCES discordroles (role_id) ON DELETE CASCADE ON UPDATE CASCADE
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
@@ -114,12 +128,12 @@ async function initializeSchema(db) {
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_roles
-    ON roles (role_name)
+    ON discordroles (role_name)
   `);
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_discord_members
-    ON discordMembers (username)
+    ON discordmembers (username)
   `);
 }
 
@@ -128,7 +142,7 @@ export async function upsertLoginUser(loginDB, discordUser) {
 
   const [adminRows] = await loginDB.execute(`
     SELECT COUNT(*) AS admin_count
-    FROM users
+    FROM guildsyncusers
     WHERE allowed = 1
       AND role = 'admin'
   `);
@@ -145,7 +159,7 @@ export async function upsertLoginUser(loginDB, discordUser) {
 
   await loginDB.execute(
     `
-      INSERT INTO users (
+      INSERT INTO guildsyncusers (
         discord_user_id,
         username,
         global_name,
@@ -154,18 +168,16 @@ export async function upsertLoginUser(loginDB, discordUser) {
         allowed,
         role,
         requested_at,
-        last_login_at,
-        updated_at
+        last_login_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         username = VALUES(username),
         global_name = VALUES(global_name),
         email = VALUES(email),
         avatar = VALUES(avatar),
-        last_login_at = VALUES(last_login_at),
-        updated_at = VALUES(updated_at)
-    `,
+        last_login_at = VALUES(last_login_at)
+      `,
     [
       discordUser.id,
       username,
@@ -175,7 +187,6 @@ export async function upsertLoginUser(loginDB, discordUser) {
       allowed,
       role,
       now,
-      now,
       now
     ]
   );
@@ -183,7 +194,7 @@ export async function upsertLoginUser(loginDB, discordUser) {
   const [rows] = await loginDB.execute(
     `
       SELECT *
-      FROM users
+      FROM guildsyncusers
       WHERE discord_user_id = ?
     `,
     [discordUser.id]
@@ -203,6 +214,7 @@ export async function upsertDiscordRoles(applicationDB, payload) {
     for (const role of roles) {
       const roleID = String(role.role_id || role.id || '').trim();
       const roleName = String(role.role_name || role.name || '').trim();
+      const roleColor = role.role_color ?? null;
 
       if (!roleID) {
         continue;
@@ -210,20 +222,24 @@ export async function upsertDiscordRoles(applicationDB, payload) {
 
       await connection.execute(
         `
-          INSERT INTO roles (
+          INSERT INTO discordroles (
             role_id,
-            role_name
+            role_name,
+            role_color
           )
           VALUES (
+            ?,
             ?,
             ?
           )
           ON DUPLICATE KEY UPDATE
-            role_name = VALUES(role_name)
+            role_name = VALUES(role_name),
+            role_color = VALUES(role_color)
         `,
         [
           roleID,
-          roleName || 'Unnamed Role'
+          roleName || 'Unnamed Role',
+          roleColor
         ]
       );
     }
@@ -236,48 +252,9 @@ export async function upsertDiscordRoles(applicationDB, payload) {
     connection.release();
   }
 
-  await addRoleColumnsToMembers(applicationDB, roles);
-
   return {
     roles_processed: roles.length
   };
-}
-
-async function addRoleColumnsToMembers(applicationDB, roles) {
-  const existingColumns = await getTableColumns(applicationDB, 'discordMembers');
-  const existingColumnSet = new Set(existingColumns);
-
-  for (const role of roles) {
-    const roleID = String(role.role_id || role.id || '').trim();
-    const roleName = String(role.role_name || role.name || 'Unnamed Role').trim() || 'Unnamed Role';
-
-    if (!roleID) {
-      continue;
-    }
-
-    const columnName = `r_${roleID}`;
-    const columnComment = quoteStringForSqlComment(roleName);
-
-    if (!existingColumnSet.has(columnName)) {
-      await applicationDB.query(`
-        ALTER TABLE discordMembers
-        ADD COLUMN ${quoteIdentifier(columnName)}
-        TINYINT(1) NOT NULL DEFAULT 0
-        COMMENT ${columnComment}
-      `);
-
-      existingColumnSet.add(columnName);
-    } else {
-      await applicationDB.query(`
-        ALTER TABLE discordMembers
-        MODIFY COLUMN ${quoteIdentifier(columnName)}
-        TINYINT(1) NOT NULL DEFAULT 0
-        COMMENT ${columnComment}
-      `);
-    }
-  }
-
-  return applicationDB;
 }
 
 export async function upsertDiscordMembers(applicationDB, payload) {
@@ -290,108 +267,110 @@ export async function upsertDiscordMembers(applicationDB, payload) {
   if (members.length === 0) {
     return {
       members_processed: 0,
-      members_removed: 0
+      members_removed: 0,
+      member_roles_processed: 0
     };
   }
 
-  let existingColumns = await getTableColumns(applicationDB, 'discordMembers');
-  const existingColumnSet = new Set(existingColumns);
-
-  if (!existingColumnSet.has('isImported')) {
-    await applicationDB.query(`
-      ALTER TABLE discordMembers
-      ADD COLUMN isImported TINYINT(1) NOT NULL DEFAULT 0
-    `);
-
-    existingColumnSet.add('isImported');
-  }
-
-  const payloadRoleColumns = [
-    ...new Set(
-      members.flatMap((member) =>
-        Object.keys(member).filter((key) => key.startsWith('r_'))
-      )
-    )
-  ];
-
-  for (const columnName of payloadRoleColumns) {
-    if (!existingColumnSet.has(columnName)) {
-      await applicationDB.query(`
-        ALTER TABLE discordMembers
-        ADD COLUMN ${quoteIdentifier(columnName)} TINYINT(1) NOT NULL DEFAULT 0
-      `);
-
-      existingColumnSet.add(columnName);
-    }
-  }
-
-  existingColumns = await getTableColumns(applicationDB, 'discordMembers');
-
-  const existingRoleColumns = existingColumns.filter((column) =>
-    column.startsWith('r_')
-  );
-
-  const baseColumns = [
-    'discord_id',
-    'username',
-    'global_name',
-    'server_nickname',
-    'isImported'
-  ];
-
-  const columns = [
-    ...baseColumns,
-    ...existingRoleColumns
-  ];
-
-  const quotedColumns = columns
-    .map((column) => quoteIdentifier(column))
-    .join(', ');
-
-  const placeholders = columns
-    .map(() => '?')
-    .join(', ');
-
-  const replaceSql = `
-    REPLACE INTO discordMembers (
-      ${quotedColumns}
+  const memberSql = `
+    INSERT INTO discordmembers (
+      discord_id,
+      avatar,
+      username,
+      global_name,
+      server_nickname,
+      import_current
     )
     VALUES (
-      ${placeholders}
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?
+    )
+    ON DUPLICATE KEY UPDATE
+      avatar = VALUES(avatar),
+      username = VALUES(username),
+      global_name = VALUES(global_name),
+      server_nickname = VALUES(server_nickname),
+      import_current = VALUES(import_current)
+  `;
+
+  const memberRoleSql = `
+    INSERT IGNORE INTO discordmemberroles (
+      discord_id,
+      role_id
+    )
+    VALUES (
+      ?,
+      ?
     )
   `;
 
   const connection = await applicationDB.getConnection();
 
   let membersRemoved = 0;
+  let memberRolesProcessed = 0;
 
   try {
     await connection.beginTransaction();
 
     await connection.execute(`
-      UPDATE discordMembers
-      SET isImported = 0
+      UPDATE discordmembers
+      SET import_current = 0
     `);
 
     for (const member of members) {
-      const values = columns.map((column) => {
-        if (column === 'isImported') {
-          return 1;
-        }
+      const discordID = String(member.discord_id || member.id || '').trim();
 
-        if (column.startsWith('r_')) {
-          return member[column] ? 1 : 0;
-        }
+      if (!discordID) {
+        continue;
+      }
 
-        return member[column] ?? '';
+      await connection.execute(
+        memberSql,
+        [
+          discordID,
+          member.avatar || null,
+          member.username || '',
+          member.global_name || null,
+          member.server_nickname || null,
+          1
+        ]
+      );
+
+      await connection.execute(
+        `
+          DELETE FROM discordmemberroles
+          WHERE discord_id = ?
+        `,
+        [discordID]
+      );
+
+      const roleIDs = getRoleIDsFromMember(member);
+      console.log('Member role import:', {
+        discordID,
+        username: member.username,
+        roleIDs
       });
 
-      await connection.execute(replaceSql, values);
+      for (const roleID of roleIDs) {
+        await connection.execute(
+          memberRoleSql,
+          [
+            discordID,
+            roleID
+          ]
+        );
+
+        memberRolesProcessed += 1;
+      }
     }
 
     const [deleteResult] = await connection.execute(`
-      DELETE FROM discordMembers
-      WHERE isImported = 0
+      DELETE FROM discordmembers
+      WHERE import_current = 0
     `);
 
     membersRemoved = deleteResult.affectedRows || 0;
@@ -404,13 +383,6 @@ export async function upsertDiscordMembers(applicationDB, payload) {
     connection.release();
   }
 
-  if (await columnExists(applicationDB, 'discordMembers', 'isImported')) {
-    await applicationDB.query(`
-      ALTER TABLE discordMembers
-      DROP COLUMN isImported
-    `);
-  }
-
   await setSetting(
     applicationDB,
     'discord_refresh',
@@ -419,45 +391,29 @@ export async function upsertDiscordMembers(applicationDB, payload) {
 
   return {
     members_processed: members.length,
-    members_removed: membersRemoved
+    members_removed: membersRemoved,
+    member_roles_processed: memberRolesProcessed
   };
 }
 
-async function getTableColumns(db, tableName) {
-  const [rows] = await db.execute(
-    `
-      SELECT COLUMN_NAME AS column_name
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = ?
-        AND TABLE_NAME = ?
-      ORDER BY ORDINAL_POSITION
-    `,
-    [
-      GUILDSYNC_DB_NAME,
-      tableName
-    ]
-  );
+function getRoleIDsFromMember(member) {
+  if (!Array.isArray(member.roles)) {
+    return [];
+  }
 
-  return rows.map((row) => row.column_name);
-}
+  const roleIDs = new Set();
 
-async function columnExists(db, tableName, columnName) {
-  const [rows] = await db.execute(
-    `
-      SELECT COUNT(*) AS column_count
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = ?
-        AND TABLE_NAME = ?
-        AND COLUMN_NAME = ?
-    `,
-    [
-      GUILDSYNC_DB_NAME,
-      tableName,
-      columnName
-    ]
-  );
+  for (const role of member.roles) {
+    const roleID = typeof role === 'object' && role !== null
+      ? String(role.role_id || role.id || '').trim()
+      : String(role || '').trim();
 
-  return Number(rows[0]?.column_count || 0) > 0;
+    if (roleID) {
+      roleIDs.add(roleID);
+    }
+  }
+
+  return [...roleIDs];
 }
 
 async function safeRollback(connection) {
@@ -472,14 +428,6 @@ function quoteIdentifier(identifier) {
   return `\`${String(identifier).replaceAll('`', '``')}\``;
 }
 
-function quoteStringForSqlComment(value) {
-  const comment = String(value || '')
-    .replaceAll("'", "''")
-    .slice(0, 1024);
-
-  return `'${comment}'`;
-}
-
 function requiredDatabaseEnv(name) {
   const value = process.env[name];
 
@@ -491,7 +439,6 @@ function requiredDatabaseEnv(name) {
 
   return value;
 }
-
 
 async function setSetting(db, data, value) {
   await db.execute(
