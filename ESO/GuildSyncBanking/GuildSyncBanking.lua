@@ -56,21 +56,6 @@ local gsbTickets = {
 local gsbTicketEventIds = {}
 
 
-local TARGET_GUILD_NAME = "Alphabet Mafia"
-
-local function GSB_GetTargetGuildId()
-  for guildIndex = 1, GetNumGuilds() do
-    local guildId = GetGuildId(guildIndex)
-    local guildName = GetGuildName(guildId)
-
-    if GSB_Trim(guildName) == TARGET_GUILD_NAME then
-      return guildId, guildIndex, guildName
-    end
-  end
-
-  GSB_Print("Could not find guild named: " .. TARGET_GUILD_NAME)
-  return nil, nil, nil
-end
 
 local function GSB_Print(message)
   CHAT_ROUTER:AddSystemMessage("|c88CCFF[GuildSyncBanking]|r " .. tostring(message))
@@ -100,6 +85,22 @@ local function GSB_Trim(value)
   end
 
   return value:match("^%s*(.-)%s*$")
+end
+
+local TARGET_GUILD_NAME = "Alphabet Mafia"
+
+local function GSB_GetTargetGuildId()
+  for guildIndex = 1, GetNumGuilds() do
+    local guildId = GetGuildId(guildIndex)
+    local guildName = GetGuildName(guildId)
+
+    if string.lower(GSB_Trim(guildName)) == string.lower(TARGET_GUILD_NAME) then
+      return guildId, guildIndex, guildName
+    end
+  end
+
+  GSB_Print("Could not find guild named: " .. TARGET_GUILD_NAME)
+  return nil, nil, nil
 end
 
 local function GSB_EnsureSavedVars()
