@@ -12,7 +12,10 @@ import {
   CloseWindow,
   StartDiscordLogin,
   GetGuildSyncSession,
-  LogoutGuildSync
+  LogoutGuildSync,
+  StartGuildSyncFileWatcher,
+  StopGuildSyncFileWatcher,
+  CollectGuildSyncBankingData
 } from '../wailsjs/go/main/App';
 
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -83,6 +86,7 @@ function showSplash() {
     await ShowMainWindow();
     await loadExistingSession();
     showMainWindow();
+    await syncGuildSyncFileWatcherWithAuthState();
     connectSocket();
   }, 5000);
 }
@@ -1125,6 +1129,7 @@ async function logoutGuildSync() {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
     });
 
+    await syncGuildSyncFileWatcherWithAuthState();
     showMainWindow();
     connectSocket();
   } catch (error) {
@@ -1627,11 +1632,108 @@ function updateStatusDot() {
   dot.title = `Websocket connected. Authenticated as ${getDisplayName()}.`;
 }
 
+async function syncGuildSyncFileWatcherWithAuthState() {
+  try {
+    if (isAuthenticatedSession()) {
+      const status = await StartGuildSyncFileWatcher();
+
+      if (status?.message) {
+        addSystemMessage(status.watching ? 'file-watcher' : 'file-watcher-error', status.message, {
+          ttlMs: TRANSIENT_MESSAGE_TTL_MS
+        });
+      }
+
+      return;
+    }
+
+    await StopGuildSyncFileWatcher();
+    removeSystemMessage('file-watcher');
+  } catch (error) {
+    addSystemMessage('file-watcher-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+function handleGuildSyncSavedVarsFileModified(payload = {}) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  const key = String(payload.key || payload.fileName || 'saved-vars-file').trim() || 'saved-vars-file';
+  const label = String(payload.label || '').trim();
+  const fileName = String(payload.fileName || 'SavedVariables file').trim() || 'SavedVariables file';
+  const displayName = label ? `${label} saved variables (${fileName})` : fileName;
+
+  addSystemMessage(`saved-vars-file-updated-${key}`, `${displayName} has been updated.`, {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+
+  if (key.toLowerCase() === 'banking') {
+    handleGuildSyncBankingSavedVarsModified(payload);
+  }
+}
+
+async function handleGuildSyncBankingSavedVarsModified(payload = {}) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  try {
+    const result = await CollectGuildSyncBankingData(payload);
+
+    if (!result?.ok) {
+      addSystemMessage('banking-data-pending', result?.message || 'Banking SavedVariables changed, but no banking data was sent yet.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const bankingPayload = {
+      authenticated_username: getDisplayName(),
+      authenticated_discord_user_id: guildSyncSession?.user?.discord_user_id || '',
+      source: 'guildsync-frontend-client',
+      file_name: result.fileName || payload.fileName || '',
+      file_path: result.filePath || payload.filePath || '',
+      collected_at: new Date().toISOString(),
+      data: result.data || {}
+    };
+
+    const response = await emitSocketWithAck('guildsync:sending-banking-data', bankingPayload, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Backend rejected the banking data payload.');
+    }
+
+    addSystemMessage('banking-data-sent', response.message || 'Banking data sent to GuildSync backend.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } catch (error) {
+    addSystemMessage('banking-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+function handleGuildSyncFileWatcherError(message) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  addSystemMessage('file-watcher-error', formatError(message), {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
 function wireGuildSyncEvents() {
-  EventsOn('guildsync-login-complete', (session) => {
+  EventsOn('guildsync-savedvars-file-modified', handleGuildSyncSavedVarsFileModified);
+  EventsOn('guildsync-file-watcher-error', handleGuildSyncFileWatcherError);
+
+  EventsOn('guildsync-login-complete', async (session) => {
     guildSyncSession = session || { logged_in: false, allowed: false };
 
     renderDiscordArea();
+    await syncGuildSyncFileWatcherWithAuthState();
 
     addSystemMessage(
       'auth',
@@ -1644,7 +1746,7 @@ function wireGuildSyncEvents() {
     connectSocket();
   });
 
-  EventsOn('guildsync-login-denied', (message) => {
+  EventsOn('guildsync-login-denied', async (message) => {
     guildSyncSession = {
       logged_in: false,
       allowed: false,
@@ -1652,6 +1754,7 @@ function wireGuildSyncEvents() {
     };
 
     renderDiscordArea();
+    await syncGuildSyncFileWatcherWithAuthState();
 
     addSystemMessage('auth', message || 'Access denied.', {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
@@ -1660,7 +1763,7 @@ function wireGuildSyncEvents() {
     connectSocket();
   });
 
-  EventsOn('guildsync-login-failed', (message) => {
+  EventsOn('guildsync-login-failed', async (message) => {
     guildSyncSession = {
       logged_in: false,
       allowed: false,
@@ -1668,6 +1771,7 @@ function wireGuildSyncEvents() {
     };
 
     renderDiscordArea();
+    await syncGuildSyncFileWatcherWithAuthState();
 
     addSystemMessage('auth', message || 'Login failed.', {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS

@@ -17,6 +17,11 @@ type App struct {
 	mu       sync.Mutex
 	quiting  bool
 	oauth    *oauthRuntimeState
+
+	fileWatcherMu        sync.Mutex
+	fileWatcherCancel    context.CancelFunc
+	fileWatcherRunning   bool
+	fileWatcherSignature string
 }
 
 type WindowState struct {
@@ -49,6 +54,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	a.StopGuildSyncFileWatcher()
 	_ = a.SaveWindowState()
 	a.stopTray()
 }

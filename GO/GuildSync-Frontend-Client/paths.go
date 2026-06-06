@@ -8,7 +8,15 @@ import (
 )
 
 type GuildSyncPaths struct {
-	SavedVarsDir string `json:"savedVarsDir"`
+	SavedVarsDir        string                        `json:"savedVarsDir"`
+	SavedVarsWatchFiles []GuildSyncSavedVarsWatchFile `json:"savedVarsWatchFiles"`
+}
+
+type GuildSyncSavedVarsWatchFile struct {
+	Key      string `json:"key"`
+	Label    string `json:"label"`
+	FileName string `json:"fileName"`
+	FilePath string `json:"filePath"`
 }
 
 func findEnvFile() string {
@@ -121,12 +129,53 @@ func getSavedVarsDir() string {
 	return getDefaultSavedVarsDir()
 }
 
-func getSavedVarsFilePath(fileName string) string {
-	return filepath.Join(getSavedVarsDir(), fileName)
+func getSavedVarsFileNameFromEnv(envKey string, defaultFileName string) string {
+	fileName := strings.TrimSpace(os.Getenv(envKey))
+	if fileName == "" {
+		fileName = defaultFileName
+	}
+
+	return filepath.Base(fileName)
+}
+
+func getSavedVarsWatchFiles() []GuildSyncSavedVarsWatchFile {
+	dir := getSavedVarsDir()
+
+	watchFiles := []GuildSyncSavedVarsWatchFile{
+		{
+			Key:      "banking",
+			Label:    "Banking",
+			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_BANKING_FILE_NAME", "GuildSyncBanking.lua"),
+		},
+		{
+			Key:      "roster",
+			Label:    "Roster",
+			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_ROSTER_FILE_NAME", "GuildSyncRoster.lua"),
+		},
+	}
+
+	for i := range watchFiles {
+		watchFiles[i].FilePath = filepath.Join(dir, watchFiles[i].FileName)
+	}
+
+	return watchFiles
+}
+
+func getSavedVarsWatchFileByKey(key string) GuildSyncSavedVarsWatchFile {
+	cleanKey := strings.ToLower(strings.TrimSpace(key))
+
+	for _, watchFile := range getSavedVarsWatchFiles() {
+		if strings.ToLower(strings.TrimSpace(watchFile.Key)) == cleanKey {
+			return watchFile
+		}
+	}
+
+	return GuildSyncSavedVarsWatchFile{}
 }
 
 func (a *App) GetResolvedPaths() GuildSyncPaths {
 	return GuildSyncPaths{
-		SavedVarsDir: getSavedVarsDir(),
+		SavedVarsDir:        getSavedVarsDir(),
+		SavedVarsWatchFiles: getSavedVarsWatchFiles(),
 	}
 }

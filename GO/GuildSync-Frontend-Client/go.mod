@@ -3,6 +3,7 @@ module GuildSync
 go 1.23.0
 
 require (
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/getlantern/systray v1.2.2
 	github.com/wailsapp/wails/v2 v2.12.0
 )

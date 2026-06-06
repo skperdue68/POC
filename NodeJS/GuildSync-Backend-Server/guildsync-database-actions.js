@@ -135,6 +135,23 @@ async function initializeSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_discord_members
     ON discordmembers (username)
   `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS  guildsyncbanking (
+      eventId varchar(32) NOT NULL,
+      transactionType varchar(32) NOT NULL,
+      receivedFrom varchar(255) NOT NULL,
+      eventTimestamp varchar(32) NOT NULL,
+      dateTime datetime NOT NULL,
+      depositAmount int(10) unsigned NOT NULL,
+      ticketQuantity int(10) unsigned DEFAULT NULL,
+      dataSource varchar(64) NOT NULL,
+      emailRequested tinyint(1) NOT NULL DEFAULT 0,
+      PRIMARY KEY (eventId)
+    )
+    CHARSET=utf8mb4
+    COLLATE=utf8mb4_unicode_ci
+  `);
 }
 
 export async function upsertLoginUser(loginDB, discordUser) {
@@ -671,6 +688,130 @@ export async function getDiscordMemberDataJSON(applicationDB) {
 
   return membersJson;
 }
+
+
+
+
+
+
+export async function insertBankingEntries(applicationDB, payload) {
+  const entries = Array.isArray(payload?.entries)
+    ? payload.entries
+    : [];
+
+  if (entries.length === 0) {
+    return {
+      banking_entries_received: 0,
+      banking_entries_inserted: 0,
+      banking_entries_ignored: 0
+    };
+  }
+
+  const connection = await applicationDB.getConnection();
+  let insertedCount = 0;
+
+  try {
+    await connection.beginTransaction();
+
+    for (const entry of entries) {
+      const eventId = Number(entry.eventId);
+      const transactionType = String(entry.type || entry.transactionType || '').trim();
+      const receivedFrom = String(entry.displayName || entry.receivedFrom || '').trim();
+      const eventTimestamp = Number(entry.time || entry.eventTimestamp);
+      const depositAmount = Number(entry.amount || entry.depositAmount);
+
+      const ticketQuantityRaw =
+        entry.ticketAmount ??
+        entry.ticketQuantity ??
+        null;
+
+      const ticketQuantity =
+        ticketQuantityRaw === null || ticketQuantityRaw === undefined
+          ? null
+          : Number(ticketQuantityRaw);
+
+      if (!eventId || !transactionType || !receivedFrom || !eventTimestamp || !depositAmount) {
+        continue;
+      }
+
+      const [result] = await connection.execute(
+        `
+          INSERT IGNORE INTO guildsyncbanking (
+            eventId,
+            transactionType,
+            receivedFrom,
+            eventTimestamp,
+            dateTime,
+            depositAmount,
+            ticketQuantity,
+            dataSource,
+            emailRequested
+          )
+          VALUES (
+            ?,
+            ?,
+            ?,
+            ?,
+            FROM_UNIXTIME(?),
+            ?,
+            ?,
+            ?,
+            0
+          )
+        `,
+        [
+          eventId,
+          transactionType,
+          receivedFrom,
+          eventTimestamp,
+          eventTimestamp,
+          depositAmount,
+          ticketQuantity,
+          String(payload?.source || 'GuildSyncBanking').trim()
+        ]
+      );
+
+      insertedCount += result.affectedRows || 0;
+    }
+
+    await connection.commit();
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  return {
+    banking_entries_received: entries.length,
+    banking_entries_inserted: insertedCount,
+    banking_entries_ignored: entries.length - insertedCount
+  };
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 async function safeRollback(connection) {
   try {

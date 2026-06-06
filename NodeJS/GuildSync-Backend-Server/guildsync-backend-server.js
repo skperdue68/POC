@@ -18,7 +18,8 @@ import {
   upsertDiscordRole,
   deleteDiscordRole,
   getDiscordDataDate,
-  getDiscordMemberDataJSON
+  getDiscordMemberDataJSON,
+  insertBankingEntries
 } from './guildsync-database-actions.js';
 
 let discordBotConnected = false;
@@ -489,6 +490,81 @@ io.on('connection', (socket) => {
       };
 
       sendSocketResponse(socket, 'guildsync:discord-role-delete-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:sending-banking-data', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to send banking data.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-data-result', callback, response);
+      return;
+    }
+
+    try {
+      const authenticatedUsername = String(
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.guild_member_name ||
+        socket.guildSyncUser.username ||
+        socket.guildSyncUser.discord_user_id ||
+        ''
+      ).trim();
+
+      const entries = Array.isArray(payload?.data?.entries)
+        ? payload.data.entries
+        : Array.isArray(payload.entries)
+          ? payload.entries
+          : Array.isArray(payload.data)
+            ? payload.data
+            : [];
+
+      const fileName = String(payload.file_name || '').trim();
+
+      const dataSource = String(
+        payload?.data?.table_name ||
+        payload.source ||
+        'GuildSyncBanking'
+      ).trim();
+
+      Log(
+        `Banking data received from ${authenticatedUsername || 'unknown user'}${fileName ? ` for ${fileName}` : ''}. Entries: ${entries.length}.`
+      );
+
+      const applicationDB = await openAppDataDB();
+
+      const result = await insertBankingEntries(applicationDB, {
+        source: dataSource,
+        entries
+      });
+
+      const response = {
+        ok: true,
+        message: 'Banking data processed by GuildSync backend.',
+        received: true,
+        received_from: authenticatedUsername,
+        file_name: fileName || null,
+        data_source: dataSource,
+        entries_count: entries.length,
+        ...result,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-data-result', callback, response);
+    } catch (error) {
+      Log(`Banking data processing failed: ${error.message}`);
+
+      const response = {
+        ok: false,
+        message: 'Banking data processing failed.',
+        error: error.message,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-data-result', callback, response);
     }
   });
 

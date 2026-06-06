@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function CloseWindow():Promise<void>;
 
+export function CollectGuildSyncBankingData(arg1:main.GuildSyncSavedVarsFileModifiedEvent):Promise<main.GuildSyncBankingDataResult>;
+
 export function GetGuildSyncClientConfig():Promise<main.GuildSyncClientConfig>;
 
 export function GetGuildSyncSession():Promise<main.GuildSyncSession>;
@@ -27,3 +29,7 @@ export function ShowFromTray():Promise<void>;
 export function ShowMainWindow():Promise<boolean>;
 
 export function StartDiscordLogin():Promise<main.GuildSyncSession>;
+
+export function StartGuildSyncFileWatcher():Promise<main.GuildSyncFileWatcherStatus>;
+
+export function StopGuildSyncFileWatcher():Promise<main.GuildSyncFileWatcherStatus>;

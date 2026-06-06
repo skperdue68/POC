@@ -6,6 +6,10 @@ export function CloseWindow() {
   return window['go']['main']['App']['CloseWindow']();
 }
 
+export function CollectGuildSyncBankingData(arg1) {
+  return window['go']['main']['App']['CollectGuildSyncBankingData'](arg1);
+}
+
 export function GetGuildSyncClientConfig() {
   return window['go']['main']['App']['GetGuildSyncClientConfig']();
 }
@@ -52,4 +56,12 @@ export function ShowMainWindow() {
 
 export function StartDiscordLogin() {
   return window['go']['main']['App']['StartDiscordLogin']();
+}
+
+export function StartGuildSyncFileWatcher() {
+  return window['go']['main']['App']['StartGuildSyncFileWatcher']();
+}
+
+export function StopGuildSyncFileWatcher() {
+  return window['go']['main']['App']['StopGuildSyncFileWatcher']();
 }

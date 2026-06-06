@@ -1,5 +1,29 @@
 export namespace main {
 	
+	export class GuildSyncBankingDataResult {
+	    ok: boolean;
+	    message: string;
+	    key: string;
+	    label: string;
+	    fileName: string;
+	    filePath: string;
+	    data?: Record<string, any>;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuildSyncBankingDataResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.message = source["message"];
+	        this.key = source["key"];
+	        this.label = source["label"];
+	        this.fileName = source["fileName"];
+	        this.filePath = source["filePath"];
+	        this.data = source["data"];
+	    }
+	}
 	export class GuildSyncClientConfig {
 	    discord_client_id: string;
 	    redirect_uri: string;
@@ -18,8 +42,63 @@ export namespace main {
 	        this.socket_url = source["socket_url"];
 	    }
 	}
+	export class GuildSyncSavedVarsWatchFile {
+	    key: string;
+	    label: string;
+	    fileName: string;
+	    filePath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuildSyncSavedVarsWatchFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.label = source["label"];
+	        this.fileName = source["fileName"];
+	        this.filePath = source["filePath"];
+	    }
+	}
+	export class GuildSyncFileWatcherStatus {
+	    watching: boolean;
+	    directory: string;
+	    files: GuildSyncSavedVarsWatchFile[];
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuildSyncFileWatcherStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.watching = source["watching"];
+	        this.directory = source["directory"];
+	        this.files = this.convertValues(source["files"], GuildSyncSavedVarsWatchFile);
+	        this.message = source["message"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class GuildSyncPaths {
 	    savedVarsDir: string;
+	    savedVarsWatchFiles: GuildSyncSavedVarsWatchFile[];
 	
 	    static createFrom(source: any = {}) {
 	        return new GuildSyncPaths(source);
@@ -28,8 +107,50 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.savedVarsDir = source["savedVarsDir"];
+	        this.savedVarsWatchFiles = this.convertValues(source["savedVarsWatchFiles"], GuildSyncSavedVarsWatchFile);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class GuildSyncSavedVarsFileModifiedEvent {
+	    key: string;
+	    label: string;
+	    directory: string;
+	    fileName: string;
+	    filePath: string;
+	    modifiedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuildSyncSavedVarsFileModifiedEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.label = source["label"];
+	        this.directory = source["directory"];
+	        this.fileName = source["fileName"];
+	        this.filePath = source["filePath"];
+	        this.modifiedAt = source["modifiedAt"];
 	    }
 	}
+	
 	export class GuildSyncUser {
 	    discord_user_id: string;
 	    username: string;
