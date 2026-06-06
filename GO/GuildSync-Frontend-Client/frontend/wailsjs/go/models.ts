@@ -18,6 +18,18 @@ export namespace main {
 	        this.socket_url = source["socket_url"];
 	    }
 	}
+	export class GuildSyncPaths {
+	    savedVarsDir: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuildSyncPaths(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.savedVarsDir = source["savedVarsDir"];
+	    }
+	}
 	export class GuildSyncUser {
 	    discord_user_id: string;
 	    username: string;

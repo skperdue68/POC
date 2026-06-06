@@ -14,6 +14,10 @@ export function GetGuildSyncSession() {
   return window['go']['main']['App']['GetGuildSyncSession']();
 }
 
+export function GetResolvedPaths() {
+  return window['go']['main']['App']['GetResolvedPaths']();
+}
+
 export function HideToTray() {
   return window['go']['main']['App']['HideToTray']();
 }

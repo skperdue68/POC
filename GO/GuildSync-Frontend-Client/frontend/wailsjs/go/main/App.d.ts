@@ -8,6 +8,8 @@ export function GetGuildSyncClientConfig():Promise<main.GuildSyncClientConfig>;
 
 export function GetGuildSyncSession():Promise<main.GuildSyncSession>;
 
+export function GetResolvedPaths():Promise<main.GuildSyncPaths>;
+
 export function HideToTray():Promise<void>;
 
 export function LogoutGuildSync():Promise<main.GuildSyncSession>;

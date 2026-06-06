@@ -80,9 +80,15 @@ jobs:
         run: |
           wails build -clean ${{ matrix.wails_args }}
 
+      - name: Package optional env example
+        shell: bash
+        run: |
+          cp .env.example build/bin/.env.example
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: GO/GuildSync-Frontend-Client/build/bin/**
+          include-hidden-files: true
           if-no-files-found: error

@@ -20,6 +20,8 @@ var appIcon []byte
 var trayIcon []byte
 
 func main() {
+	loadOptionalEnvFile()
+
 	app := NewApp(appIcon, trayIcon)
 
 	err := wails.Run(&options.App{
@@ -28,7 +30,7 @@ func main() {
 		Height: 920,
 
 		MinHeight: 800,
-		MinWidth: 900,
+		MinWidth:  900,
 		Frameless: true,
 
 		// Windows uses our systray file.
