@@ -17,6 +17,7 @@ type GuildSyncSavedVarsWatchFile struct {
 	Label    string `json:"label"`
 	FileName string `json:"fileName"`
 	FilePath string `json:"filePath"`
+	Enabled  bool   `json:"enabled"`
 }
 
 func findEnvFile() string {
@@ -154,8 +155,11 @@ func getSavedVarsWatchFiles() []GuildSyncSavedVarsWatchFile {
 		},
 	}
 
+	settings := loadFileWatchSettings()
+
 	for i := range watchFiles {
 		watchFiles[i].FilePath = filepath.Join(dir, watchFiles[i].FileName)
+		watchFiles[i].Enabled = !settings.DisabledFiles[strings.ToLower(strings.TrimSpace(watchFiles[i].Key))]
 	}
 
 	return watchFiles

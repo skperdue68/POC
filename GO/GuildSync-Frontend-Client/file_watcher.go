@@ -43,13 +43,14 @@ func (a *App) StartGuildSyncFileWatcher() GuildSyncFileWatcherStatus {
 	}
 
 	dir := getSavedVarsDir()
-	watchFiles := getSavedVarsWatchFiles()
+	allWatchFiles := getSavedVarsWatchFiles()
+	watchFiles := filterEnabledSavedVarsWatchFiles(allWatchFiles)
 	signature := savedVarsWatchFilesSignature(dir, watchFiles)
 
 	if strings.TrimSpace(dir) == "" {
 		return GuildSyncFileWatcherStatus{
 			Watching: false,
-			Files:    watchFiles,
+			Files:    allWatchFiles,
 			Message:  "SavedVariables directory could not be resolved.",
 		}
 	}
@@ -59,7 +60,7 @@ func (a *App) StartGuildSyncFileWatcher() GuildSyncFileWatcherStatus {
 		return GuildSyncFileWatcherStatus{
 			Watching:  false,
 			Directory: dir,
-			Files:     watchFiles,
+			Files:     allWatchFiles,
 			Message:   fmt.Sprintf("SavedVariables directory was not found: %s", dir),
 		}
 	}
@@ -68,8 +69,17 @@ func (a *App) StartGuildSyncFileWatcher() GuildSyncFileWatcherStatus {
 		return GuildSyncFileWatcherStatus{
 			Watching:  false,
 			Directory: dir,
-			Files:     watchFiles,
+			Files:     allWatchFiles,
 			Message:   fmt.Sprintf("SavedVariables path is not a directory: %s", dir),
+		}
+	}
+
+	if len(allWatchFiles) == 0 {
+		return GuildSyncFileWatcherStatus{
+			Watching:  false,
+			Directory: dir,
+			Files:     allWatchFiles,
+			Message:   "No SavedVariables files are configured to watch.",
 		}
 	}
 
@@ -77,8 +87,8 @@ func (a *App) StartGuildSyncFileWatcher() GuildSyncFileWatcherStatus {
 		return GuildSyncFileWatcherStatus{
 			Watching:  false,
 			Directory: dir,
-			Files:     watchFiles,
-			Message:   "No SavedVariables files are configured to watch.",
+			Files:     allWatchFiles,
+			Message:   "All SavedVariables file watchers are turned off.",
 		}
 	}
 
@@ -88,7 +98,7 @@ func (a *App) StartGuildSyncFileWatcher() GuildSyncFileWatcherStatus {
 		return GuildSyncFileWatcherStatus{
 			Watching:  true,
 			Directory: dir,
-			Files:     watchFiles,
+			Files:     allWatchFiles,
 			Message:   formatSavedVarsWatcherMessage(watchFiles),
 		}
 	}
@@ -111,9 +121,68 @@ func (a *App) StartGuildSyncFileWatcher() GuildSyncFileWatcherStatus {
 	return GuildSyncFileWatcherStatus{
 		Watching:  true,
 		Directory: dir,
-		Files:     watchFiles,
+		Files:     allWatchFiles,
 		Message:   formatSavedVarsWatcherMessage(watchFiles),
 	}
+}
+
+func (a *App) GetGuildSyncFileWatcherStatus() GuildSyncFileWatcherStatus {
+	dir := getSavedVarsDir()
+	allWatchFiles := getSavedVarsWatchFiles()
+
+	a.fileWatcherMu.Lock()
+	watching := a.fileWatcherRunning && a.fileWatcherCancel != nil
+	a.fileWatcherMu.Unlock()
+
+	watchFiles := filterEnabledSavedVarsWatchFiles(allWatchFiles)
+	message := "GuildSync file watcher is stopped."
+	if watching {
+		message = formatSavedVarsWatcherMessage(watchFiles)
+	} else if len(watchFiles) == 0 {
+		message = "All SavedVariables file watchers are turned off."
+	}
+
+	return GuildSyncFileWatcherStatus{
+		Watching:  watching,
+		Directory: dir,
+		Files:     allWatchFiles,
+		Message:   message,
+	}
+}
+
+func (a *App) SetGuildSyncSavedVarsWatchFileEnabled(key string, enabled bool) GuildSyncFileWatcherStatus {
+	cleanKey := strings.ToLower(strings.TrimSpace(key))
+	if cleanKey == "" {
+		return a.GetGuildSyncFileWatcherStatus()
+	}
+
+	found := false
+	for _, watchFile := range getSavedVarsWatchFiles() {
+		if strings.ToLower(strings.TrimSpace(watchFile.Key)) == cleanKey {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return a.GetGuildSyncFileWatcherStatus()
+	}
+
+	settings := loadFileWatchSettings()
+	if enabled {
+		delete(settings.DisabledFiles, cleanKey)
+	} else {
+		settings.DisabledFiles[cleanKey] = true
+	}
+
+	if err := saveFileWatchSettings(settings); err != nil {
+		status := a.GetGuildSyncFileWatcherStatus()
+		status.Message = fmt.Sprintf("Unable to save file watcher setting: %v", err)
+		return status
+	}
+
+	a.StopGuildSyncFileWatcher()
+	return a.GetGuildSyncFileWatcherStatus()
 }
 
 // StopGuildSyncFileWatcher stops the saved variables watcher. The frontend calls

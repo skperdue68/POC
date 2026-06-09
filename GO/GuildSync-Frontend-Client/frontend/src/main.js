@@ -15,13 +15,17 @@ import {
   LogoutGuildSync,
   StartGuildSyncFileWatcher,
   StopGuildSyncFileWatcher,
-  CollectGuildSyncBankingData
+  GetGuildSyncFileWatcherStatus,
+  SetGuildSyncSavedVarsWatchFileEnabled,
+  CollectGuildSyncBankingData,
+  CommitGuildSyncBankingData
 } from '../wailsjs/go/main/App';
 
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 const GUILDSYNC_APP_VERSION = '1.0.3';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 
 const TRANSIENT_MESSAGE_TTL_MS = 60 * 1000;
 const MESSAGE_VISIBLE_MS = 7000;
@@ -37,6 +41,8 @@ let resizeObserver = null;
 let resizeHandlerAttached = false;
 let profileMenuOpen = false;
 let versionCheckTimer = null;
+let bankingUploadQueueProcessing = false;
+let guildSyncFileWatcherStatus = null;
 
 let systemMessages = new Map();
 let systemMessageTimers = new Map();
@@ -66,11 +72,28 @@ let discordSortDirection = 'asc';
 let discordSearchSelectionStart = null;
 let discordSearchSelectionEnd = null;
 
+let bankingEntries = [];
+let bankingActiveSection = 'biweekly';
+let bankingLastRefreshValue = null;
+let bankingDataLoading = false;
+let bankingExportGridOpen = false;
+let bankingExportSection = 'biweekly';
+let bankingRafflePeriodOffsets = {
+  biweekly: 0,
+  monthly: 0
+};
+
+const BANKING_BIWEEKLY_SALES_END_ANCHOR_UTC = 1780786800;
+const BANKING_MONTHLY_SALES_END_ANCHOR_UTC = 1781996400;
+const BANKING_BIWEEKLY_INTERVAL_SECONDS = 14 * 24 * 60 * 60;
+const BANKING_MONTHLY_INTERVAL_SECONDS = 28 * 24 * 60 * 60;
+const BANKING_RAFFLE_AFTER_SALES_SECONDS = 60 * 60;
+
 const GUILDSYNC_TABS = [
   { id: 'discord-members', label: 'Discord Member Data', icon: 'discord' },
   { id: 'eso-members', label: 'ESO Member Data', icon: 'swords' },
   { id: 'settings', label: 'Settings', icon: 'gear' },
-  { id: 'more', label: 'More', icon: 'more' }
+  { id: 'more', label: 'Bank Deposits', icon: 'bank' }
 ];
 
 let activeGuildSyncTab = GUILDSYNC_TABS[0].id;
@@ -86,8 +109,8 @@ function showSplash() {
     await ShowMainWindow();
     await loadExistingSession();
     showMainWindow();
-    await syncGuildSyncFileWatcherWithAuthState();
     connectSocket();
+    await syncGuildSyncFileWatcherWithAuthState();
   }, 5000);
 }
 
@@ -174,6 +197,7 @@ function showMainWindow() {
   renderDiscordArea();
   wireGuildSyncTabs();
   wireDiscordMemberDataPanel();
+  wireBankDepositsPanel();
   updateStatusDot();
   requestSystemMessageDisplayUpdate();
 
@@ -227,6 +251,14 @@ function getGuildSyncTabIcon(icon) {
     return '⚙';
   }
 
+  if (icon === 'bank') {
+    return `
+      <svg class="guildsync-tab-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path fill="currentColor" d="M12 2.25 3.2 6.6a1 1 0 0 0 .44 1.9h16.72a1 1 0 0 0 .44-1.9L12 2.25Zm-5.75 7.5a.75.75 0 0 0-.75.75v6.75H4.75a.75.75 0 0 0 0 1.5h14.5a.75.75 0 0 0 0-1.5h-.75V10.5a.75.75 0 0 0-1.5 0v6.75h-2.25V10.5a.75.75 0 0 0-1.5 0v6.75h-2.5V10.5a.75.75 0 0 0-1.5 0v6.75H7V10.5a.75.75 0 0 0-.75-.75ZM4 20.25a.75.75 0 0 0 0 1.5h16a.75.75 0 0 0 0-1.5H4Z"/>
+      </svg>
+    `;
+  }
+
   return '…';
 }
 
@@ -235,6 +267,10 @@ function renderGuildSyncTabContent() {
 
   if (activeTab.id === 'discord-members') {
     return renderDiscordMemberDataPanel();
+  }
+
+  if (activeTab.id === 'more') {
+    return renderBankDepositsPanel();
   }
 
   return `
@@ -275,6 +311,7 @@ function renderGuildSyncTabLayout(options = {}) {
 
   wireGuildSyncTabs();
   wireDiscordMemberDataPanel();
+  wireBankDepositsPanel();
 
   if (options.restoreDiscordSearchFocus) {
     restoreDiscordSearchFocus();
@@ -282,6 +319,10 @@ function renderGuildSyncTabLayout(options = {}) {
 
   if (activeGuildSyncTab === 'discord-members' && socket?.connected && discordMembers.length === 0 && !discordDataLoading) {
     refreshDiscordData({ silent: true });
+  }
+
+  if (activeGuildSyncTab === 'more' && socket?.connected && bankingEntries.length === 0 && !bankingDataLoading) {
+    refreshBankingDataFromBackend({ silent: true });
   }
 }
 
@@ -355,6 +396,667 @@ function renderDiscordMemberDataPanel() {
       </div>
     </div>
   `;
+}
+
+
+function renderBankDepositsPanel() {
+  const rows = getBankingRowsForSection(bankingActiveSection);
+  const totals = getBankingTotals(rows);
+  const showTicketColumn = bankingActiveSection !== 'other';
+
+  return `
+    <div class="guildsync-tab-panel bank-deposits-panel" data-active-tab="more">
+      <div class="discord-data-header bank-deposits-header">
+        <div>
+          <h2 class="discord-data-title">Bank Deposits / Raffle Tickets</h2>
+          <p class="discord-data-subtitle">View guild bank deposits and raffle ticket allocations by raffle period.</p>
+        </div>
+        <div class="discord-data-actions">
+          <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatDiscordRefreshDate(bankingLastRefreshValue))}</span>
+          <button class="bank-export-button" type="button" data-bank-export-section="biweekly">
+            <span aria-hidden="true">▦</span>
+            <span>Export Bi-Weekly</span>
+          </button>
+          <button class="bank-export-button" type="button" data-bank-export-section="monthly">
+            <span aria-hidden="true">▦</span>
+            <span>Export 50/50</span>
+          </button>
+          <button id="refreshBankingDataButton" class="refresh-discord-button" type="button" ${bankingDataLoading ? 'disabled' : ''}>
+            <span class="refresh-discord-icon" aria-hidden="true">↻</span>
+            <span>${bankingDataLoading ? 'Refreshing...' : 'Refresh Deposits'}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="bank-deposits-body">
+        <div class="bank-section-cards" role="tablist" aria-label="Bank deposit sections">
+          ${renderBankSectionCard('biweekly', '▣', 'Bi-Weekly', 'Two-week raffle ticket deposits')}
+          ${renderBankSectionCard('monthly', '🎟', '50/50', 'Four-week 50/50 ticket deposits')}
+          ${renderBankSectionCard('other', '?', 'Other', 'All other deposits')}
+        </div>
+
+        ${renderBankingRafflePeriodControls(bankingActiveSection)}
+
+        <div class="bank-deposit-table-shell">
+          <table class="bank-deposit-table${showTicketColumn ? '' : ' bank-deposit-table-no-tickets'}">
+            <thead>
+              <tr>
+                <th>Event ID <span class="bank-info-dot">i</span></th>
+                <th>Date / Time (Local) <span class="bank-info-dot">i</span></th>
+                <th>Depositor</th>
+                <th>Amount Deposited <span class="bank-info-dot">i</span></th>
+                ${showTicketColumn ? '<th>Tickets Awarded <span class="bank-info-dot">i</span></th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.length > 0 ? rows.map((entry) => renderBankDepositRow(entry, showTicketColumn)).join('') : renderEmptyBankDepositRow(showTicketColumn)}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="bank-deposits-summary-row">
+          <div>Total Deposits: <strong>${escapeHtml(formatGoldAmount(totals.amount))}</strong> <span aria-hidden="true">🪙</span></div>
+          ${showTicketColumn ? `<div>Total Tickets Awarded: <strong>${escapeHtml(formatTicketAmount(totals.tickets))}</strong> <span aria-hidden="true">🎟</span></div>` : ''}
+        </div>
+      </div>
+      ${bankingExportGridOpen ? renderBankingExportGrid(getBankingRowsForSection(bankingExportSection)) : ''}
+    </div>
+  `;
+}
+
+function renderBankingExportGrid(rows) {
+  return `
+    <div class="bank-export-overlay" role="dialog" aria-modal="true" aria-label="Export bank deposits to spreadsheet">
+      <div class="bank-export-dialog">
+        <div class="bank-export-dialog-header">
+          <div>
+            <h3 class="bank-export-title">Export ${escapeHtml(getBankingSectionLabel(bankingExportSection))} Deposits</h3>
+            <p class="bank-export-subtitle">Copy this grid and paste it directly into Google Sheets.</p>
+          </div>
+          <button id="closeBankingExportGridButton" class="bank-export-close-button" type="button" aria-label="Close export grid">×</button>
+        </div>
+
+        <div class="bank-export-toolbar">
+          <button id="copyBankingExportGridButton" class="bank-export-copy-button" type="button" ${rows.length === 0 ? 'disabled' : ''}>Copy Grid</button>
+          <span class="bank-export-count">${escapeHtml(String(rows.length))} row${rows.length === 1 ? '' : 's'}</span>
+        </div>
+
+        <div class="bank-export-grid-shell">
+          <table id="bankingExportGrid" class="bank-export-grid">
+            <thead>
+              <tr>
+                <th>Guildie Name</th>
+                <th>Deposit Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.length > 0 ? rows.map((entry) => renderBankingExportGridRow(entry)).join('') : renderEmptyBankingExportGridRow()}
+            </tbody>
+          </table>
+        </div>
+
+        <textarea id="bankingExportTsv" class="bank-export-tsv" readonly>${escapeHtml(getBankingExportTsv(rows))}</textarea>
+      </div>
+    </div>
+  `;
+}
+
+function renderBankingExportGridRow(entry) {
+  return `
+    <tr>
+      <td>${escapeHtml(entry.displayName || '')}</td>
+      <td>${escapeHtml(String(Number(entry.amount) || 0))}</td>
+    </tr>
+  `;
+}
+
+function renderEmptyBankingExportGridRow() {
+  return `
+    <tr>
+      <td class="bank-empty-row" colspan="2">No deposits to export for ${escapeHtml(getBankingSectionLabel(bankingExportSection))}.</td>
+    </tr>
+  `;
+}
+
+function renderBankingRafflePeriodControls(section) {
+  if (section === 'other') {
+    return `
+      <div class="bank-raffle-period-strip">
+        <div>
+          <div class="bank-raffle-period-label">Other Deposits</div>
+          <div class="bank-raffle-period-range">Other deposits are not assigned raffle tickets.</div>
+        </div>
+      </div>
+    `;
+  }
+
+  const windowInfo = getBankingRaffleWindow(section);
+  const offset = getBankingRafflePeriodOffset(section);
+  const canMoveForward = offset < 0;
+
+  return `
+    <div class="bank-raffle-period-strip">
+      <button class="bank-period-arrow" type="button" data-bank-period-move="previous" aria-label="Previous ${escapeAttribute(getBankingSectionLabel(section))} raffle period">‹</button>
+      <div class="bank-raffle-period-content">
+        <div class="bank-raffle-period-label">${escapeHtml(getBankingSectionLabel(section))} Raffle Period ${offset === 0 ? '(Current)' : `(${Math.abs(offset)} period${Math.abs(offset) === 1 ? '' : 's'} back)`}</div>
+        <div class="bank-raffle-period-range">Sales: ${escapeHtml(formatBankingTimestamp(windowInfo.salesStart))} through ${escapeHtml(formatBankingTimestamp(windowInfo.salesEnd))}</div>
+        <div class="bank-raffle-period-raffle">Raffle Time: ${escapeHtml(formatBankingTimestamp(windowInfo.raffleTime))}</div>
+      </div>
+      <button class="bank-period-arrow" type="button" data-bank-period-move="next" ${canMoveForward ? '' : 'disabled'} aria-label="Next ${escapeAttribute(getBankingSectionLabel(section))} raffle period">›</button>
+    </div>
+  `;
+}
+
+function renderBankSectionCard(section, icon, title, subtitle) {
+  const isActive = bankingActiveSection === section;
+
+  return `
+    <button class="bank-section-card${isActive ? ' active' : ''}" type="button" data-bank-section="${escapeAttribute(section)}" aria-selected="${isActive ? 'true' : 'false'}">
+      <span class="bank-section-icon" aria-hidden="true">${escapeHtml(icon)}</span>
+      <span class="bank-section-text">
+        <span class="bank-section-title">${escapeHtml(title)}</span>
+        <span class="bank-section-subtitle">${escapeHtml(subtitle)}</span>
+      </span>
+    </button>
+  `;
+}
+
+function wireBankDepositsPanel() {
+  if (activeGuildSyncTab !== 'more') {
+    return;
+  }
+
+  document.querySelectorAll('[data-bank-section]').forEach((button) => {
+    button.addEventListener('click', () => {
+      bankingActiveSection = button.dataset.bankSection || 'biweekly';
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  document.querySelectorAll('[data-bank-export-section]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const requestedSection = button.dataset.bankExportSection || 'biweekly';
+      bankingExportSection = requestedSection === 'monthly' ? 'monthly' : 'biweekly';
+      bankingExportGridOpen = true;
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  document.querySelectorAll('[data-bank-period-move]').forEach((button) => {
+    button.addEventListener('click', () => {
+      moveBankingRafflePeriod(button.dataset.bankPeriodMove || '');
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  const closeExportButton = document.querySelector('#closeBankingExportGridButton');
+  if (closeExportButton) {
+    closeExportButton.addEventListener('click', () => {
+      bankingExportGridOpen = false;
+      renderGuildSyncTabLayout();
+    });
+  }
+
+  const copyExportButton = document.querySelector('#copyBankingExportGridButton');
+  if (copyExportButton) {
+    copyExportButton.addEventListener('click', () => copyBankingExportGrid());
+  }
+
+  const exportOverlay = document.querySelector('.bank-export-overlay');
+  if (exportOverlay) {
+    exportOverlay.addEventListener('click', (event) => {
+      if (event.target === exportOverlay) {
+        bankingExportGridOpen = false;
+        renderGuildSyncTabLayout();
+      }
+    });
+  }
+
+  const refreshButton = document.querySelector('#refreshBankingDataButton');
+  if (refreshButton) {
+    refreshButton.addEventListener('click', () => collectAndSendGuildSyncBankingData({ key: 'banking' }));
+  }
+}
+
+function getBankingExportTsv(rows) {
+  const lines = [['Guildie Name', 'Deposit Amount']];
+
+  for (const entry of rows) {
+    lines.push([entry.displayName || '', String(Number(entry.amount) || 0)]);
+  }
+
+  return lines.map((row) => row.map(formatTsvCell).join('\t')).join('\n');
+}
+
+function formatTsvCell(value) {
+  return String(value ?? '').replace(/[\t\r\n]+/g, ' ').trim();
+}
+
+async function copyBankingExportGrid() {
+  const rows = getBankingRowsForSection(bankingExportSection);
+  const tsv = getBankingExportTsv(rows);
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(tsv);
+    } else {
+      const textArea = document.querySelector('#bankingExportTsv');
+      textArea.focus();
+      textArea.select();
+      document.execCommand('copy');
+    }
+
+    addSystemMessage('banking-export-copied', 'Bank deposit export grid copied to clipboard.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } catch (error) {
+    const textArea = document.querySelector('#bankingExportTsv');
+
+    if (textArea) {
+      textArea.focus();
+      textArea.select();
+    }
+
+    addSystemMessage('banking-export-copy-error', 'Could not copy automatically. The export text is selected so you can press Ctrl+C.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+function getBankingRowsForSection(section) {
+  return bankingEntries
+    .filter((entry) => entry.type === section)
+    .filter((entry) => isBankingEntryInSelectedPeriod(section, entry))
+    .sort((left, right) => (Number(right.time) || 0) - (Number(left.time) || 0));
+}
+
+function isBankingEntryInSelectedPeriod(section, entry) {
+  if (section === 'other') {
+    return true;
+  }
+
+  const timestamp = Number(entry?.time) || 0;
+
+  if (timestamp <= 0) {
+    return false;
+  }
+
+  const windowInfo = getBankingRaffleWindow(section);
+  return timestamp >= windowInfo.salesStart && timestamp <= windowInfo.salesEnd;
+}
+
+function getBankingRafflePeriodOffset(section) {
+  return Number(bankingRafflePeriodOffsets[section]) || 0;
+}
+
+function moveBankingRafflePeriod(direction) {
+  if (bankingActiveSection !== 'biweekly' && bankingActiveSection !== 'monthly') {
+    return;
+  }
+
+  const currentOffset = getBankingRafflePeriodOffset(bankingActiveSection);
+
+  if (direction === 'previous') {
+    bankingRafflePeriodOffsets[bankingActiveSection] = currentOffset - 1;
+    return;
+  }
+
+  if (direction === 'next' && currentOffset < 0) {
+    bankingRafflePeriodOffsets[bankingActiveSection] = currentOffset + 1;
+  }
+}
+
+function getBankingRaffleWindow(section) {
+  const now = Math.floor(Date.now() / 1000);
+  const isMonthly = section === 'monthly';
+  const interval = isMonthly ? BANKING_MONTHLY_INTERVAL_SECONDS : BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  let salesEnd = isMonthly ? BANKING_MONTHLY_SALES_END_ANCHOR_UTC : BANKING_BIWEEKLY_SALES_END_ANCHOR_UTC;
+
+  while (salesEnd - interval > now) {
+    salesEnd -= interval;
+  }
+
+  while (salesEnd < now) {
+    salesEnd += interval;
+  }
+
+  salesEnd += getBankingRafflePeriodOffset(section) * interval;
+
+  return {
+    salesStart: salesEnd - interval + 1,
+    salesEnd,
+    raffleTime: salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS
+  };
+}
+
+function getBankingTotals(rows) {
+  return rows.reduce(
+    (totals, entry) => {
+      totals.amount += Number(entry.amount) || 0;
+      totals.tickets += Number(entry.ticketAmount) || 0;
+      return totals;
+    },
+    { amount: 0, tickets: 0 }
+  );
+}
+
+function renderBankDepositRow(entry, showTicketColumn = true) {
+  return `
+    <tr>
+      <td>${escapeHtml(entry.eventId || '')}</td>
+      <td>${escapeHtml(formatBankingTimestamp(entry.time))}</td>
+      <td>${escapeHtml(entry.displayName || '')}</td>
+      <td><strong class="bank-gold-amount">${escapeHtml(formatGoldAmount(entry.amount))}</strong> <span aria-hidden="true">🪙</span></td>
+      ${showTicketColumn ? `<td><strong class="bank-ticket-amount">${escapeHtml(formatTicketAmount(entry.ticketAmount))}</strong></td>` : ''}
+    </tr>
+  `;
+}
+
+function renderEmptyBankDepositRow(showTicketColumn = true) {
+  return `
+    <tr>
+      <td class="bank-empty-row" colspan="${showTicketColumn ? '5' : '4'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
+    </tr>
+  `;
+}
+
+function getBankingSectionLabel(section) {
+  if (section === 'biweekly') {
+    return 'Bi-Weekly';
+  }
+
+  if (section === 'monthly') {
+    return '50/50';
+  }
+
+  return 'Other';
+}
+
+function formatBankingTimestamp(value) {
+  const timestamp = Number(value);
+
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return 'Unknown';
+  }
+
+  return new Date(timestamp * 1000).toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+}
+
+function formatGoldAmount(value) {
+  const amount = Number(value) || 0;
+  return amount.toLocaleString();
+}
+
+function formatTicketAmount(value) {
+  const amount = Number(value) || 0;
+  return amount.toLocaleString();
+}
+
+function normalizeBankingEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return entries.map((entry) => {
+    const type = String(entry?.type || 'other').trim().toLowerCase();
+
+    return {
+      type: type === 'monthly' || type === 'biweekly' || type === 'other' ? type : 'other',
+      eventId: String(entry?.eventId ?? entry?.event_id ?? '').trim(),
+      time: Number(entry?.time ?? entry?.timestamp ?? 0) || 0,
+      displayName: String(entry?.displayName ?? entry?.display_name ?? '').trim(),
+      amount: Number(entry?.amount ?? 0) || 0,
+      ticketAmount: Number(entry?.ticketAmount ?? entry?.ticket_amount ?? 0) || 0
+    };
+  });
+}
+
+function mergeBankingEntries(entries) {
+  const byEventId = new Map();
+
+  for (const existing of bankingEntries) {
+    if (existing.eventId) {
+      byEventId.set(existing.eventId, existing);
+    }
+  }
+
+  for (const entry of entries) {
+    if (!entry.eventId) {
+      continue;
+    }
+
+    byEventId.set(entry.eventId, entry);
+  }
+
+  bankingEntries = Array.from(byEventId.values()).sort((left, right) => (Number(right.time) || 0) - (Number(left.time) || 0));
+}
+
+function markBankingLastRefreshNow() {
+  bankingLastRefreshValue = new Date().toISOString();
+}
+
+async function handleBankingDataUpdated(payload = {}) {
+  if (!payload?.ok) {
+    return;
+  }
+
+  bankingEntries = normalizeBankingEntries(payload.entries);
+  markBankingLastRefreshNow();
+
+  if (activeGuildSyncTab === 'more') {
+    renderGuildSyncTabLayout();
+  }
+
+  addSystemMessage('banking-data-updated', `Banking data updated. Loaded ${bankingEntries.length} deposit record${bankingEntries.length === 1 ? '' : 's'}.`, {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
+async function refreshBankingDataFromBackend(options = {}) {
+  const silent = Boolean(options.silent);
+
+  if (!socket?.connected) {
+    if (!silent) {
+      addSystemMessage('banking-data-error', 'GuildSync websocket is not connected.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
+    return;
+  }
+
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  bankingDataLoading = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-banking-data', {}, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Unable to retrieve banking data.');
+    }
+
+    bankingEntries = normalizeBankingEntries(response.entries);
+    markBankingLastRefreshNow();
+
+    if (!silent) {
+      addSystemMessage('banking-data', `Loaded ${bankingEntries.length} banking deposit record${bankingEntries.length === 1 ? '' : 's'}.`, {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
+  } catch (error) {
+    if (!silent) {
+      addSystemMessage('banking-data-error', formatError(error), {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
+  } finally {
+    bankingDataLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function collectAndSendGuildSyncBankingData(payload = {}) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('banking-data-pending', 'Banking SavedVariables changed, but GuildSync websocket is not connected yet. The file was not cleared.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  bankingDataLoading = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    const result = await CollectGuildSyncBankingData(payload);
+
+    if (!result?.ok) {
+      addSystemMessage('banking-data-pending', result?.message || 'Banking SavedVariables changed, but no banking data was sent yet.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const collectedEntries = normalizeBankingEntries(result?.data?.entries);
+    mergeBankingEntries(collectedEntries);
+    const collectedAt = new Date().toISOString();
+
+    const bankingPayload = {
+      local_upload_id: createLocalBankingUploadId(),
+      authenticated_username: getDisplayName(),
+      authenticated_discord_user_id: guildSyncSession?.user?.discord_user_id || '',
+      source: 'guildsync-frontend-client',
+      file_name: result.fileName || payload.fileName || '',
+      file_path: result.filePath || payload.filePath || '',
+      collected_at: collectedAt,
+      data: result.data || {}
+    };
+
+    try {
+      await sendQueuedGuildSyncBankingUpload(bankingPayload);
+    } catch (sendError) {
+      enqueuePendingGuildSyncBankingUpload(bankingPayload);
+      throw sendError;
+    }
+
+    await refreshBankingDataFromBackend({ silent: true });
+  } catch (error) {
+    addSystemMessage('banking-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    bankingDataLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+function createLocalBankingUploadId() {
+  return `banking-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function loadPendingGuildSyncBankingUploads() {
+  try {
+    const raw = window.localStorage.getItem(PENDING_BANKING_UPLOADS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingGuildSyncBankingUploads(queue) {
+  window.localStorage.setItem(PENDING_BANKING_UPLOADS_STORAGE_KEY, JSON.stringify(Array.isArray(queue) ? queue : []));
+}
+
+function enqueuePendingGuildSyncBankingUpload(payload) {
+  const uploadId = String(payload?.local_upload_id || createLocalBankingUploadId());
+  const queue = loadPendingGuildSyncBankingUploads().filter((item) => item?.local_upload_id !== uploadId);
+
+  queue.push({
+    ...payload,
+    local_upload_id: uploadId,
+    pending_saved_at: new Date().toISOString()
+  });
+
+  savePendingGuildSyncBankingUploads(queue);
+
+  addSystemMessage('banking-data-pending', 'Banking data is queued and will retry after GuildSync reconnects.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
+function removePendingGuildSyncBankingUpload(uploadId) {
+  const queue = loadPendingGuildSyncBankingUploads().filter((item) => item?.local_upload_id !== uploadId);
+  savePendingGuildSyncBankingUploads(queue);
+}
+
+async function processPendingGuildSyncBankingUploads() {
+  if (bankingUploadQueueProcessing || !socket?.connected || !isAuthenticatedSession()) {
+    return;
+  }
+
+  const queue = loadPendingGuildSyncBankingUploads();
+  if (queue.length === 0) {
+    return;
+  }
+
+  bankingUploadQueueProcessing = true;
+
+  try {
+    for (const pendingPayload of queue) {
+      if (!socket?.connected || !isAuthenticatedSession()) {
+        return;
+      }
+
+      await sendQueuedGuildSyncBankingUpload(pendingPayload);
+      removePendingGuildSyncBankingUpload(pendingPayload.local_upload_id);
+    }
+  } catch (error) {
+    addSystemMessage('banking-data-pending-error', `Pending banking upload retry failed: ${formatError(error)}`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    bankingUploadQueueProcessing = false;
+  }
+}
+
+async function sendQueuedGuildSyncBankingUpload(bankingPayload) {
+  if (!socket?.connected) {
+    throw new Error('GuildSync websocket is not connected. Banking data was not cleared.');
+  }
+
+  const response = await emitSocketWithAck('guildsync:sending-banking-data', bankingPayload, 30000);
+
+  if (!response?.ok) {
+    throw new Error(response?.message || response?.error || 'Backend rejected the banking data payload. Banking data was not cleared.');
+  }
+
+  const commitResult = await CommitGuildSyncBankingData(
+    bankingPayload.file_path || '',
+    bankingPayload.file_name || ''
+  );
+
+  if (!commitResult?.ok) {
+    throw new Error(commitResult?.message || 'Backend confirmed banking data, but the SavedVariables file could not be cleared.');
+  }
+
+  addSystemMessage('banking-data-sent', response.message || 'Banking data sent to GuildSync backend.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+
+  return response;
 }
 
 function wireDiscordMemberDataPanel() {
@@ -1028,7 +1730,50 @@ function toggleProfileMenu() {
   openProfileMenu();
 }
 
-function openProfileMenu() {
+
+function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
+  const files = Array.isArray(status?.files) ? status.files : [];
+  const directory = String(status?.directory || '').trim();
+  const watching = Boolean(status?.watching);
+
+  if (files.length === 0) {
+    return `
+      <div class="profile-filewatch-empty">No SavedVariables files are configured.</div>
+    `;
+  }
+
+  return `
+    <div class="profile-filewatch-list">
+      ${files.map((file) => {
+        const key = String(file?.key || file?.fileName || '').trim();
+        const fileName = String(file?.fileName || 'SavedVariables file').trim();
+        const filePath = String(file?.filePath || (directory ? `${directory}\\${fileName}` : fileName)).trim();
+        const enabled = file?.enabled !== false;
+        const active = watching && enabled;
+        const toggleID = `profileFileWatchToggle-${sanitizeID(key || fileName)}`;
+
+        return `
+          <label class="profile-filewatch-item ${enabled ? 'enabled' : 'disabled'}" title="${escapeAttribute(filePath)}">
+            <span class="profile-filewatch-main">
+              <span class="profile-filewatch-name">${escapeHtml(fileName)}</span>
+              <span class="profile-filewatch-state">${active ? 'Watching' : enabled ? 'On' : 'Off'}</span>
+            </span>
+            <input
+              id="${escapeAttribute(toggleID)}"
+              class="profile-filewatch-toggle"
+              type="checkbox"
+              data-filewatch-key="${escapeAttribute(key)}"
+              ${enabled ? 'checked' : ''}
+              aria-label="Turn file watch ${enabled ? 'off' : 'on'} for ${escapeAttribute(fileName)}"
+            />
+          </label>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderOpenProfileMenuContents() {
   const menu = document.querySelector('#discordProfileMenu');
   if (!menu) {
     return;
@@ -1052,16 +1797,85 @@ function openProfileMenu() {
         <span class="profile-label">Client Version</span>
         <span class="profile-value">${escapeHtml(GUILDSYNC_APP_VERSION)}</span>
       </div>
-      <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>    </section>
+      <div class="profile-section profile-filewatch-section">
+        <div class="profile-section-header">
+          <span>File Watch</span>
+          <span class="profile-section-subtitle">${guildSyncFileWatcherStatus?.watching ? 'Active' : 'Stopped'}</span>
+        </div>
+        ${renderProfileFileWatcherSection()}
+      </div>
+      <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
+    </section>
   `;
+
+  document
+    .querySelector('#discordLogoutButton')
+    ?.addEventListener('click', logoutGuildSync);
+
+  document
+    .querySelectorAll('.profile-filewatch-toggle')
+    .forEach((toggle) => {
+      toggle.addEventListener('change', handleProfileFileWatchToggleChange);
+    });
+}
+
+async function refreshProfileFileWatcherStatus() {
+  try {
+    guildSyncFileWatcherStatus = await GetGuildSyncFileWatcherStatus();
+
+    if (profileMenuOpen) {
+      renderOpenProfileMenuContents();
+    }
+  } catch (error) {
+    addSystemMessage('file-watcher-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+async function handleProfileFileWatchToggleChange(event) {
+  const toggle = event.currentTarget;
+  const key = String(toggle?.dataset?.filewatchKey || '').trim();
+
+  if (!key) {
+    return;
+  }
+
+  try {
+    toggle.disabled = true;
+    guildSyncFileWatcherStatus = await SetGuildSyncSavedVarsWatchFileEnabled(key, toggle.checked);
+    await syncGuildSyncFileWatcherWithAuthState({ silent: true });
+
+    if (profileMenuOpen) {
+      renderOpenProfileMenuContents();
+    }
+  } catch (error) {
+    addSystemMessage('file-watcher-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    await refreshProfileFileWatcherStatus();
+  }
+}
+
+function sanitizeID(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '-') || 'file';
+}
+
+function openProfileMenu() {
+  const menu = document.querySelector('#discordProfileMenu');
+  if (!menu) {
+    return;
+  }
+
+  renderOpenProfileMenuContents();
 
   menu.classList.add('open');
   menu.setAttribute('aria-hidden', 'false');
   profileMenuOpen = true;
 
-  document
-    .querySelector('#discordLogoutButton')
-    .addEventListener('click', logoutGuildSync);
+  refreshProfileFileWatcherStatus();
 
   setTimeout(() => {
     window.addEventListener('click', closeProfileMenuOnOutsideClick);
@@ -1129,9 +1943,9 @@ async function logoutGuildSync() {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
     });
 
-    await syncGuildSyncFileWatcherWithAuthState();
     showMainWindow();
     connectSocket();
+    await syncGuildSyncFileWatcherWithAuthState();
   } catch (error) {
     addSystemMessage('auth-error', formatError(error), {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
@@ -1169,6 +1983,12 @@ function connectSocket() {
     if (activeGuildSyncTab === 'discord-members') {
       refreshDiscordData({ silent: true });
     }
+
+    if (activeGuildSyncTab === 'more') {
+      refreshBankingDataFromBackend({ silent: true });
+    }
+
+    processPendingGuildSyncBankingUploads();
     startVersionCheckTimer();
   });
 
@@ -1188,6 +2008,10 @@ function connectSocket() {
 
   socket.on('guildsync:discord-member-data-updated', (payload) => {
     handleDiscordMemberDataUpdated(payload);
+  });
+
+  socket.on('guildsync:banking-data-updated', (payload) => {
+    handleBankingDataUpdated(payload);
   });
 
   socket.on('guildsync:discord-refresh-status', (payload = {}) => {
@@ -1632,12 +2456,13 @@ function updateStatusDot() {
   dot.title = `Websocket connected. Authenticated as ${getDisplayName()}.`;
 }
 
-async function syncGuildSyncFileWatcherWithAuthState() {
+async function syncGuildSyncFileWatcherWithAuthState(options = {}) {
   try {
     if (isAuthenticatedSession()) {
       const status = await StartGuildSyncFileWatcher();
+      guildSyncFileWatcherStatus = status;
 
-      if (status?.message) {
+      if (!options.silent && status?.message) {
         addSystemMessage(status.watching ? 'file-watcher' : 'file-watcher-error', status.message, {
           ttlMs: TRANSIENT_MESSAGE_TTL_MS
         });
@@ -1646,7 +2471,7 @@ async function syncGuildSyncFileWatcherWithAuthState() {
       return;
     }
 
-    await StopGuildSyncFileWatcher();
+    guildSyncFileWatcherStatus = await StopGuildSyncFileWatcher();
     removeSystemMessage('file-watcher');
   } catch (error) {
     addSystemMessage('file-watcher-error', formatError(error), {
@@ -1675,44 +2500,7 @@ function handleGuildSyncSavedVarsFileModified(payload = {}) {
 }
 
 async function handleGuildSyncBankingSavedVarsModified(payload = {}) {
-  if (!isAuthenticatedSession()) {
-    return;
-  }
-
-  try {
-    const result = await CollectGuildSyncBankingData(payload);
-
-    if (!result?.ok) {
-      addSystemMessage('banking-data-pending', result?.message || 'Banking SavedVariables changed, but no banking data was sent yet.', {
-        ttlMs: TRANSIENT_MESSAGE_TTL_MS
-      });
-      return;
-    }
-
-    const bankingPayload = {
-      authenticated_username: getDisplayName(),
-      authenticated_discord_user_id: guildSyncSession?.user?.discord_user_id || '',
-      source: 'guildsync-frontend-client',
-      file_name: result.fileName || payload.fileName || '',
-      file_path: result.filePath || payload.filePath || '',
-      collected_at: new Date().toISOString(),
-      data: result.data || {}
-    };
-
-    const response = await emitSocketWithAck('guildsync:sending-banking-data', bankingPayload, 30000);
-
-    if (!response?.ok) {
-      throw new Error(response?.message || 'Backend rejected the banking data payload.');
-    }
-
-    addSystemMessage('banking-data-sent', response.message || 'Banking data sent to GuildSync backend.', {
-      ttlMs: TRANSIENT_MESSAGE_TTL_MS
-    });
-  } catch (error) {
-    addSystemMessage('banking-data-error', formatError(error), {
-      ttlMs: TRANSIENT_MESSAGE_TTL_MS
-    });
-  }
+  await collectAndSendGuildSyncBankingData(payload);
 }
 
 function handleGuildSyncFileWatcherError(message) {
@@ -1733,6 +2521,7 @@ function wireGuildSyncEvents() {
     guildSyncSession = session || { logged_in: false, allowed: false };
 
     renderDiscordArea();
+    connectSocket();
     await syncGuildSyncFileWatcherWithAuthState();
 
     addSystemMessage(
@@ -1742,8 +2531,6 @@ function wireGuildSyncEvents() {
         ttlMs: TRANSIENT_MESSAGE_TTL_MS
       }
     );
-
-    connectSocket();
   });
 
   EventsOn('guildsync-login-denied', async (message) => {
