@@ -21,7 +21,13 @@ import {
   getDiscordMemberDataJSON,
   getBankingDataDate,
   getBankingDataJSON,
-  insertBankingEntries
+  insertBankingEntries,
+  getRosterDataDate,
+  getRosterDataJSON,
+  getRosterRankHistoryMatches,
+  getRosterStreamHistoryForAccount,
+  processRosterData,
+  parseGuildSyncRosterSavedVarsLua
 } from './guildsync-database-actions.js';
 
 let discordBotConnected = false;
@@ -572,6 +578,79 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('guildsync:sending-roster-data', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to send roster data.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-data-result', callback, response);
+      return;
+    }
+
+    try {
+      const authenticatedUsername = String(
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.guild_member_name ||
+        socket.guildSyncUser.username ||
+        socket.guildSyncUser.discord_user_id ||
+        ''
+      ).trim();
+
+      let data = payload?.data && typeof payload.data === 'object'
+        ? payload.data
+        : payload;
+
+      if (payload?.raw_lua_text) {
+        data = parseGuildSyncRosterSavedVarsLua(String(payload.raw_lua_text || ''));
+      }
+
+      const guildMembers = data?.guildDump?.guildMembers && typeof data.guildDump.guildMembers === 'object'
+        ? Object.keys(data.guildDump.guildMembers).length
+        : 0;
+
+      const rosterEvents = data?.rosterEvents && typeof data.rosterEvents === 'object'
+        ? Object.keys(data.rosterEvents).length
+        : 0;
+
+      const fileName = String(payload.file_name || '').trim();
+
+      Log(
+        `Roster data received from ${authenticatedUsername || 'unknown user'}${fileName ? ` for ${fileName}` : ''}. Dump members: ${guildMembers}. Stream events: ${rosterEvents}.`
+      );
+
+      const applicationDB = await openAppDataDB();
+      const result = await processRosterData(applicationDB, { data });
+
+      const response = {
+        ok: true,
+        message: 'Roster data processed by GuildSync backend.',
+        received: true,
+        received_from: authenticatedUsername,
+        file_name: fileName || null,
+        ...result,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-data-result', callback, response);
+      await broadcastRosterDataUpdate();
+    } catch (error) {
+      Log(`Roster data processing failed: ${error.message}`);
+
+      const response = {
+        ok: false,
+        message: 'Roster data processing failed.',
+        error: error.message,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-data-result', callback, response);
+    }
+  });
+
+
 
   socket.on('guildsync:client-version', (payload = {}) => {
     const clientVersion = String(payload.version || '').trim();
@@ -759,6 +838,134 @@ io.on('connection', (socket) => {
     }
   });
 
+
+  socket.on('guildsync:request-roster-data', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to retrieve roster data.',
+        members: [],
+        members_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-data-request-result', callback, response);
+      return;
+    }
+
+    try {
+      const [members, refreshDate] = await Promise.all([
+        getRosterDataJSON(applicationDB),
+        getRosterDataDate(applicationDB)
+      ]);
+
+      const response = {
+        ok: true,
+        message: 'Roster data retrieved.',
+        members,
+        members_returned: members.length,
+        last_refresh: refreshDate?.value || null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-data-request-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-roster-data:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to retrieve roster data.',
+        members: [],
+        members_returned: 0,
+        last_refresh: null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-data-request-result', callback, response);
+    }
+  });
+
+
+  socket.on('guildsync:request-roster-rank-history', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to search roster rank history.',
+        matches: [],
+        matches_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-rank-history-result', callback, response);
+      return;
+    }
+
+    try {
+      const matches = await getRosterRankHistoryMatches(applicationDB, payload?.query || '');
+      const response = {
+        ok: true,
+        message: 'Roster rank history search complete.',
+        matches,
+        matches_returned: matches.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-rank-history-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-roster-rank-history:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to search roster rank history.',
+        matches: [],
+        matches_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-rank-history-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:request-roster-stream-history', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to retrieve roster stream history.',
+        events: [],
+        events_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-stream-history-result', callback, response);
+      return;
+    }
+
+    try {
+      const events = await getRosterStreamHistoryForAccount(applicationDB, payload?.account_name || payload?.accountName || '');
+      const response = {
+        ok: true,
+        message: 'Roster stream history retrieved.',
+        events,
+        events_returned: events.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-stream-history-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-roster-stream-history:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to retrieve roster stream history.',
+        events: [],
+        events_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-stream-history-result', callback, response);
+    }
+  });
+
   socket.on('guildsync:request-discord-member-dataJSON', async (payload = {}, callback) => {
     try {
       const members = await getDiscordMemberDataJSON(applicationDB);
@@ -839,6 +1046,29 @@ function emitDiscordRefreshStatus(message) {
     message,
     at: new Date().toLocaleString()
   });
+}
+
+
+async function broadcastRosterDataUpdate() {
+  try {
+    const [members, refreshDate] = await Promise.all([
+      getRosterDataJSON(applicationDB),
+      getRosterDataDate(applicationDB)
+    ]);
+
+    io.to('GuildSyncClient').emit('guildsync:roster-data-updated', {
+      ok: true,
+      message: 'Roster data updated.',
+      members,
+      members_returned: members.length,
+      last_refresh: refreshDate?.value || null,
+      at: new Date().toLocaleString()
+    });
+
+    Log(`Broadcast roster data update to GuildSync clients. Members: ${members.length}`);
+  } catch (error) {
+    Log('Failed to broadcast roster data update:', error);
+  }
 }
 
 async function broadcastDiscordMemberDataUpdate() {

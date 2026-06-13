@@ -6,7 +6,11 @@ export function CloseWindow():Promise<void>;
 
 export function CollectGuildSyncBankingData(arg1:main.GuildSyncSavedVarsFileModifiedEvent):Promise<main.GuildSyncBankingDataResult>;
 
+export function CollectGuildSyncRosterData(arg1:main.GuildSyncSavedVarsFileModifiedEvent):Promise<main.GuildSyncRosterDataResult>;
+
 export function CommitGuildSyncBankingData(arg1:string,arg2:string):Promise<main.GuildSyncBankingDataResult>;
+
+export function CommitGuildSyncRosterData(arg1:string,arg2:string):Promise<main.GuildSyncRosterDataResult>;
 
 export function GetGuildSyncClientConfig():Promise<main.GuildSyncClientConfig>;
 

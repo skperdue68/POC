@@ -152,6 +152,40 @@ async function initializeSchema(db) {
     CHARSET=utf8mb4
     COLLATE=utf8mb4_unicode_ci
   `);
+
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS rosterstreamhistory (
+      event_id VARCHAR(32) PRIMARY KEY NOT NULL,
+      account_name VARCHAR(64) NOT NULL,
+      event_type VARCHAR(32) NOT NULL,
+      rank VARCHAR(20),
+      timestamp VARCHAR(32) NOT NULL,
+      officer VARCHAR(64)
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS rosterrankhistory (
+      account_name VARCHAR(64) PRIMARY KEY NOT NULL,
+      rank VARCHAR(20)
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS guildsyncroster (
+      account_name VARCHAR(32) PRIMARY KEY NOT NULL,
+      rank VARCHAR(20),
+      joined VARCHAR(32),
+      in_roster TINYINT(1) NOT NULL DEFAULT 1
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
 }
 
 export async function upsertLoginUser(loginDB, discordUser) {
@@ -897,6 +931,641 @@ export async function insertBankingEntries(applicationDB, payload) {
 
 
 
+
+
+export async function getRosterDataDate(applicationDB) {
+  const [rows] = await applicationDB.execute(`
+    SELECT
+      data,
+      value
+    FROM settings
+    WHERE data = ?
+    LIMIT 1
+  `,
+    [
+      'roster_refresh'
+    ]
+  );
+
+  return rows[0] || {
+    data: 'roster_refresh',
+    value: null
+  };
+}
+
+export async function getRosterDataJSON(applicationDB) {
+  const [rows] = await applicationDB.execute(`
+    SELECT JSON_ARRAYAGG(
+      JSON_OBJECT(
+        'account_name', roster_rows.account_name,
+        'rank', roster_rows.rank,
+        'joined', roster_rows.joined,
+        'in_roster', roster_rows.in_roster
+      )
+    ) AS roster_json
+    FROM (
+      SELECT
+        account_name,
+        rank,
+        joined,
+        in_roster
+      FROM guildsyncroster
+      WHERE in_roster = 1
+      ORDER BY account_name ASC
+    ) AS roster_rows
+  `);
+
+  const rosterJson = rows[0]?.roster_json;
+
+  if (!rosterJson) {
+    return [];
+  }
+
+  if (typeof rosterJson === 'string') {
+    return JSON.parse(rosterJson);
+  }
+
+  return rosterJson;
+}
+export async function getRosterRankHistoryMatches(applicationDB, query = '') {
+  const cleanQuery = normalizeRosterAccountName(query);
+
+  if (!cleanQuery) {
+    return [];
+  }
+
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        account_name,
+        rank
+      FROM rosterrankhistory
+      WHERE account_name LIKE ?
+      ORDER BY account_name ASC
+      LIMIT 50
+    `,
+    [`%${cleanQuery}%`]
+  );
+
+  return rows;
+}
+
+export async function getRosterStreamHistoryForAccount(applicationDB, accountName = '') {
+  const cleanAccountName = normalizeRosterAccountName(accountName);
+
+  if (!cleanAccountName) {
+    return [];
+  }
+
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        event_type,
+        rank,
+        timestamp,
+        officer
+      FROM rosterstreamhistory
+      WHERE account_name = ?
+      ORDER BY CAST(timestamp AS UNSIGNED) DESC, timestamp DESC
+      LIMIT 250
+    `,
+    [cleanAccountName]
+  );
+
+  return rows;
+}
+
+
+export async function processRosterData(applicationDB, payload = {}) {
+  const data = payload?.data && typeof payload.data === 'object'
+    ? payload.data
+    : payload;
+
+  const guildDump = data?.guildDump && typeof data.guildDump === 'object'
+    ? data.guildDump
+    : null;
+
+  const rosterEvents = normalizeRosterEvents(data?.rosterEvents);
+
+  const connection = await applicationDB.getConnection();
+  const result = {
+    dump_received: Boolean(guildDump),
+    dump_processed: false,
+    dump_skipped_stale: false,
+    dump_members_received: 0,
+    dump_members_upserted: 0,
+    automatic_removals_inserted: 0,
+    stream_events_received: rosterEvents.length,
+    stream_events_inserted: 0,
+    roster_members_returned: 0
+  };
+
+  try {
+    await connection.beginTransaction();
+
+    if (guildDump) {
+      const dumpTimestamp = normalizeRosterTimestamp(guildDump.dumpTimestamp);
+      const guildMembers = normalizeGuildDumpMembers(guildDump.guildMembers);
+      result.dump_members_received = guildMembers.length;
+
+      if (dumpTimestamp) {
+        const [settingRows] = await connection.execute(
+          `
+            SELECT value
+            FROM settings
+            WHERE data = ?
+            LIMIT 1
+          `,
+          ['lastDump']
+        );
+
+        const lastDump = Number(settingRows[0]?.value || 0);
+
+        if (lastDump > Number(dumpTimestamp)) {
+          result.dump_skipped_stale = true;
+        } else {
+          await connection.execute(
+            `
+              INSERT INTO settings (data, value)
+              VALUES (?, ?)
+              ON DUPLICATE KEY UPDATE
+                value = VALUES(value)
+            `,
+            ['lastDump', String(dumpTimestamp)]
+          );
+
+          await connection.execute(`UPDATE guildsyncroster SET in_roster = 0`);
+
+          for (const member of guildMembers) {
+            const accountName = normalizeRosterAccountName(member.accountName);
+            const rankName = normalizeRosterRank(member.rankName || member.rank);
+
+            if (!accountName) {
+              continue;
+            }
+
+            const [upsertResult] = await connection.execute(
+              `
+                INSERT INTO guildsyncroster (
+                  account_name,
+                  rank,
+                  joined,
+                  in_roster
+                )
+                VALUES (?, ?, ?, 1)
+                ON DUPLICATE KEY UPDATE
+                  rank = VALUES(rank),
+                  in_roster = 1
+              `,
+              [accountName, rankName, String(dumpTimestamp)]
+            );
+
+            result.dump_members_upserted += upsertResult.affectedRows || 0;
+
+            await connection.execute(
+              `
+                INSERT IGNORE INTO rosterrankhistory (
+                  account_name,
+                  rank
+                )
+                VALUES (?, ?)
+              `,
+              [accountName, rankName]
+            );
+          }
+
+          const [removedRows] = await connection.execute(
+            `
+              SELECT account_name, rank
+              FROM guildsyncroster
+              WHERE in_roster = 0
+            `
+          );
+
+          for (const removed of removedRows) {
+            const accountName = normalizeRosterAccountName(removed.account_name);
+            const rankName = normalizeRosterRank(removed.rank);
+            const generatedEventId = createAutomaticRosterEventId(dumpTimestamp);
+
+            await connection.execute(
+              `
+                INSERT IGNORE INTO rosterstreamhistory (
+                  event_id,
+                  account_name,
+                  event_type,
+                  rank,
+                  timestamp,
+                  officer
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+              `,
+              [generatedEventId, accountName, 'Removed (Not On Roster)', rankName, String(dumpTimestamp), 'Automatic']
+            );
+
+            await connection.execute(
+              `
+                INSERT INTO rosterrankhistory (
+                  account_name,
+                  rank
+                )
+                VALUES (?, ?)
+                ON DUPLICATE KEY UPDATE
+                  rank = VALUES(rank)
+              `,
+              [accountName, rankName]
+            );
+
+            result.automatic_removals_inserted += 1;
+          }
+
+          await connection.execute(`DELETE FROM guildsyncroster WHERE in_roster = 0`);
+          result.dump_processed = true;
+        }
+      }
+    }
+
+    for (const event of rosterEvents) {
+      const processed = await processSingleRosterStreamEvent(connection, event);
+      if (processed) {
+        result.stream_events_inserted += 1;
+      }
+    }
+
+    await connection.execute(
+      `
+        INSERT INTO settings (data, value)
+        VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE
+          value = VALUES(value)
+      `,
+      ['roster_refresh', new Date().toISOString()]
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  const roster = await getRosterDataJSON(applicationDB);
+  result.roster_members_returned = roster.length;
+  result.roster = roster;
+
+  return result;
+}
+
+async function processSingleRosterStreamEvent(connection, event = {}) {
+  const eventId = String(event.eventId || event.event_id || '').trim();
+  const eventType = normalizeRosterEventType(event.eventType || event.event_type);
+  const rankName = normalizeRosterRank(event.rankName || event.rank);
+  const timestamp = normalizeRosterTimestamp(event.timestampS || event.timeStamp || event.timestamp || event.time);
+  const actingDisplayName = normalizeRosterAccountName(event.actingDisplayName || event.acting_display_name);
+  const targetDisplayName = normalizeRosterAccountName(event.targetDisplayName || event.target_display_name);
+
+  if (!eventId || !eventType || eventType === 'unknown' || !timestamp) {
+    return false;
+  }
+
+  const accountName = eventType === 'joined' || eventType === 'left'
+    ? actingDisplayName
+    : targetDisplayName;
+
+  const officerName = ['kicked', 'promoted', 'demoted', 'application accepted', 'application declined', 'application_accepted', 'application_declined'].includes(eventType)
+    ? actingDisplayName
+    : '';
+
+  if (!accountName) {
+    return false;
+  }
+
+  const [insertResult] = await connection.execute(
+    `
+      INSERT IGNORE INTO rosterstreamhistory (
+        event_id,
+        account_name,
+        event_type,
+        rank,
+        timestamp,
+        officer
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    [eventId, accountName, eventType, rankName, String(timestamp), officerName]
+  );
+
+  if (eventType === 'joined') {
+    await connection.execute(
+      `
+        INSERT INTO guildsyncroster (
+          account_name,
+          rank,
+          joined,
+          in_roster
+        )
+        VALUES (?, ?, ?, 1)
+        ON DUPLICATE KEY UPDATE
+          rank = VALUES(rank),
+          in_roster = 1
+      `,
+      [accountName, 'Associate', String(timestamp)]
+    );
+
+    await connection.execute(
+      `
+        INSERT IGNORE INTO rosterrankhistory (
+          account_name,
+          rank
+        )
+        VALUES (?, ?)
+      `,
+      [accountName, 'Associate']
+    );
+  } else if (eventType === 'kicked' || eventType === 'left') {
+    const [rows] = await connection.execute(
+      `
+        SELECT rank
+        FROM guildsyncroster
+        WHERE account_name = ?
+        LIMIT 1
+      `,
+      [accountName]
+    );
+
+    const currentRank = normalizeRosterRank(rows[0]?.rank || rankName);
+
+    await connection.execute(
+      `
+        INSERT INTO rosterrankhistory (
+          account_name,
+          rank
+        )
+        VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE
+          rank = VALUES(rank)
+      `,
+      [accountName, currentRank]
+    );
+
+    await connection.execute(
+      `
+        DELETE FROM guildsyncroster
+        WHERE account_name = ?
+      `,
+      [accountName]
+    );
+  } else if (eventType === 'promoted' || eventType === 'demoted') {
+    await connection.execute(
+      `
+        INSERT INTO guildsyncroster (
+          account_name,
+          rank,
+          joined,
+          in_roster
+        )
+        VALUES (?, ?, ?, 1)
+        ON DUPLICATE KEY UPDATE
+          rank = VALUES(rank),
+          in_roster = 1
+      `,
+      [accountName, rankName, String(timestamp)]
+    );
+  }
+
+  return (insertResult.affectedRows || 0) > 0;
+}
+
+function normalizeGuildDumpMembers(guildMembers) {
+  if (!guildMembers || typeof guildMembers !== 'object') {
+    return [];
+  }
+
+  if (Array.isArray(guildMembers)) {
+    return guildMembers.filter((member) => member && typeof member === 'object');
+  }
+
+  return Object.values(guildMembers).filter((member) => member && typeof member === 'object');
+}
+
+function normalizeRosterEvents(rosterEvents) {
+  if (!rosterEvents || typeof rosterEvents !== 'object') {
+    return [];
+  }
+
+  if (Array.isArray(rosterEvents)) {
+    return rosterEvents.filter((event) => event && typeof event === 'object');
+  }
+
+  return Object.values(rosterEvents).filter((event) => event && typeof event === 'object');
+}
+
+function normalizeRosterAccountName(value) {
+  const clean = String(value || '').trim();
+  return clean.startsWith('@') ? clean.slice(1) : clean;
+}
+
+function normalizeRosterRank(value) {
+  return String(value || '').trim().slice(0, 20);
+}
+
+function normalizeRosterTimestamp(value) {
+  const clean = String(value || '').trim();
+  if (!clean) {
+    return '';
+  }
+
+  if (/^\d+(\.0+)?$/.test(clean)) {
+    return String(Math.trunc(Number(clean)));
+  }
+
+  return clean;
+}
+
+function normalizeRosterEventType(value) {
+  return String(value || '').trim().toLowerCase().replaceAll('_', ' ');
+}
+
+function createAutomaticRosterEventId(timestamp) {
+  return `Auto${timestamp}${Math.floor(Math.random() * 100000000)}`;
+}
+
+export function parseGuildSyncRosterSavedVarsLua(rawLuaText = '') {
+  const tableText = extractLuaAssignmentTable(rawLuaText, 'GuildSyncRoster');
+  const parsed = parseEsoLuaTableForRoster(tableText);
+  const defaultSection = parsed?.Default || {};
+  const accountName = Object.keys(defaultSection).find((key) => key.startsWith('@')) || '';
+  const accountWide = accountName
+    ? defaultSection?.[accountName]?.['$AccountWide'] || {}
+    : {};
+
+  return {
+    table_name: 'GuildSyncRoster',
+    account_name: accountName,
+    guildDump: accountWide.guildDump || null,
+    rosterEvents: accountWide.rosterEvents || {}
+  };
+}
+
+function extractLuaAssignmentTable(text, tableName) {
+  const assignment = new RegExp(`\\b${tableName}\\s*=\\s*\\{`).exec(text);
+  if (!assignment) {
+    throw new Error(`Could not find table assignment: ${tableName} = {`);
+  }
+
+  const openBraceIndex = assignment.index + assignment[0].lastIndexOf('{');
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = openBraceIndex; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+    }
+
+    if (depth === 0) {
+      return text.slice(openBraceIndex, i + 1);
+    }
+  }
+
+  throw new Error(`Could not find matching closing brace for ${tableName}`);
+}
+
+function parseEsoLuaTableForRoster(luaTableText) {
+  const parser = { text: luaTableText, i: 0 };
+  return parseRosterLuaValue(parser);
+}
+
+function skipRosterLuaWhitespace(parser) {
+  while (parser.i < parser.text.length && /[\s,]/.test(parser.text[parser.i])) {
+    parser.i += 1;
+  }
+}
+
+function parseRosterLuaValue(parser) {
+  skipRosterLuaWhitespace(parser);
+  const char = parser.text[parser.i];
+
+  if (char === '{') return parseRosterLuaTable(parser);
+  if (char === '"') return parseRosterLuaString(parser);
+  if (char === '-' || /\d/.test(char || '')) return parseRosterLuaNumber(parser);
+  if (parser.text.slice(parser.i, parser.i + 4) === 'true') { parser.i += 4; return true; }
+  if (parser.text.slice(parser.i, parser.i + 5) === 'false') { parser.i += 5; return false; }
+  if (parser.text.slice(parser.i, parser.i + 3) === 'nil') { parser.i += 3; return null; }
+
+  throw new Error(`Unexpected Lua value at ${parser.i}`);
+}
+
+function parseRosterLuaString(parser) {
+  parser.i += 1;
+  let output = '';
+  let escaped = false;
+
+  while (parser.i < parser.text.length) {
+    const char = parser.text[parser.i];
+    parser.i += 1;
+
+    if (escaped) {
+      output += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      return output;
+    }
+
+    output += char;
+  }
+
+  throw new Error('Unterminated Lua string.');
+}
+
+function parseRosterLuaNumber(parser) {
+  const start = parser.i;
+  while (parser.i < parser.text.length && /[-.\d]/.test(parser.text[parser.i])) {
+    parser.i += 1;
+  }
+
+  return Number(parser.text.slice(start, parser.i));
+}
+
+function parseRosterLuaKey(parser) {
+  skipRosterLuaWhitespace(parser);
+  if (parser.text[parser.i] !== '[') {
+    throw new Error(`Expected Lua key at ${parser.i}`);
+  }
+  parser.i += 1;
+  skipRosterLuaWhitespace(parser);
+  const key = parser.text[parser.i] === '"' ? parseRosterLuaString(parser) : parseRosterLuaNumber(parser);
+  skipRosterLuaWhitespace(parser);
+  if (parser.text[parser.i] !== ']') {
+    throw new Error(`Expected ] at ${parser.i}`);
+  }
+  parser.i += 1;
+  skipRosterLuaWhitespace(parser);
+  if (parser.text[parser.i] !== '=') {
+    throw new Error(`Expected = at ${parser.i}`);
+  }
+  parser.i += 1;
+  return key;
+}
+
+function parseRosterLuaTable(parser) {
+  parser.i += 1;
+  const entries = [];
+
+  while (parser.i < parser.text.length) {
+    skipRosterLuaWhitespace(parser);
+    if (parser.text[parser.i] === '}') {
+      parser.i += 1;
+      break;
+    }
+
+    const key = parseRosterLuaKey(parser);
+    const value = parseRosterLuaValue(parser);
+    entries.push({ key, value });
+  }
+
+  const allNumericKeys = entries.length > 0 && entries.every((entry) => Number.isInteger(entry.key) && entry.key >= 1);
+
+  if (allNumericKeys) {
+    return entries
+      .sort((a, b) => a.key - b.key)
+      .map((entry) => entry.value);
+  }
+
+  const object = {};
+  for (const entry of entries) {
+    object[String(entry.key)] = entry.value;
+  }
+  return object;
+}
 
 async function safeRollback(connection) {
   try {

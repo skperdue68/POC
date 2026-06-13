@@ -10,8 +10,16 @@ export function CollectGuildSyncBankingData(arg1) {
   return window['go']['main']['App']['CollectGuildSyncBankingData'](arg1);
 }
 
+export function CollectGuildSyncRosterData(arg1) {
+  return window['go']['main']['App']['CollectGuildSyncRosterData'](arg1);
+}
+
 export function CommitGuildSyncBankingData(arg1, arg2) {
   return window['go']['main']['App']['CommitGuildSyncBankingData'](arg1, arg2);
+}
+
+export function CommitGuildSyncRosterData(arg1, arg2) {
+  return window['go']['main']['App']['CommitGuildSyncRosterData'](arg1, arg2);
 }
 
 export function GetGuildSyncClientConfig() {

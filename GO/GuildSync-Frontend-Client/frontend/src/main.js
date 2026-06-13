@@ -18,7 +18,9 @@ import {
   GetGuildSyncFileWatcherStatus,
   SetGuildSyncSavedVarsWatchFileEnabled,
   CollectGuildSyncBankingData,
-  CommitGuildSyncBankingData
+  CommitGuildSyncBankingData,
+  CollectGuildSyncRosterData,
+  CommitGuildSyncRosterData
 } from '../wailsjs/go/main/App';
 
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -26,6 +28,7 @@ import { EventsOn } from '../wailsjs/runtime/runtime';
 const GUILDSYNC_APP_VERSION = '1.0.3';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
+const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
 
 const TRANSIENT_MESSAGE_TTL_MS = 60 * 1000;
 const MESSAGE_VISIBLE_MS = 7000;
@@ -42,6 +45,7 @@ let resizeHandlerAttached = false;
 let profileMenuOpen = false;
 let versionCheckTimer = null;
 let bankingUploadQueueProcessing = false;
+let rosterUploadQueueProcessing = false;
 let guildSyncFileWatcherStatus = null;
 
 let systemMessages = new Map();
@@ -72,6 +76,20 @@ let discordSortDirection = 'asc';
 let discordSearchSelectionStart = null;
 let discordSearchSelectionEnd = null;
 
+let rosterMembers = [];
+let rosterLastRefreshValue = null;
+let rosterDataLoading = false;
+let rosterAutoRefreshAttempted = false;
+let rosterSearchText = '';
+let rosterSelectedRankNames = new Set();
+let rosterHistoryDialogOpen = false;
+let rosterHistorySearchText = '';
+let rosterHistoryMatches = [];
+let rosterHistorySelectedAccount = '';
+let rosterHistoryEvents = [];
+let rosterHistoryLoading = false;
+let rosterHistoryError = '';
+
 let bankingEntries = [];
 let bankingActiveSection = 'biweekly';
 let bankingLastRefreshValue = null;
@@ -91,7 +109,7 @@ const BANKING_RAFFLE_AFTER_SALES_SECONDS = 60 * 60;
 
 const GUILDSYNC_TABS = [
   { id: 'discord-members', label: 'Discord Member Data', icon: 'discord' },
-  { id: 'eso-members', label: 'ESO Member Data', icon: 'swords' },
+  { id: 'eso-members', label: 'Guild Roster', icon: 'swords' },
   { id: 'settings', label: 'Settings', icon: 'gear' },
   { id: 'more', label: 'Bank Deposits', icon: 'bank' }
 ];
@@ -197,6 +215,7 @@ function showMainWindow() {
   renderDiscordArea();
   wireGuildSyncTabs();
   wireDiscordMemberDataPanel();
+  wireEsoRosterPanel();
   wireBankDepositsPanel();
   updateStatusDot();
   requestSystemMessageDisplayUpdate();
@@ -269,6 +288,10 @@ function renderGuildSyncTabContent() {
     return renderDiscordMemberDataPanel();
   }
 
+  if (activeTab.id === 'eso-members') {
+    return renderEsoRosterPanel();
+  }
+
   if (activeTab.id === 'more') {
     return renderBankDepositsPanel();
   }
@@ -311,6 +334,7 @@ function renderGuildSyncTabLayout(options = {}) {
 
   wireGuildSyncTabs();
   wireDiscordMemberDataPanel();
+  wireEsoRosterPanel();
   wireBankDepositsPanel();
 
   if (options.restoreDiscordSearchFocus) {
@@ -319,6 +343,17 @@ function renderGuildSyncTabLayout(options = {}) {
 
   if (activeGuildSyncTab === 'discord-members' && socket?.connected && discordMembers.length === 0 && !discordDataLoading) {
     refreshDiscordData({ silent: true });
+  }
+
+  if (
+    activeGuildSyncTab === 'eso-members' &&
+    socket?.connected &&
+    rosterMembers.length === 0 &&
+    !rosterDataLoading &&
+    !rosterAutoRefreshAttempted
+  ) {
+    rosterAutoRefreshAttempted = true;
+    refreshRosterDataFromBackend({ silent: true });
   }
 
   if (activeGuildSyncTab === 'more' && socket?.connected && bankingEntries.length === 0 && !bankingDataLoading) {
@@ -398,6 +433,686 @@ function renderDiscordMemberDataPanel() {
   `;
 }
 
+
+
+function renderEsoRosterPanel() {
+  const filteredMembers = getFilteredRosterMembers();
+  const allRankNames = getAllRosterRankNames();
+  const selectedRankNames = Array.from(rosterSelectedRankNames);
+
+  return `
+    <div class="guildsync-tab-panel eso-roster-panel" data-active-tab="eso-members">
+      <div class="discord-data-header">
+        <div>
+          <h2 class="discord-data-title">Guild Roster</h2>
+          <p class="discord-data-subtitle">Current ESO roster imported from GuildSyncRoster.</p>
+        </div>
+        <div class="discord-data-actions">
+          <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatRosterRefreshDate(rosterLastRefreshValue))}</span>
+          <button id="openRosterHistoryButton" class="clear-discord-filters-button" type="button">Lookup Rank Historical Data</button>
+          <button id="refreshRosterDataButton" class="refresh-discord-button" type="button" ${rosterDataLoading ? 'disabled' : ''}>
+            <span class="refresh-discord-icon" aria-hidden="true">↻</span>
+            <span>${rosterDataLoading ? 'Refreshing...' : 'Refresh Roster Data'}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="discord-data-body eso-roster-body">
+        <div class="discord-filter-row eso-roster-filter-row">
+          <label class="discord-search-wrap" for="rosterMemberSearch">
+            <span class="discord-search-icon" aria-hidden="true">⌕</span>
+            <input id="rosterMemberSearch" class="discord-search-input" type="search" placeholder="Search account, rank, or joined date..." value="${escapeAttribute(rosterSearchText)}" />
+          </label>
+
+          <div class="discord-role-filter-wrap">
+            <label class="discord-filter-label" for="rosterRankFilter">Rank</label>
+            <select id="rosterRankFilter" class="discord-role-select">
+              <option value="">Add rank filter...</option>
+              ${allRankNames
+      .filter((rankName) => !rosterSelectedRankNames.has(rankName))
+      .map((rankName) => `<option value="${escapeAttribute(rankName)}">${escapeHtml(rankName)}</option>`)
+      .join('')}
+            </select>
+            <div class="discord-selected-roles">
+              ${selectedRankNames.length === 0
+      ? '<span class="discord-no-role-filter">All ranks</span>'
+      : selectedRankNames
+        .map((rankName) => renderRosterRankFilterChip(rankName))
+        .join('')}
+            </div>
+          </div>
+
+          <button id="clearRosterFiltersButton" class="clear-discord-filters-button" type="button">Clear Filters</button>
+          <div class="discord-results-count">${filteredMembers.length} result${filteredMembers.length === 1 ? '' : 's'}</div>
+        </div>
+
+        <div class="discord-member-table-shell eso-roster-table-shell">
+          <table class="discord-member-table eso-roster-table">
+            <thead>
+              <tr>
+                <th>Account Name</th>
+                <th>Rank</th>
+                <th>Joined</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredMembers.length > 0 ? filteredMembers.map(renderEsoRosterRow).join('') : renderEmptyEsoRosterRow()}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      ${rosterHistoryDialogOpen ? renderRosterHistoryDialog() : ''}
+    </div>
+  `;
+}
+
+function renderEsoRosterRow(member) {
+  const rowColor = getEsoRosterRankColor(member.rank || '');
+  const rowStyle = rowColor ? ` style="color: ${rowColor};"` : '';
+
+  return `
+    <tr class="eso-roster-row"${rowStyle}>
+      <td>${escapeHtml(member.account_name || '')}</td>
+      <td>${renderEsoRosterRank(member.rank || '')}</td>
+      <td>${escapeHtml(formatRosterJoinedDate(member.joined))}</td>
+    </tr>
+  `;
+}
+
+function renderEmptyEsoRosterRow() {
+  const message = rosterDataLoading
+    ? 'Loading Guild Roster data...'
+    : 'No Guild Roster members found.';
+
+  return `
+    <tr>
+      <td class="bank-empty-row" colspan="3">${escapeHtml(message)}</td>
+    </tr>
+  `;
+}
+
+function getEsoRosterRankColor(rankName) {
+  const cleanRankName = String(rankName || '').trim();
+  const matchingDiscordRole = findRoleByName(cleanRankName);
+  return discordRoleColorToHex(matchingDiscordRole?.role_color);
+}
+
+function renderEsoRosterRank(rankName) {
+  const cleanRankName = String(rankName || '').trim();
+
+  return `<span class="eso-roster-rank-text">${escapeHtml(cleanRankName || 'Unknown')}</span>`;
+}
+
+function getFilteredRosterMembers() {
+  const searchText = rosterSearchText.trim().toLowerCase();
+
+  return rosterMembers.filter((member) => {
+    const rankName = String(member.rank || '').trim();
+
+    if (rosterSelectedRankNames.size > 0 && !rosterSelectedRankNames.has(rankName)) {
+      return false;
+    }
+
+    if (!searchText) {
+      return true;
+    }
+
+    const joinedDate = formatRosterJoinedDate(member.joined);
+    const joinedDateTime = formatRosterHistoryTimestamp(member.joined);
+    const haystack = [
+      member.account_name,
+      rankName,
+      joinedDate,
+      joinedDateTime,
+      member.joined
+    ].map((value) => String(value || '').toLowerCase()).join(' ');
+
+    return haystack.includes(searchText);
+  });
+}
+
+function getAllRosterRankNames() {
+  return Array.from(new Set(
+    rosterMembers
+      .map((member) => String(member.rank || '').trim())
+      .filter(Boolean)
+  )).sort((left, right) => left.localeCompare(right));
+}
+
+function renderRosterRankFilterChip(rankName) {
+  const role = findRoleByName(rankName);
+  const hexColor = discordRoleColorToHex(role?.role_color);
+  const textColor = getReadableTextColor(hexColor);
+  const roleStyle = buildFilledRoleStyle(hexColor, textColor);
+
+  return `
+    <button
+      class="discord-role-filter-chip"
+      type="button"
+      data-remove-roster-rank-filter="${escapeAttribute(rankName)}"
+      style="${roleStyle}"
+      title="Remove ${escapeAttribute(rankName)} filter"
+    >
+      <span>${escapeHtml(rankName)}</span>
+      <span aria-hidden="true">×</span>
+    </button>
+  `;
+}
+
+function renderRosterHistoryDialog() {
+  return `
+    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="rosterHistoryTitle">
+      <div class="roster-history-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="rosterHistoryTitle">Roster Rank History</h3>
+            <p>Search prior rank records, including members no longer on the current roster.</p>
+          </div>
+          <button id="closeRosterHistoryButton" class="roster-history-close" type="button" aria-label="Close">×</button>
+        </div>
+
+        <div class="roster-history-search-row">
+          <input id="rosterHistorySearchInput" class="discord-search-input roster-history-search-input" type="search" placeholder="Enter part of an account name..." value="${escapeAttribute(rosterHistorySearchText)}" />
+          <button id="searchRosterHistoryButton" class="refresh-discord-button" type="button" ${rosterHistoryLoading ? 'disabled' : ''}>${rosterHistoryLoading ? 'Searching...' : 'Search'}</button>
+        </div>
+
+        ${rosterHistoryError ? `<div class="discord-data-error">${escapeHtml(rosterHistoryError)}</div>` : ''}
+
+        <div class="roster-history-content">
+          <div class="roster-history-matches">
+            <div class="roster-history-section-title">Matches</div>
+            ${renderRosterHistoryMatches()}
+          </div>
+          <div class="roster-history-events">
+            <div class="roster-history-section-title">Stream History${rosterHistorySelectedAccount ? `: ${escapeHtml(rosterHistorySelectedAccount)}` : ''}</div>
+            ${renderRosterHistoryEvents()}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderRosterHistoryMatches() {
+  if (rosterHistoryLoading && rosterHistoryMatches.length === 0) {
+    return '<div class="roster-history-muted">Searching...</div>';
+  }
+
+  if (rosterHistoryMatches.length === 0) {
+    return '<div class="roster-history-muted">No matches yet.</div>';
+  }
+
+  return `
+    <div class="roster-history-match-list">
+      ${rosterHistoryMatches.map((match) => `
+        <button class="roster-history-match${match.account_name === rosterHistorySelectedAccount ? ' is-selected' : ''}" type="button" data-roster-history-account="${escapeAttribute(match.account_name)}">
+          <span>${escapeHtml(match.account_name)}</span>
+          <strong>${escapeHtml(match.rank || '')}</strong>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderRosterHistoryEvents() {
+  if (!rosterHistorySelectedAccount) {
+    return '<div class="roster-history-muted">Choose a matching account to see stream history.</div>';
+  }
+
+  if (rosterHistoryLoading && rosterHistoryEvents.length === 0) {
+    return '<div class="roster-history-muted">Loading history...</div>';
+  }
+
+  if (rosterHistoryEvents.length === 0) {
+    return '<div class="roster-history-muted">No stream history found for this account.</div>';
+  }
+
+  return `
+    <div class="roster-history-event-table-shell">
+      <table class="discord-member-table roster-history-event-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Event</th>
+            <th>Rank</th>
+            <th>Officer</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rosterHistoryEvents.map((event) => `
+            <tr>
+              <td>${escapeHtml(formatRosterHistoryTimestamp(event.timestamp))}</td>
+              <td>${escapeHtml(event.event_type || '')}</td>
+              <td>${renderEsoRosterRank(event.rank || '')}</td>
+              <td>${escapeHtml(event.officer || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function wireEsoRosterPanel() {
+  const refreshButton = document.querySelector('#refreshRosterDataButton');
+  if (refreshButton) {
+    refreshButton.addEventListener('click', () => refreshRosterDataFromBackend());
+  }
+
+  const historyButton = document.querySelector('#openRosterHistoryButton');
+  if (historyButton) {
+    historyButton.addEventListener('click', () => {
+      rosterHistoryDialogOpen = true;
+      rosterHistoryError = '';
+      renderGuildSyncTabLayout();
+    });
+  }
+
+  const rosterSearchInput = document.querySelector('#rosterMemberSearch');
+  if (rosterSearchInput) {
+    rosterSearchInput.addEventListener('input', (event) => {
+      rosterSearchText = event.target.value || '';
+      renderGuildSyncTabLayout();
+    });
+  }
+
+  const rankSelect = document.querySelector('#rosterRankFilter');
+  if (rankSelect) {
+    rankSelect.addEventListener('change', (event) => {
+      const rankName = String(event.target.value || '').trim();
+      if (rankName) {
+        rosterSelectedRankNames.add(rankName);
+        renderGuildSyncTabLayout();
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-remove-roster-rank-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const rankName = button.dataset.removeRosterRankFilter || '';
+      rosterSelectedRankNames.delete(rankName);
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  const clearButton = document.querySelector('#clearRosterFiltersButton');
+  if (clearButton) {
+    clearButton.addEventListener('click', () => {
+      rosterSearchText = '';
+      rosterSelectedRankNames.clear();
+      renderGuildSyncTabLayout();
+    });
+  }
+
+  wireRosterHistoryDialog();
+}
+
+function wireRosterHistoryDialog() {
+  const closeButton = document.querySelector('#closeRosterHistoryButton');
+  if (closeButton) {
+    closeButton.addEventListener('click', () => {
+      rosterHistoryDialogOpen = false;
+      renderGuildSyncTabLayout();
+    });
+  }
+
+  const searchInput = document.querySelector('#rosterHistorySearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', (event) => {
+      rosterHistorySearchText = event.target.value || '';
+    });
+
+    searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        searchRosterRankHistory();
+      }
+    });
+  }
+
+  const searchButton = document.querySelector('#searchRosterHistoryButton');
+  if (searchButton) {
+    searchButton.addEventListener('click', () => searchRosterRankHistory());
+  }
+
+  document.querySelectorAll('[data-roster-history-account]').forEach((button) => {
+    button.addEventListener('click', () => {
+      loadRosterStreamHistory(button.dataset.rosterHistoryAccount || '');
+    });
+  });
+}
+
+async function searchRosterRankHistory() {
+  const query = rosterHistorySearchText.trim();
+
+  if (!query) {
+    rosterHistoryError = 'Enter at least part of an account name.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  rosterHistoryLoading = true;
+  rosterHistoryError = '';
+  rosterHistoryMatches = [];
+  rosterHistorySelectedAccount = '';
+  rosterHistoryEvents = [];
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-roster-rank-history', { query }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to search roster rank history.');
+    }
+
+    rosterHistoryMatches = normalizeRosterHistoryMatches(response.matches);
+
+    if (rosterHistoryMatches.length === 1) {
+      await loadRosterStreamHistory(rosterHistoryMatches[0].account_name, { keepLoading: true });
+      return;
+    }
+  } catch (error) {
+    rosterHistoryError = formatError(error);
+  } finally {
+    rosterHistoryLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function loadRosterStreamHistory(accountName, options = {}) {
+  const cleanAccountName = String(accountName || '').trim();
+
+  if (!cleanAccountName) {
+    return;
+  }
+
+  rosterHistorySelectedAccount = cleanAccountName;
+  rosterHistoryEvents = [];
+  rosterHistoryLoading = true;
+  rosterHistoryError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-roster-stream-history', { account_name: cleanAccountName }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to load roster stream history.');
+    }
+
+    rosterHistoryEvents = normalizeRosterHistoryEvents(response.events);
+  } catch (error) {
+    rosterHistoryError = formatError(error);
+  } finally {
+    rosterHistoryLoading = false;
+    if (!options.keepLoading) {
+      renderGuildSyncTabLayout();
+    }
+  }
+}
+
+function normalizeRosterHistoryMatches(matches) {
+  return Array.isArray(matches)
+    ? matches
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        account_name: String(item.account_name || item.accountName || '').trim(),
+        rank: String(item.rank || item.rankName || '').trim()
+      }))
+    : [];
+}
+
+function normalizeRosterHistoryEvents(events) {
+  return Array.isArray(events)
+    ? events
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        event_type: String(item.event_type || item.eventType || '').trim(),
+        rank: String(item.rank || item.rankName || '').trim(),
+        timestamp: item.timestamp ?? item.timestampS ?? '',
+        officer: String(item.officer || '').trim()
+      }))
+    : [];
+}
+
+function normalizeRosterMembers(members) {
+  return Array.isArray(members)
+    ? members
+      .filter((member) => member && typeof member === 'object')
+      .map((member) => ({
+        account_name: String(member.account_name || member.accountName || '').trim(),
+        rank: String(member.rank || member.rankName || '').trim(),
+        joined: member.joined ?? ''
+      }))
+      .sort((left, right) => left.account_name.localeCompare(right.account_name))
+    : [];
+}
+
+function formatRosterRefreshDate(value) {
+  if (!value) {
+    return 'Never';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleString();
+}
+
+function formatRosterJoinedDate(value) {
+  const numeric = Number(value);
+  if (!numeric) {
+    return '';
+  }
+
+  return new Date(numeric * 1000).toLocaleDateString();
+}
+
+function formatRosterHistoryTimestamp(value) {
+  const numeric = Number(value);
+  if (!numeric) {
+    return '';
+  }
+
+  return new Date(numeric * 1000).toLocaleString();
+}
+
+async function handleRosterDataUpdated(payload = {}) {
+  rosterMembers = normalizeRosterMembers(payload.members);
+  rosterLastRefreshValue = payload.last_refresh || new Date().toISOString();
+
+  if (activeGuildSyncTab === 'eso-members') {
+    renderGuildSyncTabLayout();
+  }
+
+  addSystemMessage('roster-data-updated', `Roster data updated. Loaded ${rosterMembers.length} member record${rosterMembers.length === 1 ? '' : 's'}.`, {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
+async function refreshRosterDataFromBackend(options = {}) {
+  if (!socket?.connected) {
+    return;
+  }
+
+  rosterDataLoading = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-roster-data', {}, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to retrieve roster data.');
+    }
+
+    rosterMembers = normalizeRosterMembers(response.members);
+    rosterLastRefreshValue = response.last_refresh || rosterLastRefreshValue;
+
+    if (!options.silent) {
+      addSystemMessage('roster-data-loaded', `Loaded ${rosterMembers.length} roster member${rosterMembers.length === 1 ? '' : 's'}.`, {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
+  } catch (error) {
+    addSystemMessage('roster-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    rosterDataLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function collectAndSendGuildSyncRosterData(payload = {}) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('roster-data-pending', 'Roster SavedVariables changed, but GuildSync websocket is not connected yet. The file was not cleared.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  rosterDataLoading = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    const result = await CollectGuildSyncRosterData(payload);
+
+    if (!result?.ok) {
+      addSystemMessage('roster-data-pending', result?.message || 'Roster SavedVariables changed, but no roster data was sent yet.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const rosterPayload = {
+      local_upload_id: createLocalRosterUploadId(),
+      authenticated_username: getDisplayName(),
+      authenticated_discord_user_id: guildSyncSession?.user?.discord_user_id || '',
+      source: 'guildsync-frontend-client',
+      file_name: result.fileName || payload.fileName || '',
+      file_path: result.filePath || payload.filePath || '',
+      collected_at: new Date().toISOString(),
+      data: result.data || {}
+    };
+
+    try {
+      await sendQueuedGuildSyncRosterUpload(rosterPayload);
+    } catch (sendError) {
+      enqueuePendingGuildSyncRosterUpload(rosterPayload);
+      throw sendError;
+    }
+
+    await refreshRosterDataFromBackend({ silent: true });
+  } catch (error) {
+    addSystemMessage('roster-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    rosterDataLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+function createLocalRosterUploadId() {
+  return `roster-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function loadPendingGuildSyncRosterUploads() {
+  try {
+    const raw = window.localStorage.getItem(PENDING_ROSTER_UPLOADS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingGuildSyncRosterUploads(queue) {
+  window.localStorage.setItem(PENDING_ROSTER_UPLOADS_STORAGE_KEY, JSON.stringify(Array.isArray(queue) ? queue : []));
+}
+
+function enqueuePendingGuildSyncRosterUpload(payload) {
+  const uploadId = String(payload?.local_upload_id || createLocalRosterUploadId());
+  const queue = loadPendingGuildSyncRosterUploads().filter((item) => item?.local_upload_id !== uploadId);
+
+  queue.push({
+    ...payload,
+    local_upload_id: uploadId,
+    pending_saved_at: new Date().toISOString()
+  });
+
+  savePendingGuildSyncRosterUploads(queue);
+
+  addSystemMessage('roster-data-pending', 'Roster data is queued and will retry after GuildSync reconnects.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
+function removePendingGuildSyncRosterUpload(uploadId) {
+  const queue = loadPendingGuildSyncRosterUploads().filter((item) => item?.local_upload_id !== uploadId);
+  savePendingGuildSyncRosterUploads(queue);
+}
+
+async function processPendingGuildSyncRosterUploads() {
+  if (rosterUploadQueueProcessing || !socket?.connected || !isAuthenticatedSession()) {
+    return;
+  }
+
+  const queue = loadPendingGuildSyncRosterUploads();
+  if (queue.length === 0) {
+    return;
+  }
+
+  rosterUploadQueueProcessing = true;
+
+  try {
+    for (const pendingPayload of queue) {
+      if (!socket?.connected || !isAuthenticatedSession()) {
+        return;
+      }
+
+      await sendQueuedGuildSyncRosterUpload(pendingPayload);
+      removePendingGuildSyncRosterUpload(pendingPayload.local_upload_id);
+    }
+  } catch (error) {
+    addSystemMessage('roster-data-pending-error', `Pending roster upload retry failed: ${formatError(error)}`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    rosterUploadQueueProcessing = false;
+  }
+}
+
+async function sendQueuedGuildSyncRosterUpload(rosterPayload) {
+  if (!socket?.connected) {
+    throw new Error('GuildSync websocket is not connected. Roster data was not cleared.');
+  }
+
+  const response = await emitSocketWithAck('guildsync:sending-roster-data', rosterPayload, 30000);
+
+  if (!response?.ok) {
+    throw new Error(response?.message || response?.error || 'Backend rejected the roster data payload. Roster data was not cleared.');
+  }
+
+  const commitResult = await CommitGuildSyncRosterData(
+    rosterPayload.file_path || '',
+    rosterPayload.file_name || ''
+  );
+
+  if (!commitResult?.ok) {
+    throw new Error(commitResult?.message || 'Backend confirmed roster data, but the SavedVariables file could not be cleared.');
+  }
+
+  addSystemMessage('roster-data-sent', response.message || 'Roster data sent to GuildSync backend.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+
+  return response;
+}
 
 function renderBankDepositsPanel() {
   const rows = getBankingRowsForSection(bankingActiveSection);
@@ -1984,11 +2699,16 @@ function connectSocket() {
       refreshDiscordData({ silent: true });
     }
 
+    if (activeGuildSyncTab === 'eso-members') {
+      refreshRosterDataFromBackend({ silent: true });
+    }
+
     if (activeGuildSyncTab === 'more') {
       refreshBankingDataFromBackend({ silent: true });
     }
 
     processPendingGuildSyncBankingUploads();
+    processPendingGuildSyncRosterUploads();
     startVersionCheckTimer();
   });
 
@@ -2012,6 +2732,10 @@ function connectSocket() {
 
   socket.on('guildsync:banking-data-updated', (payload) => {
     handleBankingDataUpdated(payload);
+  });
+
+  socket.on('guildsync:roster-data-updated', (payload) => {
+    handleRosterDataUpdated(payload);
   });
 
   socket.on('guildsync:discord-refresh-status', (payload = {}) => {
@@ -2497,10 +3221,18 @@ function handleGuildSyncSavedVarsFileModified(payload = {}) {
   if (key.toLowerCase() === 'banking') {
     handleGuildSyncBankingSavedVarsModified(payload);
   }
+
+  if (key.toLowerCase() === 'roster') {
+    handleGuildSyncRosterSavedVarsModified(payload);
+  }
 }
 
 async function handleGuildSyncBankingSavedVarsModified(payload = {}) {
   await collectAndSendGuildSyncBankingData(payload);
+}
+
+async function handleGuildSyncRosterSavedVarsModified(payload = {}) {
+  await collectAndSendGuildSyncRosterData(payload);
 }
 
 function handleGuildSyncFileWatcherError(message) {

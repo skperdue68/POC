@@ -130,6 +130,30 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class GuildSyncRosterDataResult {
+	    ok: boolean;
+	    message: string;
+	    key: string;
+	    label: string;
+	    fileName: string;
+	    filePath: string;
+	    data?: Record<string, any>;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuildSyncRosterDataResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.message = source["message"];
+	        this.key = source["key"];
+	        this.label = source["label"];
+	        this.fileName = source["fileName"];
+	        this.filePath = source["filePath"];
+	        this.data = source["data"];
+	    }
+	}
 	export class GuildSyncSavedVarsFileModifiedEvent {
 	    key: string;
 	    label: string;
