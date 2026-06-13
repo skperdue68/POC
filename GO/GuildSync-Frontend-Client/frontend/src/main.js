@@ -1,7 +1,7 @@
 import './style.css';
 import splashImage from './assets/splash.png';
 import appIcon from './assets/icon.png';
-import guildSyncLogo from './assets/GuildSync-LogoH.png';
+import guildSyncLogo from './assets/GuildSync-Graphic.png';
 import { io } from 'socket.io-client';
 
 import {
@@ -89,6 +89,12 @@ let rosterHistorySelectedAccount = '';
 let rosterHistoryEvents = [];
 let rosterHistoryLoading = false;
 let rosterHistoryError = '';
+let rosterHistorySearchTimer = null;
+let rosterHistoryActiveMatchIndex = -1;
+let associateTicketReportDialogOpen = false;
+let associateTicketReportRows = [];
+let associateTicketReportLoading = false;
+let associateTicketReportError = '';
 
 let bankingEntries = [];
 let bankingActiveSection = 'biweekly';
@@ -96,6 +102,12 @@ let bankingLastRefreshValue = null;
 let bankingDataLoading = false;
 let bankingExportGridOpen = false;
 let bankingExportSection = 'biweekly';
+let manualBiweeklyTicketDialogOpen = false;
+let manualBiweeklyTicketSubmitting = false;
+let manualBiweeklyTicketError = '';
+let manualBiweeklyTicketForm = { accountName: '', note: '', tickets: '' };
+let manualBiweeklyTicketAccountSearchText = '';
+let manualBiweeklyTicketActiveMatchIndex = -1;
 let bankingRafflePeriodOffsets = {
   biweekly: 0,
   monthly: 0
@@ -110,8 +122,8 @@ const BANKING_RAFFLE_AFTER_SALES_SECONDS = 60 * 60;
 const GUILDSYNC_TABS = [
   { id: 'discord-members', label: 'Discord Member Data', icon: 'discord' },
   { id: 'eso-members', label: 'Guild Roster', icon: 'swords' },
-  { id: 'settings', label: 'Settings', icon: 'gear' },
-  { id: 'more', label: 'Bank Deposits', icon: 'bank' }
+  { id: 'more', label: 'Bank Deposits / Raffle Tickets', icon: 'bank' },
+  { id: 'settings', label: 'Reports', icon: 'gear' }
 ];
 
 let activeGuildSyncTab = GUILDSYNC_TABS[0].id;
@@ -165,13 +177,15 @@ function showMainWindow() {
       </header>
 
       <section class="main-surface">
-        <div class="top-strip">
-          <div class="top-strip-spacer"></div>
+        <div class="compact-app-header">
+          <div class="compact-brand">
+            <img src="${guildSyncLogo}" alt="GuildSync" class="compact-brand-logo" />
+            <div class="compact-brand-text">
+              <div class="compact-brand-title">GuildSync</div>
+              <div class="compact-brand-version">Version ${escapeHtml(GUILDSYNC_APP_VERSION)}</div>
+            </div>
+          </div>
           <div id="discordArea" class="discord-area"></div>
-        </div>
-
-        <div class="brand-wrap">
-          <img src="${guildSyncLogo}" alt="GuildSync" class="brand-logo" />
         </div>
 
         <nav class="guildsync-tabs" aria-label="GuildSync sections">
@@ -217,6 +231,8 @@ function showMainWindow() {
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
   wireBankDepositsPanel();
+  wireReportsPanel();
+  wireManualBiweeklyTicketDialog();
   updateStatusDot();
   requestSystemMessageDisplayUpdate();
 
@@ -283,31 +299,45 @@ function getGuildSyncTabIcon(icon) {
 
 function renderGuildSyncTabContent() {
   const activeTab = GUILDSYNC_TABS.find((tab) => tab.id === activeGuildSyncTab) || GUILDSYNC_TABS[0];
+  let content = '';
 
   if (activeTab.id === 'discord-members') {
-    return renderDiscordMemberDataPanel();
-  }
-
-  if (activeTab.id === 'eso-members') {
-    return renderEsoRosterPanel();
-  }
-
-  if (activeTab.id === 'more') {
-    return renderBankDepositsPanel();
+    content = renderDiscordMemberDataPanel();
+  } else if (activeTab.id === 'eso-members') {
+    content = renderEsoRosterPanel();
+  } else if (activeTab.id === 'more') {
+    content = renderBankDepositsPanel();
+  } else if (activeTab.id === 'settings') {
+    content = renderReportsPanel();
+  } else {
+    content = `
+      <div class="guildsync-tab-panel" data-active-tab="${escapeAttribute(activeTab.id)}">
+        <div class="guildsync-tab-panel-placeholder">
+          ${escapeHtml(activeTab.label)} content will appear here.
+        </div>
+      </div>
+    `;
   }
 
   return `
-    <div class="guildsync-tab-panel" data-active-tab="${escapeAttribute(activeTab.id)}">
-      <div class="guildsync-tab-panel-placeholder">
-        ${escapeHtml(activeTab.label)} content will appear here.
-      </div>
-    </div>
+    ${content}
+    ${manualBiweeklyTicketDialogOpen ? renderManualBiweeklyTicketDialog() : ''}
   `;
+}
+
+function isBlockingModalOpen() {
+  return rosterHistoryDialogOpen
+    || manualBiweeklyTicketDialogOpen
+    || bankingExportGridOpen;
 }
 
 function wireGuildSyncTabs() {
   document.querySelectorAll('.guildsync-tab').forEach((tabButton) => {
     tabButton.addEventListener('click', () => {
+      if (isBlockingModalOpen()) {
+        return;
+      }
+
       const nextTab = tabButton.dataset.tabId;
 
       if (!nextTab || nextTab === activeGuildSyncTab) {
@@ -336,6 +366,8 @@ function renderGuildSyncTabLayout(options = {}) {
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
   wireBankDepositsPanel();
+  wireReportsPanel();
+  wireManualBiweeklyTicketDialog();
 
   if (options.restoreDiscordSearchFocus) {
     restoreDiscordSearchFocus();
@@ -540,7 +572,17 @@ function getEsoRosterRankColor(rankName) {
 function renderEsoRosterRank(rankName) {
   const cleanRankName = String(rankName || '').trim();
 
-  return `<span class="eso-roster-rank-text">${escapeHtml(cleanRankName || 'Unknown')}</span>`;
+  return `<span class="eso-roster-rank-text">${escapeHtml(cleanRankName)}</span>`;
+}
+
+function renderRosterHistoryRank(rankName) {
+  const cleanRankName = String(rankName || '').trim();
+
+  if (!cleanRankName || cleanRankName.toLowerCase() === 'unknown') {
+    return '';
+  }
+
+  return renderEsoRosterRank(cleanRankName);
 }
 
 function getFilteredRosterMembers() {
@@ -605,15 +647,14 @@ function renderRosterHistoryDialog() {
       <div class="roster-history-dialog">
         <div class="roster-history-header">
           <div>
-            <h3 id="rosterHistoryTitle">Roster Rank History</h3>
+            <h3 id="rosterHistoryTitle">Roster Rank Historical Data</h3>
             <p>Search prior rank records, including members no longer on the current roster.</p>
           </div>
           <button id="closeRosterHistoryButton" class="roster-history-close" type="button" aria-label="Close">×</button>
         </div>
 
         <div class="roster-history-search-row">
-          <input id="rosterHistorySearchInput" class="discord-search-input roster-history-search-input" type="search" placeholder="Enter part of an account name..." value="${escapeAttribute(rosterHistorySearchText)}" />
-          <button id="searchRosterHistoryButton" class="refresh-discord-button" type="button" ${rosterHistoryLoading ? 'disabled' : ''}>${rosterHistoryLoading ? 'Searching...' : 'Search'}</button>
+          <input id="rosterHistorySearchInput" class="discord-search-input roster-history-search-input" type="search" placeholder="Start typing part of an account name..." value="${escapeAttribute(rosterHistorySearchText)}" />
         </div>
 
         ${rosterHistoryError ? `<div class="discord-data-error">${escapeHtml(rosterHistoryError)}</div>` : ''}
@@ -624,7 +665,7 @@ function renderRosterHistoryDialog() {
             ${renderRosterHistoryMatches()}
           </div>
           <div class="roster-history-events">
-            <div class="roster-history-section-title">Stream History${rosterHistorySelectedAccount ? `: ${escapeHtml(rosterHistorySelectedAccount)}` : ''}</div>
+            <div class="roster-history-section-title">Guild Roster History${rosterHistorySelectedAccount ? `: ${escapeHtml(rosterHistorySelectedAccount)}` : ''}</div>
             ${renderRosterHistoryEvents()}
           </div>
         </div>
@@ -644,10 +685,11 @@ function renderRosterHistoryMatches() {
 
   return `
     <div class="roster-history-match-list">
-      ${rosterHistoryMatches.map((match) => `
-        <button class="roster-history-match${match.account_name === rosterHistorySelectedAccount ? ' is-selected' : ''}" type="button" data-roster-history-account="${escapeAttribute(match.account_name)}">
+      ${rosterHistoryMatches.map((match, index) => `
+        <button class="roster-history-match${index === rosterHistoryActiveMatchIndex || match.account_name === rosterHistorySelectedAccount ? ' is-selected' : ''}" type="button" data-roster-history-account="${escapeAttribute(match.account_name)}">
           <span>${escapeHtml(match.account_name)}</span>
           <strong>${escapeHtml(match.rank || '')}</strong>
+          ${index === rosterHistoryActiveMatchIndex ? '<small>Enter</small>' : ''}
         </button>
       `).join('')}
     </div>
@@ -656,7 +698,7 @@ function renderRosterHistoryMatches() {
 
 function renderRosterHistoryEvents() {
   if (!rosterHistorySelectedAccount) {
-    return '<div class="roster-history-muted">Choose a matching account to see stream history.</div>';
+    return '<div class="roster-history-muted">Choose a matching account to see Guild Roster History.</div>';
   }
 
   if (rosterHistoryLoading && rosterHistoryEvents.length === 0) {
@@ -664,7 +706,7 @@ function renderRosterHistoryEvents() {
   }
 
   if (rosterHistoryEvents.length === 0) {
-    return '<div class="roster-history-muted">No stream history found for this account.</div>';
+    return '<div class="roster-history-muted">No Guild Roster History found for this account.</div>';
   }
 
   return `
@@ -683,7 +725,7 @@ function renderRosterHistoryEvents() {
             <tr>
               <td>${escapeHtml(formatRosterHistoryTimestamp(event.timestamp))}</td>
               <td>${escapeHtml(event.event_type || '')}</td>
-              <td>${renderEsoRosterRank(event.rank || '')}</td>
+              <td>${renderRosterHistoryRank(event.rank)}</td>
               <td>${escapeHtml(event.officer || '')}</td>
             </tr>
           `).join('')}
@@ -691,6 +733,426 @@ function renderRosterHistoryEvents() {
       </table>
     </div>
   `;
+}
+
+
+function renderReportsPanel() {
+  return `
+    <div class="guildsync-tab-panel reports-panel" data-active-tab="settings">
+      <div class="discord-data-header reports-header">
+        <div>
+          <h2 class="discord-data-title">Reports</h2>
+          <p class="discord-data-subtitle">Run GuildSync reports. More report options can be added here later.</p>
+        </div>
+      </div>
+
+      <div class="reports-grid">
+        <section class="reports-card reports-card-wide">
+          <div class="reports-card-header">
+            <div>
+              <h3>Associate Ticket Eligibility</h3>
+              <p>Shows Associates who have been in the guild at least two weeks and have purchased at least one raffle ticket.</p>
+            </div>
+            <button id="runAssociateTicketReportButton" class="refresh-discord-button" type="button" ${associateTicketReportLoading ? 'disabled' : ''}>
+              ${associateTicketReportLoading ? 'Running...' : 'Run Associate Ticket Report'}
+            </button>
+          </div>
+
+          ${associateTicketReportError ? `<div class="discord-data-error">${escapeHtml(associateTicketReportError)}</div>` : ''}
+
+          <div class="reports-result-header">
+            <span>${escapeHtml(String(associateTicketReportRows.length))} result${associateTicketReportRows.length === 1 ? '' : 's'}</span>
+          </div>
+
+          ${renderAssociateTicketReportRows()}
+        </section>
+
+        <section class="reports-card reports-card-placeholder">
+          <div class="reports-card-header">
+            <div>
+              <h3>Future Report</h3>
+              <p>This space is ready for the next GuildSync report.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
+function wireReportsPanel() {
+  if (activeGuildSyncTab !== 'settings') {
+    return;
+  }
+
+  document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => runAssociateTicketReport());
+}
+
+function renderAssociateTicketReportDialog() {
+  return `
+    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="associateTicketReportTitle">
+      <div class="roster-history-dialog associate-ticket-report-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="associateTicketReportTitle">Associate Ticket Eligibility Report</h3>
+            <p>Associates who have been in the guild at least two weeks and have purchased at least one raffle ticket.</p>
+          </div>
+          <button id="closeAssociateTicketReportButton" class="roster-history-close" type="button" aria-label="Close">×</button>
+        </div>
+
+        <div class="roster-history-search-row">
+          <button id="runAssociateTicketReportButton" class="refresh-discord-button" type="button" ${associateTicketReportLoading ? 'disabled' : ''}>${associateTicketReportLoading ? 'Running...' : 'Run Report'}</button>
+          <span class="roster-history-muted">${escapeHtml(String(associateTicketReportRows.length))} result${associateTicketReportRows.length === 1 ? '' : 's'}</span>
+        </div>
+
+        ${associateTicketReportError ? `<div class="discord-data-error">${escapeHtml(associateTicketReportError)}</div>` : ''}
+        ${renderAssociateTicketReportRows()}
+      </div>
+    </div>
+  `;
+}
+
+function renderAssociateTicketReportRows() {
+  if (associateTicketReportLoading && associateTicketReportRows.length === 0) {
+    return '<div class="roster-history-muted">Running report...</div>';
+  }
+
+  if (associateTicketReportRows.length === 0) {
+    return '<div class="roster-history-muted">Run this report to see matching associates.</div>';
+  }
+
+  return `
+    <div class="roster-history-event-table-shell">
+      <table class="discord-member-table roster-history-event-table">
+        <thead>
+          <tr>
+            <th>Account Name</th>
+            <th>Rank</th>
+            <th>Joined</th>
+            <th>Purchased Tickets</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${associateTicketReportRows.map((row) => `
+            <tr>
+              <td>${escapeHtml(row.account_name || '')}</td>
+              <td>${renderEsoRosterRank(row.rank || '')}</td>
+              <td>${escapeHtml(formatRosterJoinedDate(row.joined))}</td>
+              <td>${escapeHtml(formatTicketAmount(row.purchased_tickets || 0))}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function wireAssociateTicketReportDialog() {
+  if (!associateTicketReportDialogOpen) {
+    return;
+  }
+
+  document.querySelector('#closeAssociateTicketReportButton')?.addEventListener('click', () => {
+    associateTicketReportDialogOpen = false;
+    renderGuildSyncTabLayout();
+  });
+
+  document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => runAssociateTicketReport());
+
+  const overlay = document.querySelector('.roster-history-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        associateTicketReportDialogOpen = false;
+        renderGuildSyncTabLayout();
+      }
+    });
+  }
+}
+
+async function runAssociateTicketReport() {
+  if (!socket?.connected || !isAuthenticatedSession()) {
+    associateTicketReportError = 'You must be logged in and connected to run this report.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  associateTicketReportLoading = true;
+  associateTicketReportError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-associate-ticket-report', {}, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to run report.');
+    }
+
+    associateTicketReportRows = Array.isArray(response.rows) ? response.rows : [];
+  } catch (error) {
+    associateTicketReportError = formatError(error);
+  } finally {
+    associateTicketReportLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+
+function getManualTicketMemberMatches() {
+  const query = String(manualBiweeklyTicketAccountSearchText || '').trim().toLowerCase();
+
+  if (!query) {
+    return [];
+  }
+
+  return rosterMembers
+    .filter((member) => String(member.account_name || '').trim())
+    .filter((member) => String(member.account_name || '').toLowerCase().includes(query))
+    .slice()
+    .sort((left, right) => {
+      const leftName = String(left.account_name || '').toLowerCase();
+      const rightName = String(right.account_name || '').toLowerCase();
+      const leftStarts = leftName.startsWith(query) ? 0 : 1;
+      const rightStarts = rightName.startsWith(query) ? 0 : 1;
+
+      if (leftStarts !== rightStarts) {
+        return leftStarts - rightStarts;
+      }
+
+      return leftName.localeCompare(rightName);
+    })
+    .slice(0, 20);
+}
+
+function selectManualTicketAccount(accountName) {
+  const cleanAccountName = String(accountName || '').trim();
+
+  manualBiweeklyTicketForm.accountName = cleanAccountName;
+  manualBiweeklyTicketAccountSearchText = cleanAccountName;
+  manualBiweeklyTicketError = '';
+  renderGuildSyncTabLayout();
+  focusInputById('manualTicketAccountSearchInput');
+}
+
+function focusInputById(inputId) {
+  window.setTimeout(() => {
+    const input = document.querySelector(`#${inputId}`);
+    if (!input) {
+      return;
+    }
+
+    input.focus();
+
+    const valueLength = String(input.value || '').length;
+    if (typeof input.setSelectionRange === 'function') {
+      input.setSelectionRange(valueLength, valueLength);
+    }
+  }, 0);
+}
+
+function renderManualBiweeklyTicketDialog() {
+  const memberMatches = getManualTicketMemberMatches();
+  const selectedAccountName = String(manualBiweeklyTicketForm.accountName || '').trim();
+
+  return `
+    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="manualBiweeklyTicketTitle">
+      <div class="roster-history-dialog manual-ticket-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="manualBiweeklyTicketTitle">Add Manual Bi-Weekly Tickets</h3>
+            <p>Add free/manual raffle tickets such as FFTG. These do not count as purchased tickets.</p>
+          </div>
+          <button id="closeManualBiweeklyTicketButton" class="roster-history-close" type="button" aria-label="Close">×</button>
+        </div>
+
+        ${manualBiweeklyTicketError ? `<div class="discord-data-error">${escapeHtml(manualBiweeklyTicketError)}</div>` : ''}
+
+        <div class="manual-ticket-form">
+          <label class="manual-ticket-member-field">
+            <input id="manualTicketAccountSearchInput" class="discord-search-input" type="search" placeholder="Start typing part of an account name..." value="${escapeAttribute(manualBiweeklyTicketAccountSearchText)}" autocomplete="off" />
+          </label>
+
+          ${selectedAccountName ? `<div class="roster-history-muted">Selected: ${escapeHtml(selectedAccountName)}</div>` : ''}
+
+          <div class="roster-history-match-list manual-ticket-match-list">
+            ${memberMatches.length === 0
+              ? '<div class="roster-history-muted">No matching names</div>'
+              : memberMatches.map((member, index) => `
+                <button class="roster-history-match${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? ' is-selected' : ''}" type="button" data-manual-ticket-account="${escapeAttribute(member.account_name)}">
+                  <span>${escapeHtml(member.account_name)}</span>
+                  <strong>${escapeHtml(member.rank || '')}</strong>
+                  ${index === manualBiweeklyTicketActiveMatchIndex ? '<small>Enter</small>' : ''}
+                </button>
+              `).join('')}
+          </div>
+
+          <div class="manual-ticket-entry-row">
+            <label class="manual-ticket-note-field">
+              <textarea id="manualTicketNoteInput" class="discord-search-input manual-ticket-note-input" rows="4" placeholder="Enter a reason such as FFTG">${escapeHtml(manualBiweeklyTicketForm.note)}</textarea>
+            </label>
+            <label class="manual-ticket-count-field">
+              <div class="manual-ticket-number-wrap">
+                <input id="manualTicketCountInput" class="discord-search-input manual-ticket-count-input" type="number" min="1" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(manualBiweeklyTicketForm.tickets)}" />
+                <div class="manual-ticket-number-buttons" aria-hidden="true">
+                  <button id="manualTicketCountUpButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌃</button>
+                  <button id="manualTicketCountDownButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌄</button>
+                </div>
+              </div>
+            </label>
+          </div>
+          <div class="manual-ticket-actions">
+            <button id="saveManualBiweeklyTicketButton" class="refresh-discord-button" type="button" ${manualBiweeklyTicketSubmitting ? 'disabled' : ''}>${manualBiweeklyTicketSubmitting ? 'Saving...' : 'Add Manual Tickets'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireManualBiweeklyTicketDialog() {
+  if (!manualBiweeklyTicketDialogOpen) {
+    return;
+  }
+
+  document.querySelector('#closeManualBiweeklyTicketButton')?.addEventListener('click', () => {
+    manualBiweeklyTicketDialogOpen = false;
+    renderGuildSyncTabLayout();
+  });
+
+  const accountSearchInput = document.querySelector('#manualTicketAccountSearchInput');
+  if (accountSearchInput) {
+    accountSearchInput.addEventListener('input', (event) => {
+      manualBiweeklyTicketAccountSearchText = event.target.value || '';
+      manualBiweeklyTicketForm.accountName = '';
+      manualBiweeklyTicketActiveMatchIndex = getManualTicketMemberMatches().length > 0 ? 0 : -1;
+      renderGuildSyncTabLayout();
+      focusInputById('manualTicketAccountSearchInput');
+    });
+
+    accountSearchInput.addEventListener('keydown', (event) => {
+      const matches = getManualTicketMemberMatches();
+
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (matches.length === 0) {
+          return;
+        }
+
+        event.preventDefault();
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        const currentIndex = manualBiweeklyTicketActiveMatchIndex < 0 ? 0 : manualBiweeklyTicketActiveMatchIndex;
+        manualBiweeklyTicketActiveMatchIndex = (currentIndex + direction + matches.length) % matches.length;
+        renderGuildSyncTabLayout();
+        focusInputById('manualTicketAccountSearchInput');
+        return;
+      }
+
+      if (event.key !== 'Enter') {
+        return;
+      }
+
+      event.preventDefault();
+      const selectedMatch = matches[manualBiweeklyTicketActiveMatchIndex >= 0 ? manualBiweeklyTicketActiveMatchIndex : 0];
+      if (selectedMatch?.account_name) {
+        selectManualTicketAccount(selectedMatch.account_name);
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-manual-ticket-account]').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectManualTicketAccount(button.dataset.manualTicketAccount || '');
+    });
+  });
+
+  document.querySelector('#manualTicketNoteInput')?.addEventListener('input', (event) => {
+    manualBiweeklyTicketForm.note = event.target.value || '';
+  });
+
+  const ticketCountInput = document.querySelector('#manualTicketCountInput');
+  ticketCountInput?.addEventListener('input', (event) => {
+    const numericValue = String(event.target.value || '').replace(/\D/g, '');
+    if (event.target.value !== numericValue) {
+      event.target.value = numericValue;
+    }
+    manualBiweeklyTicketForm.tickets = numericValue;
+  });
+
+  const stepManualTicketCount = (direction) => {
+    const currentValue = Number(manualBiweeklyTicketForm.tickets) || 0;
+    const nextValue = Math.max(1, currentValue + direction);
+    manualBiweeklyTicketForm.tickets = String(nextValue);
+    if (ticketCountInput) {
+      ticketCountInput.value = manualBiweeklyTicketForm.tickets;
+      ticketCountInput.focus();
+    }
+  };
+
+  document.querySelector('#manualTicketCountUpButton')?.addEventListener('click', () => stepManualTicketCount(1));
+  document.querySelector('#manualTicketCountDownButton')?.addEventListener('click', () => stepManualTicketCount(-1));
+
+  document.querySelector('#saveManualBiweeklyTicketButton')?.addEventListener('click', () => submitManualBiweeklyTicket());
+
+  const overlay = document.querySelector('.roster-history-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        manualBiweeklyTicketDialogOpen = false;
+        renderGuildSyncTabLayout();
+      }
+    });
+  }
+}
+
+async function submitManualBiweeklyTicket() {
+  const accountName = String(manualBiweeklyTicketForm.accountName || '').trim();
+  const note = String(manualBiweeklyTicketForm.note || '').trim();
+  const tickets = Number(manualBiweeklyTicketForm.tickets);
+
+  if (!accountName) {
+    manualBiweeklyTicketError = 'Choose a guild member.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  if (!note) {
+    manualBiweeklyTicketError = 'Enter a reason or note.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  if (!Number.isFinite(tickets) || tickets <= 0) {
+    manualBiweeklyTicketError = 'Enter the number of tickets to add.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  manualBiweeklyTicketSubmitting = true;
+  manualBiweeklyTicketError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:add-manual-biweekly-ticket-entry', {
+      account_name: accountName,
+      note,
+      tickets: Math.floor(tickets)
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to add manual ticket entry.');
+    }
+
+    manualBiweeklyTicketDialogOpen = false;
+    manualBiweeklyTicketForm = { accountName: '', note: '', tickets: '' };
+    manualBiweeklyTicketAccountSearchText = '';
+    manualBiweeklyTicketActiveMatchIndex = -1;
+    await refreshBankingDataFromBackend({ silent: true });
+    addSystemMessage('manual-ticket-added', response.message || 'Manual ticket entry added.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } catch (error) {
+    manualBiweeklyTicketError = formatError(error);
+  } finally {
+    manualBiweeklyTicketSubmitting = false;
+    renderGuildSyncTabLayout();
+  }
 }
 
 function wireEsoRosterPanel() {
@@ -760,18 +1222,51 @@ function wireRosterHistoryDialog() {
   if (searchInput) {
     searchInput.addEventListener('input', (event) => {
       rosterHistorySearchText = event.target.value || '';
+      rosterHistoryActiveMatchIndex = -1;
+
+      if (!rosterHistorySearchText.trim()) {
+        clearTimeout(rosterHistorySearchTimer);
+        rosterHistoryError = '';
+        rosterHistoryMatches = [];
+        rosterHistorySelectedAccount = '';
+        rosterHistoryEvents = [];
+        rosterHistoryLoading = false;
+        renderGuildSyncTabLayout();
+        focusInputById('rosterHistorySearchInput');
+        return;
+      }
+
+      clearTimeout(rosterHistorySearchTimer);
+      rosterHistorySearchTimer = setTimeout(() => {
+        searchRosterRankHistory({ auto: true, keepFocus: true });
+      }, 250);
     });
 
     searchInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        searchRosterRankHistory();
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (rosterHistoryMatches.length === 0) {
+          return;
+        }
+
+        event.preventDefault();
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        const currentIndex = rosterHistoryActiveMatchIndex < 0 ? 0 : rosterHistoryActiveMatchIndex;
+        rosterHistoryActiveMatchIndex = (currentIndex + direction + rosterHistoryMatches.length) % rosterHistoryMatches.length;
+        renderGuildSyncTabLayout();
+        focusInputById('rosterHistorySearchInput');
+        return;
+      }
+
+      if (event.key !== 'Enter') {
+        return;
+      }
+
+      event.preventDefault();
+      const selectedMatch = rosterHistoryMatches[rosterHistoryActiveMatchIndex >= 0 ? rosterHistoryActiveMatchIndex : 0];
+      if (selectedMatch?.account_name) {
+        loadRosterStreamHistory(selectedMatch.account_name);
       }
     });
-  }
-
-  const searchButton = document.querySelector('#searchRosterHistoryButton');
-  if (searchButton) {
-    searchButton.addEventListener('click', () => searchRosterRankHistory());
   }
 
   document.querySelectorAll('[data-roster-history-account]').forEach((button) => {
@@ -781,21 +1276,33 @@ function wireRosterHistoryDialog() {
   });
 }
 
-async function searchRosterRankHistory() {
+async function searchRosterRankHistory(options = {}) {
   const query = rosterHistorySearchText.trim();
 
   if (!query) {
-    rosterHistoryError = 'Enter at least part of an account name.';
+    rosterHistoryError = '';
+    rosterHistoryMatches = [];
+    rosterHistoryActiveMatchIndex = -1;
+    rosterHistorySelectedAccount = '';
+    rosterHistoryEvents = [];
+    rosterHistoryLoading = false;
     renderGuildSyncTabLayout();
+    if (options.keepFocus) {
+      focusInputById('rosterHistorySearchInput');
+    }
     return;
   }
 
   rosterHistoryLoading = true;
   rosterHistoryError = '';
   rosterHistoryMatches = [];
+  rosterHistoryActiveMatchIndex = -1;
   rosterHistorySelectedAccount = '';
   rosterHistoryEvents = [];
   renderGuildSyncTabLayout();
+  if (options.keepFocus) {
+    focusInputById('rosterHistorySearchInput');
+  }
 
   try {
     const response = await emitSocketWithAck('guildsync:request-roster-rank-history', { query }, 30000);
@@ -805,16 +1312,15 @@ async function searchRosterRankHistory() {
     }
 
     rosterHistoryMatches = normalizeRosterHistoryMatches(response.matches);
-
-    if (rosterHistoryMatches.length === 1) {
-      await loadRosterStreamHistory(rosterHistoryMatches[0].account_name, { keepLoading: true });
-      return;
-    }
+    rosterHistoryActiveMatchIndex = rosterHistoryMatches.length > 0 ? 0 : -1;
   } catch (error) {
     rosterHistoryError = formatError(error);
   } finally {
     rosterHistoryLoading = false;
     renderGuildSyncTabLayout();
+    if (options.keepFocus) {
+      focusInputById('rosterHistorySearchInput');
+    }
   }
 }
 
@@ -826,6 +1332,7 @@ async function loadRosterStreamHistory(accountName, options = {}) {
   }
 
   rosterHistorySelectedAccount = cleanAccountName;
+  rosterHistorySearchText = cleanAccountName;
   rosterHistoryEvents = [];
   rosterHistoryLoading = true;
   rosterHistoryError = '';
@@ -1132,6 +1639,10 @@ function renderBankDepositsPanel() {
             <span aria-hidden="true">▦</span>
             <span>Export Bi-Weekly</span>
           </button>
+          <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button">
+            <span aria-hidden="true">＋</span>
+            <span>Add Manual Tickets</span>
+          </button>
           <button class="bank-export-button" type="button" data-bank-export-section="monthly">
             <span aria-hidden="true">▦</span>
             <span>Export 50/50</span>
@@ -1327,6 +1838,19 @@ function wireBankDepositsPanel() {
     });
   }
 
+  const manualTicketButton = document.querySelector('#openManualBiweeklyTicketButton');
+  if (manualTicketButton) {
+    manualTicketButton.addEventListener('click', async () => {
+      manualBiweeklyTicketDialogOpen = true;
+      manualBiweeklyTicketError = '';
+      manualBiweeklyTicketAccountSearchText = manualBiweeklyTicketForm.accountName || '';
+      if (rosterMembers.length === 0 && socket?.connected && isAuthenticatedSession()) {
+        await refreshRosterDataFromBackend({ silent: true });
+      }
+      renderGuildSyncTabLayout();
+    });
+  }
+
   const refreshButton = document.querySelector('#refreshBankingDataButton');
   if (refreshButton) {
     refreshButton.addEventListener('click', () => collectAndSendGuildSyncBankingData({ key: 'banking' }));
@@ -1458,7 +1982,7 @@ function getBankingTotals(rows) {
 function renderBankDepositRow(entry, showTicketColumn = true) {
   return `
     <tr>
-      <td>${escapeHtml(entry.eventId || '')}</td>
+      <td>${escapeHtml(entry.note || entry.eventId || '')}</td>
       <td>${escapeHtml(formatBankingTimestamp(entry.time))}</td>
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td><strong class="bank-gold-amount">${escapeHtml(formatGoldAmount(entry.amount))}</strong> <span aria-hidden="true">🪙</span></td>
@@ -1527,7 +2051,9 @@ function normalizeBankingEntries(entries) {
       time: Number(entry?.time ?? entry?.timestamp ?? 0) || 0,
       displayName: String(entry?.displayName ?? entry?.display_name ?? '').trim(),
       amount: Number(entry?.amount ?? 0) || 0,
-      ticketAmount: Number(entry?.ticketAmount ?? entry?.ticket_amount ?? 0) || 0
+      ticketAmount: Number(entry?.ticketAmount ?? entry?.ticket_amount ?? 0) || 0,
+      note: String(entry?.note ?? '').trim(),
+      dataSource: String(entry?.dataSource ?? entry?.data_source ?? '').trim()
     };
   });
 }
@@ -2526,6 +3052,16 @@ function renderOpenProfileMenuContents() {
   document
     .querySelector('#discordLogoutButton')
     ?.addEventListener('click', logoutGuildSync);
+
+  document
+    .querySelector('#associateTicketReportButton')
+    ?.addEventListener('click', () => {
+      closeProfileMenu(false);
+      associateTicketReportDialogOpen = true;
+      associateTicketReportError = '';
+      renderGuildSyncTabLayout();
+      runAssociateTicketReport();
+    });
 
   document
     .querySelectorAll('.profile-filewatch-toggle')
