@@ -27,22 +27,6 @@ local function GSR_Trim(value)
     return value:match("^%s*(.-)%s*$") or ""
 end
 
-local function GSR_TimeString(timestamp)
-    if not timestamp or timestamp == 0 then
-        return "unknown"
-    end
-
-    return os.date("%Y-%m-%d %H:%M:%S", timestamp)
-end
-
-local function GSR_UtcTimeString(timestamp)
-    if not timestamp or timestamp == 0 then
-        return "unknown"
-    end
-
-    return os.date("!%Y-%m-%d %H:%M:%S UTC", timestamp)
-end
-
 local function GSR_GetTargetGuildId()
     for guildIndex = 1, GetNumGuilds() do
         local guildId = GetGuildId(guildIndex)
@@ -65,6 +49,8 @@ local function GSR_EnsureSavedVars()
     gsrSavedVars.types = gsrSavedVars.types or {}
     gsrSavedVars.rosterEvents = gsrSavedVars.rosterEvents or {}
     gsrSavedVars.stream = gsrSavedVars.stream or {}
+    gsrSavedVars.guildDump = gsrSavedVars.guildDump or {}
+    gsrSavedVars.guildMembers = gsrSavedVars.guildMembers or {}
 
     return gsrSavedVars
 end
@@ -104,31 +90,12 @@ local function GSR_GetRosterEventName(eventType)
         return "promoted"
     elseif eventType == GUILD_HISTORY_ROSTER_EVENT_DEMOTE then
         return "demoted"
-    elseif eventType == GUILD_HISTORY_ROSTER_EVENT_RANK_CHANGE then
-        return "rank_changed"
     elseif eventType == GUILD_HISTORY_ROSTER_EVENT_APPLICATION_ACCEPTED then
-        return "application_accepted"
+        return "application accepted"
     elseif eventType == GUILD_HISTORY_ROSTER_EVENT_APPLICATION_DECLINED then
-        return "application_declined"
+        return "application declined"
     end
-
     return "unknown"
-end
-
-local function GSR_TableToFlatString(info)
-    if type(info) ~= "table" then
-        return tostring(info)
-    end
-
-    local parts = {}
-
-    for key, value in pairs(info) do
-        table.insert(parts, tostring(key) .. "=" .. tostring(value))
-    end
-
-    table.sort(parts)
-
-    return table.concat(parts, ", ")
 end
 
 local function GSR_GetInfoValue(info, ...)
@@ -147,87 +114,29 @@ local function GSR_GetInfoValue(info, ...)
     return nil
 end
 
-local function GSR_BuildRosterRecord(guildId, guildName, event)
-    local eventId = event:GetEventId()
-    local eventType = event:GetEventType()
-    local timestamp = event:GetEventTimestampS()
-    local info = event:GetEventInfo()
+local function GSR_BuildRosterRecord(guildId, event)
+    local eventId = tonumber(event:GetEventId())
+    local rawEventType = event:GetEventType()
+    local info = event:GetEventInfo() or {}
 
-    local eventName = GSR_GetRosterEventName(eventType)
+    local timestampS = GSR_GetInfoValue(info, "timestampS", "timestamp", "time")
+    timestampS = tonumber(timestampS) or tonumber(event:GetEventTimestampS())
 
-    local targetDisplayName = GSR_GetInfoValue(
-        info,
-        "targetDisplayName",
-        "displayName",
-        "memberDisplayName",
-        "accountName"
-    )
+    local rankName = GSR_GetInfoValue(info, "rankName", "newRankName")
 
-    local actingDisplayName = GSR_GetInfoValue(
-        info,
-        "actingDisplayName",
-        "actorDisplayName",
-        "sourceDisplayName"
-    )
-
-    local rankId = GSR_GetInfoValue(
-        info,
-        "rankId",
-        "rank",
-        "newRankId"
-    )
-
-    local previousRankId = GSR_GetInfoValue(
-        info,
-        "previousRankId",
-        "oldRankId"
-    )
-
-    local newRankId = GSR_GetInfoValue(
-        info,
-        "newRankId",
-        "rankId",
-        "rank"
-    )
-
-    local characterName = GSR_GetInfoValue(
-        info,
-        "characterName",
-        "targetCharacterName"
-    )
-
-    local rankName = GSR_GetRankName(guildId, rankId)
-    local previousRankName = GSR_GetRankName(guildId, previousRankId)
-    local newRankName = GSR_GetRankName(guildId, newRankId)
+    if not rankName or GSR_Trim(rankName) == "" then
+        local rankId = GSR_GetInfoValue(info, "rankId", "rank", "newRankId")
+        rankName = GSR_GetRankName(guildId, rankId)
+    end
 
     return {
-        capturedAt = GetTimeStamp(),
-        guildName = guildName,
-        guildId = guildId,
-
-        eventId = tonumber(eventId),
-        rawEventType = eventType,
-        eventType = eventName,
-
-        time = tonumber(timestamp),
-        eventDate = GSR_TimeString(timestamp),
-        eventDateUtc = GSR_UtcTimeString(timestamp),
-
-        targetDisplayName = GSR_Trim(targetDisplayName),
-        actingDisplayName = GSR_Trim(actingDisplayName),
-        characterName = GSR_Trim(characterName),
-
-        rankId = tonumber(rankId),
-        rankName = rankName,
-
-        previousRankId = tonumber(previousRankId),
-        previousRankName = previousRankName,
-
-        newRankId = tonumber(newRankId),
-        newRankName = newRankName,
-
-        rawInfo = info,
-        rawInfoText = GSR_TableToFlatString(info),
+        eventId = eventId,
+        actingDisplayName = GSR_Trim(GSR_GetInfoValue(info, "actingDisplayName", "actorDisplayName", "sourceDisplayName")),
+        targetDisplayName = GSR_Trim(GSR_GetInfoValue(info, "targetDisplayName", "displayName", "memberDisplayName",
+            "accountName")),
+        timestampS = timestampS,
+        rankName = GSR_Trim(rankName),
+        eventType = GSR_GetRosterEventName(rawEventType),
     }
 end
 
@@ -249,21 +158,11 @@ local function GSR_GetRosterEventChatMessage(record)
         end
         return "Roster kicked: " .. target
     elseif record.eventType == "promoted" then
-        if record.newRankName ~= "" then
-            return "Roster promoted: " .. target .. " -> " .. record.newRankName
-        end
-        return "Roster promoted: " .. target
+        return "Roster promoted: " .. target .. " -> " .. tostring(record.rankName or "")
     elseif record.eventType == "demoted" then
-        if record.newRankName ~= "" then
-            return "Roster demoted: " .. target .. " -> " .. record.newRankName
-        end
-        return "Roster demoted: " .. target
+        return "Roster demoted: " .. target .. " -> " .. tostring(record.rankName or "")
     elseif record.eventType == "rank_changed" then
-        return "Roster rank changed: " .. target
-            .. " "
-            .. tostring(record.previousRankName or "")
-            .. " -> "
-            .. tostring(record.newRankName or "")
+        return "Roster rank changed: " .. target .. " -> " .. tostring(record.rankName or "")
     elseif record.eventType == "application_accepted" then
         if actor ~= "" then
             return "Roster application accepted: " .. target .. " by " .. actor
@@ -276,13 +175,7 @@ local function GSR_GetRosterEventChatMessage(record)
         return "Roster application declined: " .. target
     end
 
-    return "Roster event: Type="
-        .. tostring(record.rawEventType)
-        .. " Target="
-        .. tostring(target)
-        .. " Raw={"
-        .. tostring(record.rawInfoText)
-        .. "}"
+    return "Roster event: Type=" .. tostring(record.eventType) .. " Target=" .. tostring(target)
 end
 
 local function GSR_SaveRosterEvent(guildId, guildName, event)
@@ -306,36 +199,23 @@ local function GSR_SaveRosterEvent(guildId, guildName, event)
         return
     end
 
-    local record = GSR_BuildRosterRecord(guildId, guildName, event)
+    local record = GSR_BuildRosterRecord(guildId, event)
 
-    table.insert(sv.rosterEvents, record)
+    if GSR_Trim(record.eventType) == "unknown" then
+        sv.stream.lastProcessedId = eventId
+        sv.stream.lastProcessedAt = GetTimeStamp()
+        sv.stream.lastProcessedEventTime = record.timestampS
 
-    sv.lastRosterEvent = record
+        GSR_Print("Skipped unknown roster event. EventId=" .. tostring(eventId))
+        return
+    end
+
+    sv.rosterEvents["event_" .. tostring(eventId)] = record
     sv.stream.lastProcessedId = eventId
     sv.stream.lastProcessedAt = GetTimeStamp()
-    sv.stream.lastProcessedEventTime = record.time
-
-    while #sv.rosterEvents > MAX_EVENT_EXPORTS_TO_KEEP do
-        table.remove(sv.rosterEvents, 1)
-    end
-
-    GSR_Print(
-        "[roster] "
-        .. "EventId=" .. tostring(record.eventId)
-        .. " Time=" .. tostring(record.eventDate)
-        .. " Type=" .. tostring(record.eventType)
-        .. " RawType=" .. tostring(record.rawEventType)
-        .. " Target=" .. tostring(record.targetDisplayName)
-        .. " Actor=" .. tostring(record.actingDisplayName)
-        .. " RankId=" .. tostring(record.rankId)
-        .. " RankName=" .. tostring(record.rankName)
-    )
+    sv.stream.lastProcessedEventTime = record.timestampS
 
     GSR_Print(GSR_GetRosterEventChatMessage(record))
-
-    if sv.debugRawInfo == true then
-        GSR_Print("Raw roster info: " .. tostring(record.rawInfoText))
-    end
 end
 
 local function GSR_CreateProcessor(guildId)
@@ -455,45 +335,20 @@ local function GSR_DumpRoster()
 
     for memberIndex = 1, memberCount do
         local displayName, note, rankIndex, playerStatus, secsSinceLogoff = GetGuildMemberInfo(guildId, memberIndex)
+        local accountName = GSR_Trim(displayName)
 
-        table.insert(members, {
-            accountName = GSR_Trim(displayName),
-            rankId = rankIndex,
+        members[accountName] = {
+            accountName = accountName,
             rankName = GSR_GetRankName(guildId, rankIndex),
-            note = note,
-            playerStatus = playerStatus,
-            secsSinceLogoff = secsSinceLogoff,
-        })
+        }
     end
 
-    table.sort(members, function(left, right)
-        local leftRank = tonumber(left.rankId) or 999999
-        local rightRank = tonumber(right.rankId) or 999999
-
-        if leftRank ~= rightRank then
-            return leftRank < rightRank
-        end
-
-        return tostring(left.accountName):lower() < tostring(right.accountName):lower()
-    end)
-
-    gsrSavedVars.lastDump = {
-        dumpedAt = GetTimeStamp(),
-        guildName = guildName,
-        guildId = guildId,
-        guildIndex = guildIndex,
-        memberCount = #members,
-        members = members,
+    gsrSavedVars.guildDump = {
+        dumpTimestamp = GetTimeStamp(),
+        guildMembers = members,
     }
 
-    gsrSavedVars.dumps = gsrSavedVars.dumps or {}
-    table.insert(gsrSavedVars.dumps, gsrSavedVars.lastDump)
-
-    while #gsrSavedVars.dumps > 5 do
-        table.remove(gsrSavedVars.dumps, 1)
-    end
-
-    GSR_Print("Saved " .. tostring(#members) .. " member(s) from " .. tostring(guildName) .. ".")
+    GSR_Print("Saved " .. tostring(memberCount) .. " guild member(s) to GuildSyncRoster.guildDump.guildMembers.")
     GSR_Print("Run /reloadui, log out, or exit ESO to write GuildSyncRoster.lua to disk.")
 end
 
@@ -554,9 +409,10 @@ local function OnAddonLoaded(eventCode, addonName)
         {
             types = {},
             rosterEvents = {},
-            lastRosterEvent = nil,
+            guildMembers = {},
             stream = {},
             dumps = {},
+            guildDump = {},
             lastDump = nil,
             debugRawInfo = false,
         }
