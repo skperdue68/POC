@@ -10,8 +10,16 @@ export function CollectGuildSyncBankingData(arg1) {
   return window['go']['main']['App']['CollectGuildSyncBankingData'](arg1);
 }
 
+export function CommitGuildSyncBankingData(arg1, arg2) {
+  return window['go']['main']['App']['CommitGuildSyncBankingData'](arg1, arg2);
+}
+
 export function GetGuildSyncClientConfig() {
   return window['go']['main']['App']['GetGuildSyncClientConfig']();
+}
+
+export function GetGuildSyncFileWatcherStatus() {
+  return window['go']['main']['App']['GetGuildSyncFileWatcherStatus']();
 }
 
 export function GetGuildSyncSession() {
@@ -44,6 +52,10 @@ export function QuitFromTray() {
 
 export function SaveWindowState() {
   return window['go']['main']['App']['SaveWindowState']();
+}
+
+export function SetGuildSyncSavedVarsWatchFileEnabled(arg1, arg2) {
+  return window['go']['main']['App']['SetGuildSyncSavedVarsWatchFileEnabled'](arg1, arg2);
 }
 
 export function ShowFromTray() {

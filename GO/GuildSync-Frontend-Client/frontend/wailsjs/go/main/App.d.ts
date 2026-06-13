@@ -6,7 +6,11 @@ export function CloseWindow():Promise<void>;
 
 export function CollectGuildSyncBankingData(arg1:main.GuildSyncSavedVarsFileModifiedEvent):Promise<main.GuildSyncBankingDataResult>;
 
+export function CommitGuildSyncBankingData(arg1:string,arg2:string):Promise<main.GuildSyncBankingDataResult>;
+
 export function GetGuildSyncClientConfig():Promise<main.GuildSyncClientConfig>;
+
+export function GetGuildSyncFileWatcherStatus():Promise<main.GuildSyncFileWatcherStatus>;
 
 export function GetGuildSyncSession():Promise<main.GuildSyncSession>;
 
@@ -23,6 +27,8 @@ export function MinimizeWindow():Promise<void>;
 export function QuitFromTray():Promise<void>;
 
 export function SaveWindowState():Promise<void>;
+
+export function SetGuildSyncSavedVarsWatchFileEnabled(arg1:string,arg2:boolean):Promise<main.GuildSyncFileWatcherStatus>;
 
 export function ShowFromTray():Promise<void>;
 

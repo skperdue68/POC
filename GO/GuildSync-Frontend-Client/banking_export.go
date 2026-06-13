@@ -38,9 +38,9 @@ var luaIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // CollectGuildSyncBankingData is called by the frontend after the Banking
 // SavedVariables file changes. It reads the configured banking SavedVariables
-// file, extracts the banking entries as JSON-ready data, clears the exported
-// banking sections from the SavedVariables file, and returns the collected data
-// to the frontend so it can be emitted to the GuildSync backend.
+// file and extracts the banking entries as JSON-ready data. It intentionally
+// does not clear the SavedVariables file. The frontend calls
+// CommitGuildSyncBankingData only after the backend confirms receipt.
 func (a *App) CollectGuildSyncBankingData(event GuildSyncSavedVarsFileModifiedEvent) GuildSyncBankingDataResult {
 	watchFile := getSavedVarsWatchFileByKey("banking")
 
@@ -143,9 +143,111 @@ func (a *App) CollectGuildSyncBankingData(event GuildSyncSavedVarsFileModifiedEv
 		return baseResult
 	}
 
+	baseResult.OK = true
+	baseResult.Message = fmt.Sprintf("Collected %d banking entr%s from %s. SavedVariables will be cleared after backend confirmation.", len(exportedEntries), pluralY(len(exportedEntries)), fileName)
+	baseResult.Data = map[string]interface{}{
+		"table_name":    extracted.tableName,
+		"account_name":  accountName,
+		"entries":       exportedEntries,
+		"entries_count": len(exportedEntries),
+		"section_counts": map[string]interface{}{
+			"biweekly": len(biweeklyEntries),
+			"monthly":  len(monthlyEntries),
+			"other":    len(otherEntries),
+		},
+	}
+
+	return baseResult
+}
+
+// CommitGuildSyncBankingData clears exported banking entries after the backend
+// confirms receipt. This keeps ESO SavedVariables data intact if Socket.IO is
+// disconnected, times out, or the backend rejects the payload.
+func (a *App) CommitGuildSyncBankingData(filePath string, fileName string) GuildSyncBankingDataResult {
+	watchFile := getSavedVarsWatchFileByKey("banking")
+
+	fileName = filepath.Base(strings.TrimSpace(fileName))
+	if fileName == "." || fileName == string(filepath.Separator) || fileName == "" {
+		fileName = watchFile.FileName
+	}
+
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		filePath = filepath.Join(getSavedVarsDir(), fileName)
+	}
+
+	baseResult := GuildSyncBankingDataResult{
+		OK:       false,
+		Key:      "banking",
+		Label:    watchFile.Label,
+		FileName: fileName,
+		FilePath: filePath,
+	}
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		baseResult.Message = fmt.Sprintf("Banking SavedVariables file could not be read for cleanup: %v", err)
+		return baseResult
+	}
+
+	if info.IsDir() {
+		baseResult.Message = fmt.Sprintf("Banking SavedVariables cleanup path is a directory, not a file: %s", filePath)
+		return baseResult
+	}
+
+	originalBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		baseResult.Message = fmt.Sprintf("Banking SavedVariables file could not be read for cleanup: %v", err)
+		return baseResult
+	}
+
+	originalText := string(originalBytes)
+
+	extracted, err := extractFirstAvailableLuaTable(originalText, getBankingSavedVarsTableNames())
+	if err != nil {
+		baseResult.Message = err.Error()
+		return baseResult
+	}
+
+	parsed, err := parseEsoLuaTable(extracted.tableText)
+	if err != nil {
+		baseResult.Message = fmt.Sprintf("Banking SavedVariables file could not be parsed for cleanup: %v", err)
+		return baseResult
+	}
+
+	parsedMap, ok := parsed.(map[string]interface{})
+	if !ok {
+		baseResult.Message = fmt.Sprintf("%s did not parse as a Lua table object.", extracted.tableName)
+		return baseResult
+	}
+
+	defaultSection, ok := getLuaMap(parsedMap["Default"])
+	if !ok {
+		baseResult.Message = fmt.Sprintf("Could not find %s.Default", extracted.tableName)
+		return baseResult
+	}
+
+	accountName := getFirstEsoAccountName(defaultSection)
+	if accountName == "" {
+		baseResult.Message = fmt.Sprintf("Could not find an ESO account name under %s.Default", extracted.tableName)
+		return baseResult
+	}
+
+	accountSection, ok := getLuaMap(defaultSection[accountName])
+	if !ok {
+		baseResult.Message = fmt.Sprintf("Could not find %s.Default[\"%s\"]", extracted.tableName, accountName)
+		return baseResult
+	}
+
+	accountWide, ok := getLuaMap(accountSection["$AccountWide"])
+	if !ok {
+		baseResult.Message = fmt.Sprintf("Could not find %s.Default[\"%s\"][\"$AccountWide\"]", extracted.tableName, accountName)
+		return baseResult
+	}
+
 	backupPath := fmt.Sprintf("%s.backup-%d", filePath, time.Now().UnixMilli())
 	if err := os.WriteFile(backupPath, originalBytes, 0644); err != nil {
-		baseResult.Message = fmt.Sprintf("Banking data was collected, but backup file could not be written: %v", err)
+		baseResult.Message = fmt.Sprintf("Banking backend ACK received, but backup file could not be written: %v", err)
 		return baseResult
 	}
 
@@ -154,23 +256,16 @@ func (a *App) CollectGuildSyncBankingData(event GuildSyncSavedVarsFileModifiedEv
 	newSavedVarsText := originalText[:extracted.assignmentStart] + newBankingText + originalText[extracted.tableEnd:]
 
 	if err := os.WriteFile(filePath, []byte(newSavedVarsText), info.Mode().Perm()); err != nil {
-		baseResult.Message = fmt.Sprintf("Banking data was collected, but SavedVariables file could not be cleared: %v", err)
+		baseResult.Message = fmt.Sprintf("Banking backend ACK received, but SavedVariables file could not be cleared: %v", err)
 		return baseResult
 	}
 
 	baseResult.OK = true
-	baseResult.Message = fmt.Sprintf("Collected %d banking entr%s from %s and cleared exported entries.", len(exportedEntries), pluralY(len(exportedEntries)), fileName)
+	baseResult.Message = fmt.Sprintf("Backend confirmed banking data. Cleared exported entries from %s.", fileName)
 	baseResult.Data = map[string]interface{}{
-		"table_name":    extracted.tableName,
-		"account_name":  accountName,
-		"entries":       exportedEntries,
-		"entries_count": len(exportedEntries),
-		"backup_path":   backupPath,
-		"section_counts": map[string]interface{}{
-			"biweekly": len(biweeklyEntries),
-			"monthly":  len(monthlyEntries),
-			"other":    len(otherEntries),
-		},
+		"table_name":   extracted.tableName,
+		"account_name": accountName,
+		"backup_path":  backupPath,
 	}
 
 	return baseResult

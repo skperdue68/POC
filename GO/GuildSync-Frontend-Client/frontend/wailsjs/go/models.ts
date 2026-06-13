@@ -47,6 +47,7 @@ export namespace main {
 	    label: string;
 	    fileName: string;
 	    filePath: string;
+	    enabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new GuildSyncSavedVarsWatchFile(source);
@@ -58,6 +59,7 @@ export namespace main {
 	        this.label = source["label"];
 	        this.fileName = source["fileName"];
 	        this.filePath = source["filePath"];
+	        this.enabled = source["enabled"];
 	    }
 	}
 	export class GuildSyncFileWatcherStatus {

@@ -261,6 +261,7 @@ export async function upsertDiscordRoles(applicationDB, payload) {
       );
     }
 
+
     await connection.commit();
   } catch (error) {
     await safeRollback(connection);
@@ -694,6 +695,69 @@ export async function getDiscordMemberDataJSON(applicationDB) {
 
 
 
+
+export async function getBankingDataDate(applicationDB) {
+  const [rows] = await applicationDB.execute(`
+    SELECT
+      data,
+      value
+    FROM settings
+    WHERE data = ?
+    LIMIT 1
+  `,
+    [
+      'banking_refresh'
+    ]
+  );
+
+  return rows[0] || {
+    data: 'banking_refresh',
+    value: null
+  };
+}
+
+export async function getBankingDataJSON(applicationDB) {
+  const [rows] = await applicationDB.execute(`
+    SELECT JSON_ARRAYAGG(
+      JSON_OBJECT(
+        'type', banking_rows.transactionType,
+        'eventId', banking_rows.eventId,
+        'time', CAST(banking_rows.eventTimestamp AS UNSIGNED),
+        'displayName', banking_rows.receivedFrom,
+        'amount', banking_rows.depositAmount,
+        'ticketAmount', COALESCE(banking_rows.ticketQuantity, 0),
+        'dataSource', banking_rows.dataSource,
+        'emailRequested', banking_rows.emailRequested
+      )
+    ) AS banking_json
+    FROM (
+      SELECT
+        eventId,
+        transactionType,
+        receivedFrom,
+        eventTimestamp,
+        depositAmount,
+        ticketQuantity,
+        dataSource,
+        emailRequested
+      FROM guildsyncbanking
+      ORDER BY CAST(eventTimestamp AS UNSIGNED) DESC, CAST(eventId AS UNSIGNED) DESC
+    ) AS banking_rows
+  `);
+
+  const bankingJson = rows[0]?.banking_json;
+
+  if (!bankingJson) {
+    return [];
+  }
+
+  if (typeof bankingJson === 'string') {
+    return JSON.parse(bankingJson);
+  }
+
+  return bankingJson;
+}
+
 export async function insertBankingEntries(applicationDB, payload) {
   const entries = Array.isArray(payload?.entries)
     ? payload.entries
@@ -772,6 +836,27 @@ export async function insertBankingEntries(applicationDB, payload) {
       );
 
       insertedCount += result.affectedRows || 0;
+    }
+
+    if (entries.length > 0) {
+      await connection.execute(
+        `
+          INSERT INTO settings (
+            data,
+            value
+          )
+          VALUES (
+            ?,
+            ?
+          )
+          ON DUPLICATE KEY UPDATE
+            value = VALUES(value)
+        `,
+        [
+          'banking_refresh',
+          new Date().toISOString()
+        ]
+      );
     }
 
     await connection.commit();

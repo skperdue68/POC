@@ -19,6 +19,8 @@ import {
   deleteDiscordRole,
   getDiscordDataDate,
   getDiscordMemberDataJSON,
+  getBankingDataDate,
+  getBankingDataJSON,
   insertBankingEntries
 } from './guildsync-database-actions.js';
 
@@ -502,6 +504,8 @@ io.on('connection', (socket) => {
       };
 
       sendSocketResponse(socket, 'guildsync:banking-data-result', callback, response);
+
+      await broadcastBankingDataUpdate();
       return;
     }
 
@@ -708,6 +712,53 @@ io.on('connection', (socket) => {
     }
   });
 
+
+  socket.on('guildsync:request-banking-data', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to retrieve banking data.',
+        entries: [],
+        entries_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-data-request-result', callback, response);
+      return;
+    }
+
+    try {
+      const [entries, refreshDate] = await Promise.all([
+        getBankingDataJSON(applicationDB),
+        getBankingDataDate(applicationDB)
+      ]);
+
+      const response = {
+        ok: true,
+        message: 'Banking data retrieved.',
+        entries,
+        entries_returned: entries.length,
+        last_refresh: refreshDate?.value || null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-data-request-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-banking-data:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to retrieve banking data.',
+        entries: [],
+        entries_returned: 0,
+        last_refresh: null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-data-request-result', callback, response);
+    }
+  });
+
   socket.on('guildsync:request-discord-member-dataJSON', async (payload = {}, callback) => {
     try {
       const members = await getDiscordMemberDataJSON(applicationDB);
@@ -758,6 +809,29 @@ server.listen(PORT, HOST, () => {
   Log(`Discord redirect URI: ${DISCORD_REDIRECT_URI}`);
   Log(`Current GuildSync client version: ${CURRENT_GUILDSYNC_CLIENT_VERSION}`);
 });
+
+
+async function broadcastBankingDataUpdate() {
+  try {
+    const [entries, refreshDate] = await Promise.all([
+      getBankingDataJSON(applicationDB),
+      getBankingDataDate(applicationDB)
+    ]);
+
+    io.to('GuildSyncClient').emit('guildsync:banking-data-updated', {
+      ok: true,
+      message: 'Banking data updated.',
+      entries,
+      entries_returned: entries.length,
+      last_refresh: refreshDate?.value || null,
+      at: new Date().toLocaleString()
+    });
+
+    Log(`Broadcast banking data update to GuildSync clients. Entries: ${entries.length}`);
+  } catch (error) {
+    Log('Failed to broadcast banking data update:', error);
+  }
+}
 
 function emitDiscordRefreshStatus(message) {
   io.to('GuildSyncClient').emit('guildsync:discord-refresh-status', {
