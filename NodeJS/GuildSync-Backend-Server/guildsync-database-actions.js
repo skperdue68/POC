@@ -66,7 +66,7 @@ async function createAndInitializePool() {
 async function initializeSchema(db) {
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS guildsyncusers (
+    CREATE TABLE IF NOT EXISTS guildsync_users (
       discord_user_id VARCHAR(32) PRIMARY KEY,
       username VARCHAR(255) NOT NULL,
       global_name VARCHAR(255),
@@ -84,7 +84,7 @@ async function initializeSchema(db) {
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS discordroles (
+    CREATE TABLE IF NOT EXISTS discord_roles (
       role_id VARCHAR(32) PRIMARY KEY,
       role_name VARCHAR(255) NOT NULL,
       role_color VARCHAR(32)
@@ -94,7 +94,7 @@ async function initializeSchema(db) {
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS discordmembers (
+    CREATE TABLE IF NOT EXISTS discord_members (
       discord_id VARCHAR(32) PRIMARY KEY,
       username VARCHAR(255) NOT NULL,
       global_name VARCHAR(255),
@@ -107,20 +107,20 @@ async function initializeSchema(db) {
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS discordmemberroles (
+    CREATE TABLE IF NOT EXISTS discord_member_roles (
       discord_id VARCHAR(32),
       role_id VARCHAR(32),
       PRIMARY KEY (discord_id, role_id),
-      CONSTRAINT discordmembers_to_discordmemberroles FOREIGN KEY (discord_id) REFERENCES discordmembers (discord_id) ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT discordroles_to_discordmemberroles FOREIGN KEY (role_id) REFERENCES discordroles (role_id) ON DELETE CASCADE ON UPDATE CASCADE
+      CONSTRAINT discord_members_to_discord_member_roles FOREIGN KEY (discord_id) REFERENCES discord_members (discord_id) ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT discord_roles_to_discord_member_roles FOREIGN KEY (role_id) REFERENCES discord_roles (role_id) ON DELETE CASCADE ON UPDATE CASCADE
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS settings (
-      data VARCHAR(255) PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS guildsync_settings (
+      setting_key VARCHAR(255) PRIMARY KEY,
       value TEXT
     )
     CHARACTER SET utf8mb4
@@ -129,27 +129,27 @@ async function initializeSchema(db) {
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_roles
-    ON discordroles (role_name)
+    ON discord_roles (role_name)
   `);
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_discord_members
-    ON discordmembers (username)
+    ON discord_members (username)
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS  guildsyncbanking (
-      eventId varchar(32) NOT NULL,
-      transactionType varchar(32) NOT NULL,
-      receivedFrom varchar(255) NOT NULL,
-      eventTimestamp varchar(32) NOT NULL,
-      dateTime datetime NOT NULL,
-      depositAmount int(10) unsigned NOT NULL,
-      ticketQuantity int(10) unsigned DEFAULT NULL,
-      dataSource varchar(64) NOT NULL,
+    CREATE TABLE IF NOT EXISTS  guildsync_banking_entries (
+      event_id varchar(32) NOT NULL,
+      transaction_type varchar(32) NOT NULL,
+      account_name varchar(255) NOT NULL,
+      event_timestamp varchar(32) NOT NULL,
+      event_datetime datetime NOT NULL,
+      deposit_amount int(10) unsigned NOT NULL,
+      ticket_quantity int(10) unsigned DEFAULT NULL,
+      data_source varchar(64) NOT NULL,
       note varchar(255) DEFAULT NULL,
-      emailRequested tinyint(1) NOT NULL DEFAULT 0,
-      PRIMARY KEY (eventId)
+      email_requested tinyint(1) NOT NULL DEFAULT 0,
+      PRIMARY KEY (event_id)
     )
     CHARSET=utf8mb4
     COLLATE=utf8mb4_unicode_ci
@@ -157,32 +157,32 @@ async function initializeSchema(db) {
 
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS rosterstreamhistory (
+    CREATE TABLE IF NOT EXISTS guildsync_roster_events (
       event_id VARCHAR(32) PRIMARY KEY NOT NULL,
       account_name VARCHAR(64) NOT NULL,
       event_type VARCHAR(32) NOT NULL,
-      rank VARCHAR(20),
-      timestamp VARCHAR(32) NOT NULL,
-      officer VARCHAR(64)
+      rank_name VARCHAR(20),
+      event_timestamp VARCHAR(32) NOT NULL,
+      officer_account_name VARCHAR(64)
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS rosterrankhistory (
+    CREATE TABLE IF NOT EXISTS guildsync_roster_rank_history (
       account_name VARCHAR(64) PRIMARY KEY NOT NULL,
-      rank VARCHAR(20)
+      rank_name VARCHAR(20)
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS guildsyncroster (
+    CREATE TABLE IF NOT EXISTS guildsync_roster_members (
       account_name VARCHAR(32) PRIMARY KEY NOT NULL,
-      rank VARCHAR(20),
-      joined VARCHAR(32),
+      rank_name VARCHAR(20),
+      joined_timestamp VARCHAR(32),
       in_roster TINYINT(1) NOT NULL DEFAULT 1
     )
     CHARACTER SET utf8mb4
@@ -192,7 +192,7 @@ async function initializeSchema(db) {
 
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS guildsyncmemberlinks (
+    CREATE TABLE IF NOT EXISTS guildsync_member_links (
       eso_account_name VARCHAR(64) PRIMARY KEY NOT NULL,
       discord_user_id VARCHAR(32),
       discord_username VARCHAR(255),
@@ -203,35 +203,16 @@ async function initializeSchema(db) {
       match_confidence DECIMAL(5,2) NOT NULL DEFAULT 0,
       match_reason VARCHAR(255),
       match_field VARCHAR(64),
-      locked TINYINT(1) NOT NULL DEFAULT 0,
+      auto_link_blocked TINYINT(1) NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      INDEX idx_guildsyncmemberlinks_discord_user_id (discord_user_id),
-      INDEX idx_guildsyncmemberlinks_status (link_status),
-      INDEX idx_guildsyncmemberlinks_locked (locked)
+      INDEX idx_guildsync_member_links_discord_user_id (discord_user_id),
+      INDEX idx_guildsync_member_links_status (link_status),
+      INDEX idx_guildsync_member_links_auto_link_blocked (auto_link_blocked)
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
 
-
-  await db.query(`
-    ALTER TABLE guildsyncmemberlinks
-      ADD COLUMN IF NOT EXISTS match_field VARCHAR(64) NULL
-  `);
-
-  await db.query(`
-    UPDATE guildsyncmemberlinks
-    SET link_status = 'unlinked',
-        link_method = CASE WHEN link_method = 'manual_unlink' THEN link_method ELSE 'manual_unlink' END,
-        match_reason = COALESCE(match_reason, 'Auto-link disabled by user')
-    WHERE link_status = 'blocked'
-  `);
-
-
-  await db.query(`
-    ALTER TABLE guildsyncbanking
-    ADD COLUMN IF NOT EXISTS note VARCHAR(255) DEFAULT NULL
-  `);
 }
 
 
@@ -240,7 +221,7 @@ export async function upsertLoginUser(loginDB, discordUser) {
 
   const [adminRows] = await loginDB.execute(`
     SELECT COUNT(*) AS admin_count
-    FROM guildsyncusers
+    FROM guildsync_users
     WHERE allowed = 1
       AND role = 'admin'
   `);
@@ -257,7 +238,7 @@ export async function upsertLoginUser(loginDB, discordUser) {
 
   await loginDB.execute(
     `
-      INSERT INTO guildsyncusers (
+      INSERT INTO guildsync_users (
         discord_user_id,
         username,
         global_name,
@@ -292,7 +273,7 @@ export async function upsertLoginUser(loginDB, discordUser) {
   const [rows] = await loginDB.execute(
     `
       SELECT *
-      FROM guildsyncusers
+      FROM guildsync_users
       WHERE discord_user_id = ?
     `,
     [discordUser.id]
@@ -320,7 +301,7 @@ export async function upsertDiscordRoles(applicationDB, payload) {
 
       await connection.execute(
         `
-          INSERT INTO discordroles (
+          INSERT INTO discord_roles (
             role_id,
             role_name,
             role_color
@@ -372,7 +353,7 @@ export async function upsertDiscordMembers(applicationDB, payload) {
   }
 
   const memberSql = `
-    INSERT INTO discordmembers (
+    INSERT INTO discord_members (
       discord_id,
       avatar,
       username,
@@ -397,7 +378,7 @@ export async function upsertDiscordMembers(applicationDB, payload) {
   `;
 
   const memberRoleSql = `
-    INSERT IGNORE INTO discordmemberroles (
+    INSERT IGNORE INTO discord_member_roles (
       discord_id,
       role_id
     )
@@ -416,7 +397,7 @@ export async function upsertDiscordMembers(applicationDB, payload) {
     await connection.beginTransaction();
 
     await connection.execute(`
-      UPDATE discordmembers
+      UPDATE discord_members
       SET import_current = 0
     `);
 
@@ -441,7 +422,7 @@ export async function upsertDiscordMembers(applicationDB, payload) {
 
       await connection.execute(
         `
-          DELETE FROM discordmemberroles
+          DELETE FROM discord_member_roles
           WHERE discord_id = ?
         `,
         [discordID]
@@ -463,7 +444,7 @@ export async function upsertDiscordMembers(applicationDB, payload) {
     }
 
     const [deleteResult] = await connection.execute(`
-      DELETE FROM discordmembers
+      DELETE FROM discord_members
       WHERE import_current = 0
     `);
 
@@ -506,7 +487,7 @@ export async function upsertDiscordMember(applicationDB, member) {
 
     await connection.execute(
       `
-        INSERT INTO discordmembers (
+        INSERT INTO discord_members (
           discord_id,
           avatar,
           username,
@@ -541,7 +522,7 @@ export async function upsertDiscordMember(applicationDB, member) {
 
     await connection.execute(
       `
-        DELETE FROM discordmemberroles
+        DELETE FROM discord_member_roles
         WHERE discord_id = ?
       `,
       [discordID]
@@ -552,7 +533,7 @@ export async function upsertDiscordMember(applicationDB, member) {
     for (const roleID of roleIDs) {
       await connection.execute(
         `
-          INSERT IGNORE INTO discordmemberroles (
+          INSERT IGNORE INTO discord_member_roles (
             discord_id,
             role_id
           )
@@ -597,7 +578,7 @@ export async function deleteDiscordMember(applicationDB, discordID) {
 
   const [result] = await applicationDB.execute(
     `
-      DELETE FROM discordmembers
+      DELETE FROM discord_members
       WHERE discord_id = ?
     `,
     [memberID]
@@ -623,7 +604,7 @@ export async function upsertDiscordRole(applicationDB, role) {
 
   await applicationDB.execute(
     `
-      INSERT INTO discordroles (
+      INSERT INTO discord_roles (
         role_id,
         role_name,
         role_color
@@ -662,7 +643,7 @@ export async function deleteDiscordRole(applicationDB, roleID) {
 
   const [result] = await applicationDB.execute(
     `
-      DELETE FROM discordroles
+      DELETE FROM discord_roles
       WHERE role_id = ?
     `,
     [discordRoleID]
@@ -699,10 +680,10 @@ export async function getDiscordDataDate(applicationDB) {
   const [rows] = await applicationDB.execute(
     `
       SELECT
-        data,
+        setting_key AS data,
         value
-      FROM settings
-      WHERE data = ?
+      FROM guildsync_settings
+      WHERE setting_key = ?
       LIMIT 1
     `,
     [
@@ -736,7 +717,7 @@ export async function getDiscordMemberDataJSON(applicationDB) {
         dm.server_nickname,
         dm.avatar,
         COALESCE(r.roles, JSON_ARRAY()) AS roles
-      FROM discordmembers dm
+      FROM discord_members dm
       LEFT JOIN (
         SELECT
           dmr.discord_id,
@@ -747,8 +728,8 @@ export async function getDiscordMemberDataJSON(applicationDB) {
               'role_color', dr.role_color
             )
           ) AS roles
-        FROM discordmemberroles dmr
-        JOIN discordroles dr
+        FROM discord_member_roles dmr
+        JOIN discord_roles dr
           ON dmr.role_id = dr.role_id
         GROUP BY dmr.discord_id
       ) r
@@ -781,10 +762,10 @@ export async function getDiscordMemberDataJSON(applicationDB) {
 export async function getBankingDataDate(applicationDB) {
   const [rows] = await applicationDB.execute(`
     SELECT
-      data,
+      setting_key AS data,
       value
-    FROM settings
-    WHERE data = ?
+    FROM guildsync_settings
+    WHERE setting_key = ?
     LIMIT 1
   `,
     [
@@ -802,30 +783,30 @@ export async function getBankingDataJSON(applicationDB) {
   const [rows] = await applicationDB.execute(`
     SELECT JSON_ARRAYAGG(
       JSON_OBJECT(
-        'type', banking_rows.transactionType,
-        'eventId', banking_rows.eventId,
-        'time', CAST(banking_rows.eventTimestamp AS UNSIGNED),
-        'displayName', banking_rows.receivedFrom,
-        'amount', banking_rows.depositAmount,
-        'ticketAmount', COALESCE(banking_rows.ticketQuantity, 0),
-        'dataSource', banking_rows.dataSource,
-        'emailRequested', banking_rows.emailRequested,
+        'type', banking_rows.transaction_type,
+        'eventId', banking_rows.event_id,
+        'time', CAST(banking_rows.event_timestamp AS UNSIGNED),
+        'displayName', banking_rows.account_name,
+        'amount', banking_rows.deposit_amount,
+        'ticketAmount', COALESCE(banking_rows.ticket_quantity, 0),
+        'dataSource', banking_rows.data_source,
+        'emailRequested', banking_rows.email_requested,
         'note', banking_rows.note
       )
     ) AS banking_json
     FROM (
       SELECT
-        eventId,
-        transactionType,
-        receivedFrom,
-        eventTimestamp,
-        depositAmount,
-        ticketQuantity,
-        dataSource,
-        emailRequested,
+        event_id,
+        transaction_type,
+        account_name,
+        event_timestamp,
+        deposit_amount,
+        ticket_quantity,
+        data_source,
+        email_requested,
         note
-      FROM guildsyncbanking
-      ORDER BY CAST(eventTimestamp AS UNSIGNED) DESC, CAST(eventId AS UNSIGNED) DESC
+      FROM guildsync_banking_entries
+      ORDER BY CAST(event_timestamp AS UNSIGNED) DESC, CAST(event_id AS UNSIGNED) DESC
     ) AS banking_rows
   `);
 
@@ -862,39 +843,39 @@ export async function insertBankingEntries(applicationDB, payload) {
     await connection.beginTransaction();
 
     for (const entry of entries) {
-      const eventId = Number(entry.eventId);
-      const transactionType = String(entry.type || entry.transactionType || '').trim();
-      const receivedFrom = String(entry.displayName || entry.receivedFrom || '').trim();
-      const eventTimestamp = Number(entry.time || entry.eventTimestamp);
-      const depositAmount = Number(entry.amount || entry.depositAmount);
+      const event_id = Number(entry.eventId || entry.event_id);
+      const transaction_type = String(entry.type || entry.transactionType || entry.transaction_type || '').trim();
+      const account_name = String(entry.displayName || entry.receivedFrom || entry.accountName || entry.account_name || '').trim();
+      const event_timestamp = Number(entry.time || entry.eventTimestamp || entry.event_timestamp);
+      const deposit_amount = Number(entry.amount || entry.depositAmount || entry.deposit_amount);
 
-      const ticketQuantityRaw =
+      const ticket_quantityRaw =
         entry.ticketAmount ??
-        entry.ticketQuantity ??
+        entry.ticket_quantity ??
         null;
 
-      const ticketQuantity =
-        ticketQuantityRaw === null || ticketQuantityRaw === undefined
+      const ticket_quantity =
+        ticket_quantityRaw === null || ticket_quantityRaw === undefined
           ? null
-          : Number(ticketQuantityRaw);
+          : Number(ticket_quantityRaw);
 
-      if (!eventId || !transactionType || !receivedFrom || !eventTimestamp || !depositAmount) {
+      if (!event_id || !transaction_type || !account_name || !event_timestamp || !deposit_amount) {
         continue;
       }
 
       const [result] = await connection.execute(
         `
-          INSERT IGNORE INTO guildsyncbanking (
-            eventId,
-            transactionType,
-            receivedFrom,
-            eventTimestamp,
-            dateTime,
-            depositAmount,
-            ticketQuantity,
-            dataSource,
+          INSERT IGNORE INTO guildsync_banking_entries (
+            event_id,
+            transaction_type,
+            account_name,
+            event_timestamp,
+            event_datetime,
+            deposit_amount,
+            ticket_quantity,
+            data_source,
             note,
-            emailRequested
+            email_requested
           )
           VALUES (
             ?,
@@ -910,13 +891,13 @@ export async function insertBankingEntries(applicationDB, payload) {
           )
         `,
         [
-          eventId,
-          transactionType,
-          receivedFrom,
-          eventTimestamp,
-          eventTimestamp,
-          depositAmount,
-          ticketQuantity,
+          event_id,
+          transaction_type,
+          account_name,
+          event_timestamp,
+          event_timestamp,
+          deposit_amount,
+          ticket_quantity,
           String(payload?.source || 'GuildSyncBanking').trim(),
           String(entry.note || '').trim() || null
         ]
@@ -928,8 +909,8 @@ export async function insertBankingEntries(applicationDB, payload) {
     if (entries.length > 0) {
       await connection.execute(
         `
-          INSERT INTO settings (
-            data,
+          INSERT INTO guildsync_settings (
+            setting_key,
             value
           )
           VALUES (
@@ -989,10 +970,10 @@ export async function insertBankingEntries(applicationDB, payload) {
 export async function getRosterDataDate(applicationDB) {
   const [rows] = await applicationDB.execute(`
     SELECT
-      data,
+      setting_key AS data,
       value
-    FROM settings
-    WHERE data = ?
+    FROM guildsync_settings
+    WHERE setting_key = ?
     LIMIT 1
   `,
     [
@@ -1011,18 +992,18 @@ export async function getRosterDataJSON(applicationDB) {
     SELECT JSON_ARRAYAGG(
       JSON_OBJECT(
         'account_name', roster_rows.account_name,
-        'rank', roster_rows.rank,
-        'joined', roster_rows.joined,
+        'rank', roster_rows.rank_name,
+        'joined', roster_rows.joined_timestamp,
         'in_roster', roster_rows.in_roster
       )
     ) AS roster_json
     FROM (
       SELECT
         account_name,
-        rank,
-        joined,
+        rank_name,
+        joined_timestamp,
         in_roster
-      FROM guildsyncroster
+      FROM guildsync_roster_members
       WHERE in_roster = 1
       ORDER BY account_name ASC
     ) AS roster_rows
@@ -1051,8 +1032,8 @@ export async function getRosterRankHistoryMatches(applicationDB, query = '') {
     `
       SELECT
         account_name,
-        rank
-      FROM rosterrankhistory
+        rank_name AS rank
+      FROM guildsync_roster_rank_history
       WHERE account_name LIKE ?
       ORDER BY account_name ASC
       LIMIT 50
@@ -1074,12 +1055,12 @@ export async function getRosterStreamHistoryForAccount(applicationDB, accountNam
     `
       SELECT
         event_type,
-        rank,
-        timestamp,
-        officer
-      FROM rosterstreamhistory
+        rank_name AS rank,
+        event_timestamp AS timestamp,
+        officer_account_name AS officer
+      FROM guildsync_roster_events
       WHERE account_name = ?
-      ORDER BY CAST(timestamp AS UNSIGNED) DESC, timestamp DESC
+      ORDER BY CAST(event_timestamp AS UNSIGNED) DESC, event_timestamp DESC
       LIMIT 250
     `,
     [cleanAccountName]
@@ -1125,8 +1106,8 @@ export async function processRosterData(applicationDB, payload = {}) {
         const [settingRows] = await connection.execute(
           `
             SELECT value
-            FROM settings
-            WHERE data = ?
+            FROM guildsync_settings
+            WHERE setting_key = ?
             LIMIT 1
           `,
           ['lastGuildList']
@@ -1139,7 +1120,7 @@ export async function processRosterData(applicationDB, payload = {}) {
         } else {
           await connection.execute(
             `
-              INSERT INTO settings (data, value)
+              INSERT INTO guildsync_settings (setting_key, value)
               VALUES (?, ?)
               ON DUPLICATE KEY UPDATE
                 value = VALUES(value)
@@ -1147,7 +1128,7 @@ export async function processRosterData(applicationDB, payload = {}) {
             ['lastGuildList', String(listTimestamp)]
           );
 
-          await connection.execute(`UPDATE guildsyncroster SET in_roster = 0`);
+          await connection.execute(`UPDATE guildsync_roster_members SET in_roster = 0`);
 
           for (const member of guildMembers) {
             const accountName = normalizeRosterAccountName(member.accountName);
@@ -1159,15 +1140,15 @@ export async function processRosterData(applicationDB, payload = {}) {
 
             const [upsertResult] = await connection.execute(
               `
-                INSERT INTO guildsyncroster (
+                INSERT INTO guildsync_roster_members (
                   account_name,
-                  rank,
-                  joined,
+                  rank_name,
+                  joined_timestamp,
                   in_roster
                 )
                 VALUES (?, ?, ?, 1)
                 ON DUPLICATE KEY UPDATE
-                  rank = VALUES(rank),
+                  rank_name = VALUES(rank_name),
                   in_roster = 1
               `,
               [accountName, rankName, String(listTimestamp)]
@@ -1177,9 +1158,9 @@ export async function processRosterData(applicationDB, payload = {}) {
 
             await connection.execute(
               `
-                INSERT IGNORE INTO rosterrankhistory (
+                INSERT IGNORE INTO guildsync_roster_rank_history (
                   account_name,
-                  rank
+                  rank_name
                 )
                 VALUES (?, ?)
               `,
@@ -1189,8 +1170,8 @@ export async function processRosterData(applicationDB, payload = {}) {
 
           const [removedRows] = await connection.execute(
             `
-              SELECT account_name, rank
-              FROM guildsyncroster
+              SELECT account_name, rank_name AS rank
+              FROM guildsync_roster_members
               WHERE in_roster = 0
             `
           );
@@ -1202,13 +1183,13 @@ export async function processRosterData(applicationDB, payload = {}) {
 
             await connection.execute(
               `
-                INSERT IGNORE INTO rosterstreamhistory (
+                INSERT IGNORE INTO guildsync_roster_events (
                   event_id,
                   account_name,
                   event_type,
-                  rank,
-                  timestamp,
-                  officer
+                  rank_name,
+                  event_timestamp,
+                  officer_account_name
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
               `,
@@ -1217,13 +1198,13 @@ export async function processRosterData(applicationDB, payload = {}) {
 
             await connection.execute(
               `
-                INSERT INTO rosterrankhistory (
+                INSERT INTO guildsync_roster_rank_history (
                   account_name,
-                  rank
+                  rank_name
                 )
                 VALUES (?, ?)
                 ON DUPLICATE KEY UPDATE
-                  rank = VALUES(rank)
+                  rank_name = VALUES(rank_name)
               `,
               [accountName, rankName]
             );
@@ -1231,7 +1212,7 @@ export async function processRosterData(applicationDB, payload = {}) {
             result.automatic_removals_inserted += 1;
           }
 
-          await connection.execute(`DELETE FROM guildsyncroster WHERE in_roster = 0`);
+          await connection.execute(`DELETE FROM guildsync_roster_members WHERE in_roster = 0`);
           result.guildlist_processed = true;
         }
       }
@@ -1246,7 +1227,7 @@ export async function processRosterData(applicationDB, payload = {}) {
 
     await connection.execute(
       `
-        INSERT INTO settings (data, value)
+        INSERT INTO guildsync_settings (setting_key, value)
         VALUES (?, ?)
         ON DUPLICATE KEY UPDATE
           value = VALUES(value)
@@ -1272,14 +1253,14 @@ export async function processRosterData(applicationDB, payload = {}) {
 }
 
 async function processSingleRosterStreamEvent(connection, event = {}) {
-  const eventId = String(event.eventId || event.event_id || '').trim();
+  const event_id = String(event.eventId || event.event_id || '').trim();
   const eventType = normalizeRosterEventType(event.eventType || event.event_type);
   const rankName = normalizeRosterRank(event.rankName || event.rank);
   const timestamp = normalizeRosterTimestamp(event.timestampS || event.timeStamp || event.timestamp || event.time);
   const actingDisplayName = normalizeRosterAccountName(event.actingDisplayName || event.acting_display_name);
   const targetDisplayName = normalizeRosterAccountName(event.targetDisplayName || event.target_display_name);
 
-  if (!eventId || !eventType || eventType === 'unknown' || !timestamp) {
+  if (!event_id || !eventType || eventType === 'unknown' || !timestamp) {
     return false;
   }
 
@@ -1295,31 +1276,31 @@ async function processSingleRosterStreamEvent(connection, event = {}) {
 
   const [insertResult] = await connection.execute(
     `
-      INSERT IGNORE INTO rosterstreamhistory (
+      INSERT IGNORE INTO guildsync_roster_events (
         event_id,
         account_name,
         event_type,
-        rank,
-        timestamp,
-        officer
+        rank_name,
+        event_timestamp,
+        officer_account_name
       )
       VALUES (?, ?, ?, ?, ?, ?)
     `,
-    [eventId, accountName, eventType, rankName, String(timestamp), officerName]
+    [event_id, accountName, eventType, rankName, String(timestamp), officerName]
   );
 
   if (eventType === 'joined') {
     await connection.execute(
       `
-        INSERT INTO guildsyncroster (
+        INSERT INTO guildsync_roster_members (
           account_name,
-          rank,
-          joined,
+          rank_name,
+          joined_timestamp,
           in_roster
         )
         VALUES (?, ?, ?, 1)
         ON DUPLICATE KEY UPDATE
-          rank = VALUES(rank),
+          rank_name = VALUES(rank_name),
           in_roster = 1
       `,
       [accountName, 'Associate', String(timestamp)]
@@ -1327,9 +1308,9 @@ async function processSingleRosterStreamEvent(connection, event = {}) {
 
     await connection.execute(
       `
-        INSERT IGNORE INTO rosterrankhistory (
+        INSERT IGNORE INTO guildsync_roster_rank_history (
           account_name,
-          rank
+          rank_name
         )
         VALUES (?, ?)
       `,
@@ -1338,8 +1319,8 @@ async function processSingleRosterStreamEvent(connection, event = {}) {
   } else if (eventType === 'kicked' || eventType === 'left') {
     const [rows] = await connection.execute(
       `
-        SELECT rank
-        FROM guildsyncroster
+        SELECT rank_name AS rank
+        FROM guildsync_roster_members
         WHERE account_name = ?
         LIMIT 1
       `,
@@ -1350,20 +1331,20 @@ async function processSingleRosterStreamEvent(connection, event = {}) {
 
     await connection.execute(
       `
-        INSERT INTO rosterrankhistory (
+        INSERT INTO guildsync_roster_rank_history (
           account_name,
-          rank
+          rank_name
         )
         VALUES (?, ?)
         ON DUPLICATE KEY UPDATE
-          rank = VALUES(rank)
+          rank_name = VALUES(rank_name)
       `,
       [accountName, currentRank]
     );
 
     await connection.execute(
       `
-        DELETE FROM guildsyncroster
+        DELETE FROM guildsync_roster_members
         WHERE account_name = ?
       `,
       [accountName]
@@ -1371,15 +1352,15 @@ async function processSingleRosterStreamEvent(connection, event = {}) {
   } else if (eventType === 'promoted' || eventType === 'demoted') {
     await connection.execute(
       `
-        INSERT INTO guildsyncroster (
+        INSERT INTO guildsync_roster_members (
           account_name,
-          rank,
-          joined,
+          rank_name,
+          joined_timestamp,
           in_roster
         )
         VALUES (?, ?, ?, 1)
         ON DUPLICATE KEY UPDATE
-          rank = VALUES(rank),
+          rank_name = VALUES(rank_name),
           in_roster = 1
       `,
       [accountName, rankName, String(timestamp)]
@@ -1408,9 +1389,9 @@ export async function getAssociateTicketReport(applicationDB) {
     `
       SELECT
         roster.account_name,
-        roster.rank,
-        roster.joined,
-        COALESCE(SUM(COALESCE(bank.ticketQuantity, 0)), 0) AS purchased_tickets,
+        roster.rank_name AS rank,
+        roster.joined_timestamp AS joined,
+        COALESCE(SUM(COALESCE(bank.ticket_quantity, 0)), 0) AS purchased_tickets,
         links.discord_user_id,
         links.discord_username,
         links.discord_display_name,
@@ -1423,22 +1404,22 @@ export async function getAssociateTicketReport(applicationDB) {
           WHEN links.link_status = 'linked' AND COALESCE(links.discord_user_id, '') <> '' THEN 'eligible'
           ELSE 'eligible_if_linked'
         END AS report_group
-      FROM guildsyncroster roster
-      INNER JOIN guildsyncbanking bank
-        ON LOWER(TRIM(LEADING '@' FROM bank.receivedFrom)) = LOWER(roster.account_name)
-      LEFT JOIN guildsyncmemberlinks links
+      FROM guildsync_roster_members roster
+      INNER JOIN guildsync_banking_entries bank
+        ON LOWER(TRIM(LEADING '@' FROM bank.account_name)) = LOWER(roster.account_name)
+      LEFT JOIN guildsync_member_links links
         ON LOWER(links.eso_account_name) = LOWER(roster.account_name)
-      WHERE LOWER(roster.rank) = 'associate'
+      WHERE LOWER(roster.rank_name) = 'associate'
         AND roster.in_roster = 1
-        AND CAST(roster.joined AS UNSIGNED) > 0
-        AND CAST(roster.joined AS UNSIGNED) <= ?
-        AND COALESCE(bank.ticketQuantity, 0) > 0
-        AND COALESCE(bank.depositAmount, 0) > 0
-        AND COALESCE(bank.dataSource, '') <> 'ManualBiweeklyTicket'
+        AND CAST(roster.joined_timestamp AS UNSIGNED) > 0
+        AND CAST(roster.joined_timestamp AS UNSIGNED) <= ?
+        AND COALESCE(bank.ticket_quantity, 0) > 0
+        AND COALESCE(bank.deposit_amount, 0) > 0
+        AND COALESCE(bank.data_source, '') <> 'ManualBiweeklyTicket'
       GROUP BY
         roster.account_name,
-        roster.rank,
-        roster.joined,
+        roster.rank_name,
+        roster.joined_timestamp,
         links.discord_user_id,
         links.discord_username,
         links.discord_display_name,
@@ -1464,7 +1445,7 @@ export async function getAssociateTicketReport(applicationDB) {
 export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) {
   const accountName = normalizeRosterAccountName(payload.account_name || payload.accountName);
   const note = String(payload.note || payload.reason || '').trim().slice(0, 160);
-  const tickets = Math.floor(Number(payload.tickets || payload.ticketQuantity || payload.ticketAmount || 0));
+  const tickets = Math.floor(Number(payload.tickets || payload.ticket_quantity || payload.ticketAmount || 0));
   const addedBy = String(payload.addedBy || payload.auditUser || '').trim().slice(0, 64);
 
   if (!accountName) {
@@ -1481,22 +1462,22 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
 
   const timestamp = Math.floor(Date.now() / 1000);
   const random = Math.floor(Math.random() * 900000) + 100000;
-  const eventId = `Manual${timestamp}${random}`.slice(0, 32);
+  const event_id = `Manual${timestamp}${random}`.slice(0, 32);
   const auditedNote = `${note} - added by ${addedBy || 'Unknown'}`.slice(0, 255);
 
   const [result] = await applicationDB.execute(
     `
-      INSERT IGNORE INTO guildsyncbanking (
-        eventId,
-        transactionType,
-        receivedFrom,
-        eventTimestamp,
-        dateTime,
-        depositAmount,
-        ticketQuantity,
-        dataSource,
+      INSERT IGNORE INTO guildsync_banking_entries (
+        event_id,
+        transaction_type,
+        account_name,
+        event_timestamp,
+        event_datetime,
+        deposit_amount,
+        ticket_quantity,
+        data_source,
         note,
-        emailRequested
+        email_requested
       )
       VALUES (
         ?,
@@ -1511,17 +1492,17 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
         0
       )
     `,
-    [eventId, accountName, String(timestamp), timestamp, tickets, auditedNote]
+    [event_id, accountName, String(timestamp), timestamp, tickets, auditedNote]
   );
 
   await setSetting(applicationDB, 'banking_refresh', new Date().toISOString());
 
   return {
-    eventId,
+    eventId: event_id,
     inserted: result.affectedRows || 0,
     entry: {
       type: 'biweekly',
-      eventId,
+      eventId: event_id,
       time: timestamp,
       displayName: accountName,
       amount: 0,
@@ -1783,11 +1764,11 @@ async function setDiscordRefreshNow(db) {
   );
 }
 
-async function setSetting(db, data, value) {
+async function setSetting(db, settingKey, value) {
   await db.execute(
     `
-      INSERT INTO settings (
-        data,
+      INSERT INTO guildsync_settings (
+        setting_key,
         value
       )
       VALUES (
@@ -1798,7 +1779,7 @@ async function setSetting(db, data, value) {
         value = VALUES(value)
     `,
     [
-      data,
+      settingKey,
       value
     ]
   );
@@ -1890,21 +1871,21 @@ function fuzzyNameScore(left, right) {
 
 async function loadMemberLinkInputs(db) {
   const [rosterRows] = await db.execute(`
-    SELECT account_name, rank, joined
-    FROM guildsyncroster
+    SELECT account_name, rank_name AS rank, joined_timestamp AS joined
+    FROM guildsync_roster_members
     WHERE in_roster = 1
     ORDER BY LOWER(account_name) ASC
   `);
 
   const [discordRows] = await db.execute(`
     SELECT discord_id, username, global_name, server_nickname
-    FROM discordmembers
+    FROM discord_members
     ORDER BY LOWER(COALESCE(server_nickname, global_name, username)) ASC
   `);
 
   const [linkRows] = await db.execute(`
     SELECT *
-    FROM guildsyncmemberlinks
+    FROM guildsync_member_links
   `);
 
   return { rosterRows, discordRows, linkRows };
@@ -1913,8 +1894,8 @@ async function loadMemberLinkInputs(db) {
 function buildExistingLinkMaps(linkRows = []) {
   const byEso = new Map();
   const discordLinked = new Set();
-  const lockedEso = new Set();
-  const lockedDiscord = new Set();
+  const blockedEso = new Set();
+  const blockedDiscord = new Set();
 
   for (const link of linkRows) {
     const esoName = String(link.eso_account_name || '').toLowerCase();
@@ -1925,13 +1906,13 @@ function buildExistingLinkMaps(linkRows = []) {
       discordLinked.add(discordID);
     }
 
-    if (Number(link.locked || 0) === 1) {
-      lockedEso.add(esoName);
-      if (discordID) lockedDiscord.add(discordID);
+    if (Number(link.auto_link_blocked || 0) === 1) {
+      blockedEso.add(esoName);
+      if (discordID) blockedDiscord.add(discordID);
     }
   }
 
-  return { byEso, discordLinked, lockedEso, lockedDiscord };
+  return { byEso, discordLinked, blockedEso, blockedDiscord };
 }
 
 export async function runMemberAutoLinking(applicationDB) {
@@ -1943,7 +1924,7 @@ export async function runMemberAutoLinking(applicationDB) {
   const exactDiscordByName = new Map();
 
   for (const discord of discordRows) {
-    if (!discord.discord_id || maps.lockedDiscord.has(String(discord.discord_id))) continue;
+    if (!discord.discord_id || maps.blockedDiscord.has(String(discord.discord_id))) continue;
 
     for (const candidate of getDiscordNameCandidates(discord)) {
       if (!exactDiscordByName.has(candidate.normalized)) exactDiscordByName.set(candidate.normalized, []);
@@ -1962,7 +1943,7 @@ export async function runMemberAutoLinking(applicationDB) {
     const normalizedEso = normalizeMemberLinkName(esoName);
     const existing = maps.byEso.get(esoKey);
 
-    if (!esoName || maps.lockedEso.has(esoKey)) continue;
+    if (!esoName || maps.blockedEso.has(esoKey)) continue;
 
     if (existing && String(existing.link_status || '') === 'linked' && existing.discord_user_id) {
       continue;
@@ -1987,7 +1968,7 @@ export async function runMemberAutoLinking(applicationDB) {
         matchConfidence: 100,
         matchReason: `Exact normalized ${match.field} match`,
         matchField: match.field,
-        locked: 0
+        auto_link_blocked: 0
       });
       maps.discordLinked.add(String(discord.discord_id));
       linked += 1;
@@ -1996,7 +1977,7 @@ export async function runMemberAutoLinking(applicationDB) {
 
     let best = null;
     for (const discord of discordRows) {
-      if (!discord.discord_id || maps.discordLinked.has(String(discord.discord_id)) || maps.lockedDiscord.has(String(discord.discord_id))) continue;
+      if (!discord.discord_id || maps.discordLinked.has(String(discord.discord_id)) || maps.blockedDiscord.has(String(discord.discord_id))) continue;
 
       const match = getBestDiscordNameMatch(esoName, discord);
       if (!match) continue;
@@ -2022,7 +2003,7 @@ export async function runMemberAutoLinking(applicationDB) {
         matchConfidence: best.score,
         matchReason: `Fuzzy normalized ${best.field} match candidate`,
         matchField: best.field,
-        locked: 0
+        auto_link_blocked: 0
       });
       candidates += 1;
     }
@@ -2036,7 +2017,7 @@ export async function upsertMemberLink(applicationDB, link = {}) {
   if (!esoAccountName) throw new Error('ESO account name is required.');
 
   await applicationDB.execute(`
-    INSERT INTO guildsyncmemberlinks (
+    INSERT INTO guildsync_member_links (
       eso_account_name,
       discord_user_id,
       discord_username,
@@ -2047,7 +2028,7 @@ export async function upsertMemberLink(applicationDB, link = {}) {
       match_confidence,
       match_reason,
       match_field,
-      locked
+      auto_link_blocked
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
@@ -2060,7 +2041,7 @@ export async function upsertMemberLink(applicationDB, link = {}) {
       match_confidence = VALUES(match_confidence),
       match_reason = VALUES(match_reason),
       match_field = VALUES(match_field),
-      locked = VALUES(locked)
+      auto_link_blocked = VALUES(auto_link_blocked)
   `, [
     esoAccountName,
     link.discordUserId || link.discord_user_id || null,
@@ -2072,7 +2053,7 @@ export async function upsertMemberLink(applicationDB, link = {}) {
     Number(link.matchConfidence ?? link.match_confidence ?? 0),
     link.matchReason || link.match_reason || null,
     link.matchField || link.match_field || null,
-    Number(link.locked || 0) ? 1 : 0
+    Number(link.auto_link_blocked || 0) ? 1 : 0
   ]);
 }
 
@@ -2089,12 +2070,12 @@ export async function getMemberLinks(applicationDB) {
       links.match_confidence,
       links.match_reason,
       links.match_field,
-      links.locked,
+      links.auto_link_blocked AS locked,
       links.updated_at,
-      roster.rank AS eso_rank,
-      roster.joined AS eso_joined
-    FROM guildsyncmemberlinks links
-    LEFT JOIN guildsyncroster roster
+      roster.rank_name AS eso_rank,
+      roster.joined_timestamp AS eso_joined
+    FROM guildsync_member_links links
+    LEFT JOIN guildsync_roster_members roster
       ON LOWER(roster.account_name) = LOWER(links.eso_account_name)
     ORDER BY
       CASE links.link_status WHEN 'candidate' THEN 0 WHEN 'linked' THEN 1 ELSE 2 END,
@@ -2172,10 +2153,10 @@ export async function acceptMemberLinkCandidate(applicationDB, payload = {}) {
 
   const [rows] = await applicationDB.execute(`
     SELECT *
-    FROM guildsyncmemberlinks
+    FROM guildsync_member_links
     WHERE LOWER(eso_account_name) = LOWER(?)
       AND link_status = 'candidate'
-      AND locked = 0
+      AND auto_link_blocked = 0
     LIMIT 1
   `, [esoAccountName]);
 
@@ -2193,7 +2174,7 @@ export async function acceptMemberLinkCandidate(applicationDB, payload = {}) {
     matchConfidence: candidate.match_confidence,
     matchReason: 'Accepted fuzzy candidate',
     matchField: candidate.match_field,
-    locked: 0
+    auto_link_blocked: 0
   });
 }
 
@@ -2212,7 +2193,7 @@ export async function manualLinkMember(applicationDB, payload = {}) {
 
   const [discordRows] = await applicationDB.execute(`
     SELECT discord_id, username, global_name, server_nickname
-    FROM discordmembers
+    FROM discord_members
     WHERE discord_id = ?
     LIMIT 1
   `, [discordUserId]);
@@ -2220,10 +2201,10 @@ export async function manualLinkMember(applicationDB, payload = {}) {
   if (!discord) throw new Error('Discord member was not found.');
 
   await applicationDB.execute(`
-    DELETE FROM guildsyncmemberlinks
+    DELETE FROM guildsync_member_links
     WHERE discord_user_id = ?
       AND LOWER(eso_account_name) <> LOWER(?)
-      AND locked = 0
+      AND auto_link_blocked = 0
   `, [discordUserId, esoAccountName]);
 
   const suppliedMatchField = linkFieldNameFromPayload(payload.matchField || payload.match_field || payload.discordMatchField || payload.discord_match_field);
@@ -2244,7 +2225,7 @@ export async function manualLinkMember(applicationDB, payload = {}) {
     matchConfidence: confidence,
     matchReason,
     matchField: suppliedMatchField,
-    locked: 1
+    auto_link_blocked: 1
   });
 }
 
@@ -2254,7 +2235,7 @@ export async function manualUnlinkMember(applicationDB, payload = {}) {
 
   if (esoAccountName) {
     await applicationDB.execute(`
-      UPDATE guildsyncmemberlinks
+      UPDATE guildsync_member_links
       SET discord_user_id = NULL,
           discord_username = NULL,
           discord_display_name = NULL,
@@ -2264,7 +2245,7 @@ export async function manualUnlinkMember(applicationDB, payload = {}) {
           match_confidence = 0,
           match_reason = 'Auto-link disabled by user after unlink',
           match_field = NULL,
-          locked = 1
+          auto_link_blocked = 1
       WHERE LOWER(eso_account_name) = LOWER(?)
     `, [esoAccountName]);
     return;
@@ -2272,7 +2253,7 @@ export async function manualUnlinkMember(applicationDB, payload = {}) {
 
   if (discordUserId) {
     await applicationDB.execute(`
-      UPDATE guildsyncmemberlinks
+      UPDATE guildsync_member_links
       SET discord_user_id = NULL,
           discord_username = NULL,
           discord_display_name = NULL,
@@ -2282,7 +2263,7 @@ export async function manualUnlinkMember(applicationDB, payload = {}) {
           match_confidence = 0,
           match_reason = 'Auto-link disabled by user after unlink',
           match_field = NULL,
-          locked = 1
+          auto_link_blocked = 1
       WHERE discord_user_id = ?
     `, [discordUserId]);
   }

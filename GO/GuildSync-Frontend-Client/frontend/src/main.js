@@ -81,6 +81,8 @@ let rosterMembers = [];
 let rosterLastRefreshValue = null;
 let rosterDataLoading = false;
 let rosterAutoRefreshAttempted = false;
+let bankingAutoRefreshAttempted = false;
+let memberLinksAutoRefreshAttempted = false;
 let rosterSearchText = '';
 let rosterSearchSelectionStart = null;
 let rosterSearchSelectionEnd = null;
@@ -595,7 +597,14 @@ function renderGuildSyncTabLayout(options = {}) {
     refreshRosterDataFromBackend({ silent: true });
   }
 
-  if (activeGuildSyncTab === 'more' && socket?.connected && bankingEntries.length === 0 && !bankingDataLoading) {
+  if (
+    activeGuildSyncTab === 'more' &&
+    socket?.connected &&
+    bankingEntries.length === 0 &&
+    !bankingDataLoading &&
+    !bankingAutoRefreshAttempted
+  ) {
+    bankingAutoRefreshAttempted = true;
     refreshBankingDataFromBackend({ silent: true });
   }
 
@@ -604,8 +613,10 @@ function renderGuildSyncTabLayout(options = {}) {
     socket?.connected &&
     isAuthenticatedSession() &&
     memberLinks.length === 0 &&
-    !memberLinksLoading
+    !memberLinksLoading &&
+    !memberLinksAutoRefreshAttempted
   ) {
+    memberLinksAutoRefreshAttempted = true;
     refreshMemberLinks({ silent: true });
   }
 }
