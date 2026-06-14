@@ -71,6 +71,7 @@ let discordRefreshRequestRunning = false;
 let discordDataError = '';
 let discordSearchText = '';
 let discordSelectedRoleNames = new Set();
+let discordSelectedLinkStatuses = new Set();
 let discordSortColumn = 'username';
 let discordSortDirection = 'asc';
 let discordSearchSelectionStart = null;
@@ -81,7 +82,10 @@ let rosterLastRefreshValue = null;
 let rosterDataLoading = false;
 let rosterAutoRefreshAttempted = false;
 let rosterSearchText = '';
+let rosterSearchSelectionStart = null;
+let rosterSearchSelectionEnd = null;
 let rosterSelectedRankNames = new Set();
+let rosterSelectedLinkStatuses = new Set();
 let rosterHistoryDialogOpen = false;
 let rosterHistorySearchText = '';
 let rosterHistoryMatches = [];
@@ -95,6 +99,24 @@ let associateTicketReportDialogOpen = false;
 let associateTicketReportRows = [];
 let associateTicketReportLoading = false;
 let associateTicketReportError = '';
+let memberLinks = [];
+let memberLinksLoading = false;
+let memberLinksError = '';
+let memberLinksReportDialogOpen = false;
+let memberLinkDialogOpen = false;
+let memberLinkDialogContext = null;
+let memberLinkDialogOptions = [];
+let memberLinkDialogLoading = false;
+let memberLinkDialogError = '';
+let guildSyncConfirmDialogOpen = false;
+let guildSyncConfirmDialog = null;
+let guildSyncConfirmResolve = null;
+
+const MEMBER_LINK_STATUS_FILTERS = [
+  { id: 'linked', label: 'Linked' },
+  { id: 'fuzzy', label: 'Fuzzy / Candidate' },
+  { id: 'unlinked', label: 'Unlinked' },
+];
 
 let bankingEntries = [];
 let bankingActiveSection = 'biweekly';
@@ -123,7 +145,7 @@ const GUILDSYNC_TABS = [
   { id: 'discord-members', label: 'Discord Member Data', icon: 'discord' },
   { id: 'eso-members', label: 'Guild Roster', icon: 'swords' },
   { id: 'more', label: 'Bank Deposits / Raffle Tickets', icon: 'bank' },
-  { id: 'settings', label: 'Reports', icon: 'gear' }
+  { id: 'settings', label: 'Reports & Admin', icon: 'gear' }
 ];
 
 let activeGuildSyncTab = GUILDSYNC_TABS[0].id;
@@ -233,6 +255,10 @@ function showMainWindow() {
   wireBankDepositsPanel();
   wireReportsPanel();
   wireManualBiweeklyTicketDialog();
+  wireMemberLinkDialog();
+  wireAssociateTicketReportDialog();
+  wireMemberLinksReportDialog();
+  wireGuildSyncConfirmDialog();
   updateStatusDot();
   requestSystemMessageDisplayUpdate();
 
@@ -322,13 +348,187 @@ function renderGuildSyncTabContent() {
   return `
     ${content}
     ${manualBiweeklyTicketDialogOpen ? renderManualBiweeklyTicketDialog() : ''}
+    ${memberLinkDialogOpen ? renderMemberLinkDialog() : ''}
+    ${associateTicketReportDialogOpen ? renderAssociateTicketReportDialog() : ''}
+    ${memberLinksReportDialogOpen ? renderMemberLinksReportDialog() : ''}
+    ${guildSyncConfirmDialogOpen ? renderGuildSyncConfirmDialog() : ''}
   `;
 }
 
 function isBlockingModalOpen() {
-  return rosterHistoryDialogOpen
+  return guildSyncConfirmDialogOpen
+    || rosterHistoryDialogOpen
     || manualBiweeklyTicketDialogOpen
+    || memberLinkDialogOpen
+    || associateTicketReportDialogOpen
+    || memberLinksReportDialogOpen
     || bankingExportGridOpen;
+}
+
+function closeTopOpenModal() {
+  // Confirmation dialogs are intentionally modal-locking: Escape and overlay clicks do not close them.
+  // The user must choose Cancel or the confirmation action.
+  if (guildSyncConfirmDialogOpen) {
+    return false;
+  }
+  if (memberLinksReportDialogOpen) {
+    closeMemberLinksReportDialog();
+    return true;
+  }
+  if (associateTicketReportDialogOpen) {
+    closeAssociateTicketReportDialog();
+    return true;
+  }
+  if (memberLinkDialogOpen) {
+    closeMemberLinkDialog();
+    return true;
+  }
+  if (manualBiweeklyTicketDialogOpen) {
+    manualBiweeklyTicketDialogOpen = false;
+    renderGuildSyncTabLayout();
+    return true;
+  }
+  if (rosterHistoryDialogOpen) {
+    rosterHistoryDialogOpen = false;
+    renderGuildSyncTabLayout();
+    return true;
+  }
+  if (bankingExportGridOpen) {
+    bankingExportGridOpen = false;
+    renderGuildSyncTabLayout();
+    return true;
+  }
+  return false;
+}
+
+function handleGlobalModalEscape(event) {
+  if (event.key !== 'Escape') return;
+  if (closeTopOpenModal()) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
+
+if (!window.guildSyncGlobalModalEscapeAttached) {
+  window.addEventListener('keydown', handleGlobalModalEscape, true);
+  window.guildSyncGlobalModalEscapeAttached = true;
+}
+
+
+function openGuildSyncConfirmDialog(options = {}) {
+  return new Promise((resolve) => {
+    if (guildSyncConfirmResolve) {
+      guildSyncConfirmResolve(false);
+    }
+
+    guildSyncConfirmDialogOpen = true;
+    guildSyncConfirmDialog = {
+      title: options.title || 'Confirm Action',
+      message: options.message || 'Are you sure?',
+      detail: options.detail || '',
+      confirmLabel: options.confirmLabel || 'Confirm',
+      cancelLabel: options.cancelLabel || 'Cancel',
+      confirmClass: options.confirmClass || 'danger',
+    };
+    guildSyncConfirmResolve = resolve;
+    renderGuildSyncTabLayout();
+  });
+}
+
+function closeGuildSyncConfirmDialog(result = false) {
+  const resolver = guildSyncConfirmResolve;
+  guildSyncConfirmResolve = null;
+  guildSyncConfirmDialogOpen = false;
+  guildSyncConfirmDialog = null;
+
+  if (resolver) {
+    resolver(result === true);
+  }
+
+  renderGuildSyncTabLayout();
+}
+
+function renderGuildSyncConfirmDialog() {
+  const dialog = guildSyncConfirmDialog || {};
+
+  return `
+    <div class="roster-history-overlay guildsync-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="guildSyncConfirmTitle">
+      <div class="roster-history-dialog guildsync-confirm-dialog">
+        <div class="roster-history-header guildsync-confirm-header">
+          <div>
+            <h3 id="guildSyncConfirmTitle">${escapeHtml(dialog.title || 'Confirm Action')}</h3>
+            ${dialog.detail ? `<p>${escapeHtml(dialog.detail)}</p>` : ''}
+          </div>
+        </div>
+        <div class="guildsync-confirm-body">
+          ${escapeHtml(dialog.message || 'Are you sure?')}
+        </div>
+        <div class="guildsync-confirm-actions">
+          <button id="cancelGuildSyncConfirmButton" class="guildsync-confirm-button guildsync-confirm-cancel" type="button">${escapeHtml(dialog.cancelLabel || 'Cancel')}</button>
+          <button id="acceptGuildSyncConfirmButton" class="guildsync-confirm-button guildsync-confirm-accept ${escapeAttribute(dialog.confirmClass || 'danger')}" type="button">${escapeHtml(dialog.confirmLabel || 'Confirm')}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function handleGuildSyncConfirmButtonEvent(event) {
+  const cancelButton = event.target.closest?.('#cancelGuildSyncConfirmButton');
+  const acceptButton = event.target.closest?.('#acceptGuildSyncConfirmButton');
+
+  if (!cancelButton && !acceptButton) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (cancelButton) {
+    closeGuildSyncConfirmDialog(false);
+    return;
+  }
+
+  if (acceptButton) {
+    closeGuildSyncConfirmDialog(true);
+  }
+}
+
+if (!window.guildSyncConfirmDelegatedHandlersAttached) {
+  document.addEventListener('click', handleGuildSyncConfirmButtonEvent, true);
+  document.addEventListener('pointerup', handleGuildSyncConfirmButtonEvent, true);
+  window.guildSyncConfirmDelegatedHandlersAttached = true;
+}
+
+function wireGuildSyncConfirmDialog() {
+  if (!guildSyncConfirmDialogOpen) return;
+
+  const cancelButton = document.querySelector('#cancelGuildSyncConfirmButton');
+  const acceptButton = document.querySelector('#acceptGuildSyncConfirmButton');
+
+  if (cancelButton) {
+    cancelButton.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeGuildSyncConfirmDialog(false);
+    };
+  }
+
+  if (acceptButton) {
+    acceptButton.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeGuildSyncConfirmDialog(true);
+    };
+  }
+
+  const overlay = document.querySelector('.guildsync-confirm-overlay');
+  if (overlay) {
+    overlay.onclick = (event) => {
+      // Do not close this confirmation by clicking outside it.
+      if (event.target === overlay) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+  }
 }
 
 function wireGuildSyncTabs() {
@@ -368,9 +568,16 @@ function renderGuildSyncTabLayout(options = {}) {
   wireBankDepositsPanel();
   wireReportsPanel();
   wireManualBiweeklyTicketDialog();
+  wireMemberLinkDialog();
+  wireAssociateTicketReportDialog();
+  wireMemberLinksReportDialog();
 
   if (options.restoreDiscordSearchFocus) {
     restoreDiscordSearchFocus();
+  }
+
+  if (options.restoreRosterSearchFocus) {
+    restoreRosterSearchFocus();
   }
 
   if (activeGuildSyncTab === 'discord-members' && socket?.connected && discordMembers.length === 0 && !discordDataLoading) {
@@ -391,12 +598,23 @@ function renderGuildSyncTabLayout(options = {}) {
   if (activeGuildSyncTab === 'more' && socket?.connected && bankingEntries.length === 0 && !bankingDataLoading) {
     refreshBankingDataFromBackend({ silent: true });
   }
+
+  if (
+    (activeGuildSyncTab === 'discord-members' || activeGuildSyncTab === 'eso-members' || activeGuildSyncTab === 'settings') &&
+    socket?.connected &&
+    isAuthenticatedSession() &&
+    memberLinks.length === 0 &&
+    !memberLinksLoading
+  ) {
+    refreshMemberLinks({ silent: true });
+  }
 }
 
 function renderDiscordMemberDataPanel() {
   const filteredMembers = getFilteredDiscordMembers();
   const allRoleNames = getAllDiscordRoleNames();
   const selectedRoleNames = Array.from(discordSelectedRoleNames);
+  const selectedLinkStatuses = Array.from(discordSelectedLinkStatuses);
 
   return `
     <div class="guildsync-tab-panel discord-member-panel" data-active-tab="discord-members">
@@ -422,7 +640,7 @@ function renderDiscordMemberDataPanel() {
           </label>
 
           <div class="discord-role-filter-wrap">
-            <label class="discord-filter-label" for="discordRoleFilter">Roles</label>
+            <label class="discord-filter-label inline-filter-label" for="discordRoleFilter">Roles</label>
             <select id="discordRoleFilter" class="discord-role-select">
               <option value="">Add role filter...</option>
               ${allRoleNames
@@ -443,6 +661,27 @@ function renderDiscordMemberDataPanel() {
           <div class="discord-results-count">${filteredMembers.length} result${filteredMembers.length === 1 ? '' : 's'}</div>
         </div>
 
+        <div class="discord-filter-row discord-link-filter-row">
+          <div class="discord-role-filter-wrap member-link-filter-wrap">
+            <label class="discord-filter-label inline-filter-label" for="discordLinkStatusFilter">Link Status</label>
+            <select id="discordLinkStatusFilter" class="discord-role-select">
+              <option value="">Add link status...</option>
+              ${MEMBER_LINK_STATUS_FILTERS
+      .filter((item) => !discordSelectedLinkStatuses.has(item.id))
+      .map((item) => `<option value="${escapeAttribute(item.id)}">${escapeHtml(item.label)}</option>`)
+      .join('')}
+            </select>
+            <div class="discord-selected-roles">
+              ${selectedLinkStatuses.length === 0
+      ? '<span class="discord-no-role-filter">All link statuses</span>'
+      : selectedLinkStatuses
+        .map((status) => renderMemberLinkStatusFilterChip('discord', status))
+        .join('')}
+            </div>
+          </div>
+
+        </div>
+
         <div class="discord-member-table-shell">
           <table class="discord-member-table">
             <thead>
@@ -451,6 +690,7 @@ function renderDiscordMemberDataPanel() {
                 ${renderDiscordSortableHeader('global_name', 'Global Name')}
                 ${renderDiscordSortableHeader('server_nickname', 'Server Nickname')}
                 ${renderDiscordSortableHeader('roles', 'Roles')}
+                <th class="member-link-action-header">Linked</th>
               </tr>
             </thead>
             <tbody>
@@ -471,6 +711,7 @@ function renderEsoRosterPanel() {
   const filteredMembers = getFilteredRosterMembers();
   const allRankNames = getAllRosterRankNames();
   const selectedRankNames = Array.from(rosterSelectedRankNames);
+  const selectedLinkStatuses = Array.from(rosterSelectedLinkStatuses);
 
   return `
     <div class="guildsync-tab-panel eso-roster-panel" data-active-tab="eso-members">
@@ -497,7 +738,7 @@ function renderEsoRosterPanel() {
           </label>
 
           <div class="discord-role-filter-wrap">
-            <label class="discord-filter-label" for="rosterRankFilter">Rank</label>
+            <label class="discord-filter-label inline-filter-label" for="rosterRankFilter">Rank</label>
             <select id="rosterRankFilter" class="discord-role-select">
               <option value="">Add rank filter...</option>
               ${allRankNames
@@ -518,6 +759,26 @@ function renderEsoRosterPanel() {
           <div class="discord-results-count">${filteredMembers.length} result${filteredMembers.length === 1 ? '' : 's'}</div>
         </div>
 
+        <div class="discord-filter-row discord-link-filter-row">
+          <div class="discord-role-filter-wrap member-link-filter-wrap">
+            <label class="discord-filter-label inline-filter-label" for="rosterLinkStatusFilter">Link Status</label>
+            <select id="rosterLinkStatusFilter" class="discord-role-select">
+              <option value="">Add link status...</option>
+              ${MEMBER_LINK_STATUS_FILTERS
+      .filter((item) => !rosterSelectedLinkStatuses.has(item.id))
+      .map((item) => `<option value="${escapeAttribute(item.id)}">${escapeHtml(item.label)}</option>`)
+      .join('')}
+            </select>
+            <div class="discord-selected-roles">
+              ${selectedLinkStatuses.length === 0
+      ? '<span class="discord-no-role-filter">All link statuses</span>'
+      : selectedLinkStatuses
+        .map((status) => renderMemberLinkStatusFilterChip('roster', status))
+        .join('')}
+            </div>
+          </div>
+        </div>
+
         <div class="discord-member-table-shell eso-roster-table-shell">
           <table class="discord-member-table eso-roster-table">
             <thead>
@@ -525,6 +786,7 @@ function renderEsoRosterPanel() {
                 <th>Account Name</th>
                 <th>Rank</th>
                 <th>Joined</th>
+                <th class="member-link-action-header">Linked</th>
               </tr>
             </thead>
             <tbody>
@@ -543,10 +805,11 @@ function renderEsoRosterRow(member) {
   const rowStyle = rowColor ? ` style="color: ${rowColor};"` : '';
 
   return `
-    <tr class="eso-roster-row"${rowStyle}>
+    <tr class="eso-roster-row"${rowStyle} data-eso-account-name="${escapeAttribute(member.account_name || '')}">
       <td>${escapeHtml(member.account_name || '')}</td>
       <td>${renderEsoRosterRank(member.rank || '')}</td>
       <td>${escapeHtml(formatRosterJoinedDate(member.joined))}</td>
+      <td class="member-link-action-cell">${renderMemberLinkStatusButton({ mode: 'eso-to-discord', esoAccountName: member.account_name })}</td>
     </tr>
   `;
 }
@@ -558,7 +821,7 @@ function renderEmptyEsoRosterRow() {
 
   return `
     <tr>
-      <td class="bank-empty-row" colspan="3">${escapeHtml(message)}</td>
+      <td class="bank-empty-row" colspan="4">${escapeHtml(message)}</td>
     </tr>
   `;
 }
@@ -592,6 +855,10 @@ function getFilteredRosterMembers() {
     const rankName = String(member.rank || '').trim();
 
     if (rosterSelectedRankNames.size > 0 && !rosterSelectedRankNames.has(rankName)) {
+      return false;
+    }
+
+    if (rosterSelectedLinkStatuses.size > 0 && !rosterSelectedLinkStatuses.has(getRosterMemberLinkFilterStatus(member))) {
       return false;
     }
 
@@ -641,16 +908,65 @@ function renderRosterRankFilterChip(rankName) {
   `;
 }
 
+function getMemberLinkStatusFilterLabel(status) {
+  const found = MEMBER_LINK_STATUS_FILTERS.find((item) => item.id === status);
+  return found ? found.label : status;
+}
+
+function renderMemberLinkStatusFilterChip(scope, status) {
+  const cleanScope = scope === 'roster' ? 'roster' : 'discord';
+  const label = getMemberLinkStatusFilterLabel(status);
+
+  return `
+    <button
+      class="discord-role-filter-chip member-link-status-filter-chip"
+      type="button"
+      data-remove-${cleanScope}-link-status-filter="${escapeAttribute(status)}"
+      title="Remove ${escapeAttribute(label)} link filter"
+    >
+      <span>${escapeHtml(label)}</span>
+      <span aria-hidden="true">×</span>
+    </button>
+  `;
+}
+
+function getMemberLinkRelationshipFilterStatus(link) {
+  if (!link) {
+    return 'unlinked';
+  }
+
+  const status = String(link.link_status || '').trim().toLowerCase();
+  const method = String(link.link_method || '').trim().toLowerCase();
+
+  if (status === 'candidate' || method === 'fuzzy') {
+    return 'fuzzy';
+  }
+
+  if (status === 'linked') {
+    return 'linked';
+  }
+
+  return 'unlinked';
+}
+
+function getDiscordMemberLinkFilterStatus(member) {
+  return getMemberLinkRelationshipFilterStatus(getMemberLinkByDiscordUserId(member?.discord_id));
+}
+
+function getRosterMemberLinkFilterStatus(member) {
+  return getMemberLinkRelationshipFilterStatus(getMemberLinkByEsoAccount(member?.account_name));
+}
+
 function renderRosterHistoryDialog() {
   return `
     <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="rosterHistoryTitle">
-      <div class="roster-history-dialog">
+      <div class="roster-history-dialog roster-rank-history-dialog">
         <div class="roster-history-header">
           <div>
             <h3 id="rosterHistoryTitle">Roster Rank Historical Data</h3>
             <p>Search prior rank records, including members no longer on the current roster.</p>
           </div>
-          <button id="closeRosterHistoryButton" class="roster-history-close" type="button" aria-label="Close">×</button>
+          <button id="closeRosterHistoryButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
         </div>
 
         <div class="roster-history-search-row">
@@ -711,10 +1027,10 @@ function renderRosterHistoryEvents() {
 
   return `
     <div class="roster-history-event-table-shell">
-      <table class="discord-member-table roster-history-event-table">
+      <table class="discord-member-table roster-history-event-table roster-rank-history-event-table">
         <thead>
           <tr>
-            <th>When</th>
+            <th class="roster-history-when-column">When</th>
             <th>Event</th>
             <th>Rank</th>
             <th>Officer</th>
@@ -723,7 +1039,7 @@ function renderRosterHistoryEvents() {
         <tbody>
           ${rosterHistoryEvents.map((event) => `
             <tr>
-              <td>${escapeHtml(formatRosterHistoryTimestamp(event.timestamp))}</td>
+              <td class="roster-history-when-cell">${escapeHtml(formatRosterHistoryTimestamp(event.timestamp))}</td>
               <td>${escapeHtml(event.event_type || '')}</td>
               <td>${renderRosterHistoryRank(event.rank)}</td>
               <td>${escapeHtml(event.officer || '')}</td>
@@ -741,40 +1057,33 @@ function renderReportsPanel() {
     <div class="guildsync-tab-panel reports-panel" data-active-tab="settings">
       <div class="discord-data-header reports-header">
         <div>
-          <h2 class="discord-data-title">Reports</h2>
-          <p class="discord-data-subtitle">Run GuildSync reports. More report options can be added here later.</p>
+          <h2 class="discord-data-title">Reports & Admin</h2>
+          <p class="discord-data-subtitle">Run GuildSync reports and administrative review tools. More options can be added here later.</p>
         </div>
       </div>
 
-      <div class="reports-grid">
-        <section class="reports-card reports-card-wide">
-          <div class="reports-card-header">
-            <div>
-              <h3>Associate Ticket Eligibility</h3>
-              <p>Shows Associates who have been in the guild at least two weeks and have purchased at least one raffle ticket.</p>
+      <div class="reports-scroll-area">
+        <section class="reports-list" aria-label="Available reports">
+          <article class="report-option-card">
+            <div class="report-option-copy">
+              <h3>Associates Promotion Eligible</h3>
+              <p>Shows Associates who have been in the guild at least two weeks, have purchased at least one raffle ticket, and are linked to Discord. Also shows otherwise eligible Associates who still need a Discord link reviewed.</p>
             </div>
-            <button id="runAssociateTicketReportButton" class="refresh-discord-button" type="button" ${associateTicketReportLoading ? 'disabled' : ''}>
-              ${associateTicketReportLoading ? 'Running...' : 'Run Associate Ticket Report'}
+            <button id="runAssociateTicketReportButton" class="refresh-discord-button report-run-button" type="button" ${associateTicketReportLoading ? 'disabled' : ''}>
+              ${associateTicketReportLoading ? 'Running...' : 'Run'}
             </button>
-          </div>
-
-          ${associateTicketReportError ? `<div class="discord-data-error">${escapeHtml(associateTicketReportError)}</div>` : ''}
-
-          <div class="reports-result-header">
-            <span>${escapeHtml(String(associateTicketReportRows.length))} result${associateTicketReportRows.length === 1 ? '' : 's'}</span>
-          </div>
-
-          ${renderAssociateTicketReportRows()}
+          </article>
         </section>
 
-        <section class="reports-card reports-card-placeholder">
-          <div class="reports-card-header">
-            <div>
-              <h3>Future Report</h3>
-              <p>This space is ready for the next GuildSync report.</p>
-            </div>
+        <article class="report-option-card">
+          <div class="report-option-copy">
+            <h3>ESO / Discord Member Links</h3>
+            <p>Review automatic ESO-to-Discord links, accept candidate matches, unlink blocked matches, or run the matcher again after roster or Discord refreshes.</p>
           </div>
-        </section>
+          <button id="runMemberLinksReportButton" class="refresh-discord-button report-run-button" type="button" ${memberLinksLoading ? 'disabled' : ''}>
+            ${memberLinksLoading ? 'Loading...' : 'Run'}
+          </button>
+        </article>
       </div>
     </div>
   `;
@@ -785,60 +1094,103 @@ function wireReportsPanel() {
     return;
   }
 
-  document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => runAssociateTicketReport());
+  document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => openAssociatePromotionReportDialog());
+  document.querySelector('#runMemberLinksReportButton')?.addEventListener('click', () => openMemberLinksReportDialog());
+}
+
+function openAssociatePromotionReportDialog() {
+  associateTicketReportDialogOpen = true;
+  associateTicketReportError = '';
+  renderGuildSyncTabLayout();
+  runAssociateTicketReport();
+}
+
+function closeAssociateTicketReportDialog() {
+  associateTicketReportDialogOpen = false;
+  associateTicketReportError = '';
+  renderGuildSyncTabLayout();
 }
 
 function renderAssociateTicketReportDialog() {
+  const eligibleRows = getAssociatePromotionEligibleRows();
+  const missingLinkRows = getAssociatePromotionMissingLinkRows();
+  const totalRows = associateTicketReportRows.length;
+
   return `
-    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="associateTicketReportTitle">
-      <div class="roster-history-dialog associate-ticket-report-dialog">
-        <div class="roster-history-header">
+    <div class="roster-history-overlay report-results-overlay" role="dialog" aria-modal="true" aria-labelledby="associateTicketReportTitle">
+      <div class="roster-history-dialog report-results-dialog associate-ticket-report-dialog">
+        <div class="roster-history-header report-results-header">
           <div>
-            <h3 id="associateTicketReportTitle">Associate Ticket Eligibility Report</h3>
-            <p>Associates who have been in the guild at least two weeks and have purchased at least one raffle ticket.</p>
+            <h3 id="associateTicketReportTitle">Associates Promotion Eligible</h3>
+            <p>Associates who meet tenure and ticket requirements, separated by Discord link status.</p>
           </div>
-          <button id="closeAssociateTicketReportButton" class="roster-history-close" type="button" aria-label="Close">×</button>
+          <button id="closeAssociateTicketReportButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
         </div>
 
-        <div class="roster-history-search-row">
-          <button id="runAssociateTicketReportButton" class="refresh-discord-button" type="button" ${associateTicketReportLoading ? 'disabled' : ''}>${associateTicketReportLoading ? 'Running...' : 'Run Report'}</button>
-          <span class="roster-history-muted">${escapeHtml(String(associateTicketReportRows.length))} result${associateTicketReportRows.length === 1 ? '' : 's'}</span>
+        <div class="report-results-toolbar">
+          <button id="copyAssociateTicketReportGridButton" class="bank-export-copy-button" type="button" ${totalRows === 0 ? 'disabled' : ''}>Copy Grid</button>
+          <button id="rerunAssociateTicketReportButton" class="refresh-discord-button" type="button" ${associateTicketReportLoading ? 'disabled' : ''}>${associateTicketReportLoading ? 'Running...' : 'Run Again'}</button>
+          <span class="roster-history-muted">${escapeHtml(String(totalRows))} total row${totalRows === 1 ? '' : 's'}</span>
         </div>
 
         ${associateTicketReportError ? `<div class="discord-data-error">${escapeHtml(associateTicketReportError)}</div>` : ''}
-        ${renderAssociateTicketReportRows()}
+
+        <div class="report-results-content">
+          ${associateTicketReportLoading && totalRows === 0 ? '<div class="roster-history-muted">Running report...</div>' : ''}
+          ${!associateTicketReportLoading && totalRows === 0 ? '<div class="roster-history-muted">No matching Associates found.</div>' : ''}
+          ${totalRows > 0 ? renderAssociatePromotionReportSection('Eligible', 'Linked to Discord and eligible for promotion review.', eligibleRows, 'No linked eligible Associates found.') : ''}
+          ${totalRows > 0 ? renderAssociatePromotionReportSection('Eligible if Linked', 'These Associates meet the tenure and purchased-ticket requirements but need Discord linking reviewed.', missingLinkRows, 'No otherwise eligible Associates are missing Discord links.') : ''}
+        </div>
+        <textarea id="associateTicketReportTsv" class="bank-export-tsv" readonly>${escapeHtml(getAssociateTicketReportTsv())}</textarea>
       </div>
     </div>
   `;
 }
 
-function renderAssociateTicketReportRows() {
-  if (associateTicketReportLoading && associateTicketReportRows.length === 0) {
-    return '<div class="roster-history-muted">Running report...</div>';
-  }
+function getAssociatePromotionEligibleRows() {
+  return associateTicketReportRows.filter((row) => String(row.report_group || row.eligibility_group || '').toLowerCase() === 'eligible');
+}
 
-  if (associateTicketReportRows.length === 0) {
-    return '<div class="roster-history-muted">Run this report to see matching associates.</div>';
-  }
+function getAssociatePromotionMissingLinkRows() {
+  return associateTicketReportRows.filter((row) => String(row.report_group || row.eligibility_group || '').toLowerCase() !== 'eligible');
+}
 
+function renderAssociatePromotionReportSection(title, subtitle, rows, emptyText) {
   return `
-    <div class="roster-history-event-table-shell">
-      <table class="discord-member-table roster-history-event-table">
+    <section class="report-result-section">
+      <div class="report-result-section-header">
+        <div>
+          <h4>${escapeHtml(title)}</h4>
+          <p>${escapeHtml(subtitle)}</p>
+        </div>
+        <span>${escapeHtml(String(rows.length))} row${rows.length === 1 ? '' : 's'}</span>
+      </div>
+      ${rows.length > 0 ? renderAssociateTicketReportRows(rows) : `<div class="roster-history-muted report-section-empty">${escapeHtml(emptyText)}</div>`}
+    </section>
+  `;
+}
+
+function renderAssociateTicketReportRows(rows = associateTicketReportRows) {
+  return `
+    <div class="roster-history-event-table-shell report-result-table-shell">
+      <table class="discord-member-table roster-history-event-table report-result-table">
         <thead>
           <tr>
             <th>Account Name</th>
             <th>Rank</th>
             <th>Joined</th>
             <th>Purchased Tickets</th>
+            <th>Discord Link</th>
           </tr>
         </thead>
         <tbody>
-          ${associateTicketReportRows.map((row) => `
+          ${rows.map((row) => `
             <tr>
               <td>${escapeHtml(row.account_name || '')}</td>
               <td>${renderEsoRosterRank(row.rank || '')}</td>
               <td>${escapeHtml(formatRosterJoinedDate(row.joined))}</td>
               <td>${escapeHtml(formatTicketAmount(row.purchased_tickets || 0))}</td>
+              <td>${escapeHtml(formatAssociateReportDiscordLink(row))}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -847,24 +1199,840 @@ function renderAssociateTicketReportRows() {
   `;
 }
 
+function formatAssociateReportDiscordLink(row) {
+  const status = String(row.link_status || '').toLowerCase();
+  if (status === 'linked') {
+    return row.discord_server_nickname || row.discord_display_name || row.discord_username || row.discord_user_id || 'Linked';
+  }
+  return 'Needs Link Review';
+}
+
+function getAssociateTicketReportTsv() {
+  const lines = [['Section', 'Account Name', 'Rank', 'Joined', 'Purchased Tickets', 'Discord Link']];
+  for (const row of associateTicketReportRows) {
+    const group = String(row.report_group || row.eligibility_group || '').toLowerCase() === 'eligible' ? 'Eligible' : 'Eligible if Linked';
+    lines.push([
+      group,
+      row.account_name || '',
+      row.rank || '',
+      formatRosterJoinedDate(row.joined),
+      formatTicketAmount(row.purchased_tickets || 0),
+      formatAssociateReportDiscordLink(row)
+    ]);
+  }
+  return lines.map((row) => row.map(formatTsvCell).join('\t')).join('\n');
+}
+
+async function copyAssociateTicketReportGrid() {
+  const tsv = getAssociateTicketReportTsv();
+
+  const copied = await copyTextToClipboard(tsv);
+  if (copied) {
+    addSystemMessage('associate-report-copied', 'Associates Promotion Eligible report copied to clipboard.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  const textArea = document.querySelector('#associateTicketReportTsv');
+  if (textArea) {
+    textArea.focus();
+    textArea.select();
+  }
+  addSystemMessage('associate-report-copy-failed', 'Could not copy automatically. The grid text is selected for manual copy.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+}
+
+
+function openMemberLinksReportDialog() {
+  memberLinksReportDialogOpen = true;
+  memberLinksError = '';
+  renderGuildSyncTabLayout();
+
+  if (memberLinks.length === 0 && !memberLinksLoading) {
+    refreshMemberLinks({ silent: true });
+  }
+}
+
+function closeMemberLinksReportDialog() {
+  memberLinksReportDialogOpen = false;
+  renderGuildSyncTabLayout();
+}
+
+function renderMemberLinksReportDialog() {
+  return `
+    <div class="roster-history-overlay member-links-report-overlay" role="dialog" aria-modal="true" aria-labelledby="memberLinksReportTitle">
+      <div class="roster-history-dialog report-results-dialog member-links-report-dialog">
+        <div class="roster-history-header report-results-header">
+          <div>
+            <h3 id="memberLinksReportTitle">ESO / Discord Member Links</h3>
+            <p>Review automatic links, accept fuzzy candidates, unblock/relink members, or run the matcher again.</p>
+          </div>
+          <button id="closeMemberLinksReportButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
+        </div>
+
+        <div class="report-results-toolbar">
+          <button id="refreshMemberLinksButton" class="clear-discord-filters-button" type="button" ${memberLinksLoading ? 'disabled' : ''}>Refresh Links</button>
+          <button id="runMemberAutoLinkButton" class="refresh-discord-button" type="button" ${memberLinksLoading ? 'disabled' : ''}>${memberLinksLoading ? 'Running...' : 'Run Auto-Linking'}</button>
+          <span class="roster-history-muted">${escapeHtml(String(memberLinks.length))} link/candidate row${memberLinks.length === 1 ? '' : 's'}</span>
+        </div>
+
+        ${memberLinksError ? `<div class="discord-data-error member-links-report-error">${escapeHtml(memberLinksError)}</div>` : ''}
+
+        <div class="report-results-content member-links-report-content">
+          ${renderMemberLinksRows()}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireMemberLinksReportDialog() {
+  if (!memberLinksReportDialogOpen) {
+    return;
+  }
+
+  document.querySelector('#closeMemberLinksReportButton')?.addEventListener('click', closeMemberLinksReportDialog);
+  document.querySelector('#refreshMemberLinksButton')?.addEventListener('click', () => refreshMemberLinks());
+  document.querySelector('#runMemberAutoLinkButton')?.addEventListener('click', () => runMemberAutoLinking());
+  document.querySelectorAll('[data-accept-member-candidate]').forEach((button) => {
+    button.addEventListener('click', () => acceptMemberLinkCandidate(button.dataset.acceptMemberCandidate || ''));
+  });
+  document.querySelectorAll('[data-unlink-member-link]').forEach((button) => {
+    button.addEventListener('click', () => unlinkMemberLink(button.dataset.unlinkMemberLink || ''));
+  });
+
+  const overlay = document.querySelector('.member-links-report-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        closeMemberLinksReportDialog();
+      }
+    });
+  }
+}
+
+function getMemberLinksReportGroupOrder(link) {
+  const status = String(link?.link_status || '').trim().toLowerCase();
+  const method = String(link?.link_method || '').trim().toLowerCase();
+
+  if (status === 'candidate' || method === 'fuzzy') return 0;
+  if (status === 'linked') return 2;
+  return 1;
+}
+
+function getSortedMemberLinksForReport(links) {
+  return [...(Array.isArray(links) ? links : [])].sort((left, right) => {
+    const groupDelta = getMemberLinksReportGroupOrder(left) - getMemberLinksReportGroupOrder(right);
+    if (groupDelta !== 0) return groupDelta;
+
+    const confidenceDelta = Number(right?.match_confidence || 0) - Number(left?.match_confidence || 0);
+    if (confidenceDelta !== 0) return confidenceDelta;
+
+    return String(left?.eso_account_name || '').localeCompare(String(right?.eso_account_name || ''), undefined, { sensitivity: 'base' });
+  });
+}
+
+function getMemberLinkReportDiscordDisplay(link) {
+  const matchedField = getMemberLinkMatchedField(link);
+  let value = '';
+
+  if (matchedField === 'Username') {
+    value = link?.discord_username || '';
+  } else if (matchedField === 'Global Name') {
+    value = link?.discord_display_name || '';
+  } else if (matchedField === 'Server Nickname') {
+    value = link?.discord_server_nickname || '';
+  }
+
+  if (!value) {
+    value = link?.discord_server_nickname || link?.discord_display_name || link?.discord_username || link?.discord_user_id || '';
+  }
+
+  const fieldText = matchedField ? ` <span class="member-link-report-match-field">(${escapeHtml(matchedField)})</span>` : '';
+  return `<span class="member-link-report-discord-name">${escapeHtml(value)}</span>${fieldText}`;
+}
+
+function renderMemberLinksRows() {
+  if (memberLinksLoading && memberLinks.length === 0) {
+    return '<div class="roster-history-muted">Loading member links...</div>';
+  }
+
+  if (!Array.isArray(memberLinks) || memberLinks.length === 0) {
+    return '<div class="roster-history-muted">No links or candidates yet. Run auto-linking after roster and Discord data are loaded.</div>';
+  }
+
+  const sortedLinks = getSortedMemberLinksForReport(memberLinks);
+
+  return `
+    <div class="roster-history-event-table-shell member-links-table-shell">
+      <table class="discord-member-table roster-history-event-table member-links-table">
+        <thead>
+          <tr>
+            <th>ESO Account</th>
+            <th>Discord Member</th>
+            <th class="member-links-status-col">Status</th>
+            <th class="member-links-method-col">Method</th>
+            <th class="member-links-action-col">Action</th>
+            <th class="member-links-confidence-col">Confidence %</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sortedLinks.map((link) => {
+            const status = String(link.link_status || '').trim().toLowerCase();
+            const method = String(link.link_method || '').trim().toLowerCase();
+            const discordMatchLabel = getMemberLinkReportDiscordDisplay(link);
+            return `
+              <tr>
+                <td>${escapeHtml(link.eso_account_name || '')}</td>
+                <td>${discordMatchLabel}</td>
+                <td class="member-links-status-col">${escapeHtml(status || '')}</td>
+                <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
+                <td class="member-links-action-col">
+                  <div class="member-link-actions">
+                    ${status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
+                    ${(status === 'linked' || status === 'candidate') ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" aria-label="Unlink and disable auto-link" title="Unlink and disable auto-link">🗑</button>` : ''}
+                  </div>
+                </td>
+                <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function refreshMemberLinks(options = {}) {
+  if (!socket?.connected || !guildSyncSession.logged_in) {
+    memberLinksError = 'You must be logged in and connected to load member links.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  memberLinksLoading = true;
+  memberLinksError = '';
+  if (!options.silent) renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-member-links', {}, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load member links.');
+    memberLinks = Array.isArray(response.links) ? response.links : [];
+  } catch (error) {
+    memberLinksError = formatError(error);
+  } finally {
+    memberLinksLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function runMemberAutoLinking() {
+  if (!socket?.connected || !guildSyncSession.logged_in) {
+    memberLinksError = 'You must be logged in and connected to run auto-linking.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  memberLinksLoading = true;
+  memberLinksError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:run-member-auto-linking', {}, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to run auto-linking.');
+    memberLinks = Array.isArray(response.links) ? response.links : [];
+    addSystemMessage('member-auto-link', response.message || 'Member auto-linking complete.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } catch (error) {
+    memberLinksError = formatError(error);
+  } finally {
+    memberLinksLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function acceptMemberLinkCandidate(esoAccountName) {
+  try {
+    const response = await emitSocketWithAck('guildsync:accept-member-link-candidate', { esoAccountName }, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to accept candidate.');
+    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    addSystemMessage('member-link-accepted', response.message || 'Candidate accepted.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } catch (error) {
+    memberLinksError = formatError(error);
+  }
+  renderGuildSyncTabLayout();
+}
+
+async function unlinkMemberLink(esoAccountName) {
+  const confirmed = await openGuildSyncConfirmDialog({
+    title: 'Unlink Member?',
+    message: `Remove the link for ${esoAccountName} and block future auto-linking? You can still manually relink later.`,
+    confirmLabel: 'Unlink',
+    cancelLabel: 'Cancel',
+    confirmClass: 'danger',
+  });
+  if (!confirmed) return;
+
+  try {
+    const response = await emitSocketWithAck('guildsync:manual-unlink-member', { esoAccountName }, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
+    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    addSystemMessage('member-link-unlinked', response.message || 'Member link removed. Auto-linking is disabled.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } catch (error) {
+    memberLinksError = formatError(error);
+  }
+  renderGuildSyncTabLayout();
+}
+
+
+async function unlinkDiscordMemberLink(discordUserId) {
+  const confirmed = await openGuildSyncConfirmDialog({
+    title: 'Unlink Discord Member?',
+    message: 'Remove this Discord member link and disable future automatic relinking? You can still manually relink later.',
+    confirmLabel: 'Unlink',
+    cancelLabel: 'Cancel',
+    confirmClass: 'danger',
+  });
+  if (!confirmed) return;
+
+  try {
+    const response = await emitSocketWithAck('guildsync:manual-unlink-member', { discordUserId }, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
+    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    addSystemMessage('member-link-unlinked', response.message || 'Member link removed. Auto-linking is disabled.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } catch (error) {
+    memberLinksError = formatError(error);
+  }
+  renderGuildSyncTabLayout();
+}
+
+async function manuallyLinkEsoToDiscord(esoAccountName) {
+  const optionsResponse = await emitSocketWithAck('guildsync:request-member-link-options', {
+    mode: 'eso-to-discord',
+    accountName: esoAccountName
+  }, 30000);
+
+  if (!optionsResponse?.ok) throw new Error(optionsResponse?.message || 'Failed to load Discord link options.');
+  const options = Array.isArray(optionsResponse.options) ? optionsResponse.options.slice(0, 10) : [];
+  if (options.length === 0) throw new Error('No unlinked Discord members are available.');
+
+  const listText = options.map((option, index) => {
+    const name = option.server_nickname || option.global_name || option.username || option.discord_id;
+    return `${index + 1}. ${name} (${option.confidence || 0}%)`;
+  }).join('\n');
+  const choice = Number(window.prompt(`Choose Discord member to link to ${esoAccountName}:\n\n${listText}`, '1'));
+  const selected = options[choice - 1];
+  if (!selected) return;
+
+  const response = await emitSocketWithAck('guildsync:manual-link-member', {
+    esoAccountName,
+    discordUserId: selected.discord_id
+  }, 30000);
+  if (!response?.ok) throw new Error(response?.message || 'Failed to link member.');
+  memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+  addSystemMessage('member-manual-link', response.message || 'Member linked.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+}
+
+async function manuallyLinkDiscordToEso(discordUserId) {
+  const optionsResponse = await emitSocketWithAck('guildsync:request-member-link-options', {
+    mode: 'discord-to-eso',
+    discordUserId
+  }, 30000);
+
+  if (!optionsResponse?.ok) throw new Error(optionsResponse?.message || 'Failed to load ESO link options.');
+  const options = Array.isArray(optionsResponse.options) ? optionsResponse.options.slice(0, 10) : [];
+  if (options.length === 0) throw new Error('No unlinked ESO roster members are available.');
+
+  const listText = options.map((option, index) => `${index + 1}. ${option.account_name} (${option.confidence || 0}%)`).join('\n');
+  const choice = Number(window.prompt(`Choose ESO account to link to this Discord member:\n\n${listText}`, '1'));
+  const selected = options[choice - 1];
+  if (!selected) return;
+
+  const response = await emitSocketWithAck('guildsync:manual-link-member', {
+    esoAccountName: selected.account_name,
+    discordUserId
+  }, 30000);
+  if (!response?.ok) throw new Error(response?.message || 'Failed to link member.');
+  memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+  addSystemMessage('member-manual-link', response.message || 'Member linked.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+}
+
+
+function normalizeMemberLinkName(value) {
+  return String(value || '').trim().replace(/^@+/, '').toLowerCase();
+}
+
+function getMemberLinkByEsoAccount(esoAccountName) {
+  const cleanName = normalizeMemberLinkName(esoAccountName);
+  if (!cleanName) return null;
+  return memberLinks.find((link) => normalizeMemberLinkName(link.eso_account_name) === cleanName) || null;
+}
+
+function getMemberLinkByDiscordUserId(discordUserId) {
+  const cleanId = String(discordUserId || '').trim();
+  if (!cleanId) return null;
+  return memberLinks.find((link) => String(link.discord_user_id || '').trim() === cleanId) || null;
+}
+
+function getDiscordMemberDisplayNameById(discordUserId) {
+  const cleanId = String(discordUserId || '').trim();
+  const member = discordMembers.find((item) => String(item.discord_id || '').trim() === cleanId);
+  if (!member) return cleanId;
+  return member.server_nickname || member.global_name || member.username || member.discord_id || cleanId;
+}
+
+function getMemberLinkButtonData(context) {
+  const mode = context?.mode || '';
+  const link = mode === 'discord-to-eso'
+    ? getMemberLinkByDiscordUserId(context.discordUserId)
+    : getMemberLinkByEsoAccount(context.esoAccountName);
+
+  const status = String(link?.link_status || '').trim().toLowerCase();
+  const locked = Number(link?.locked || 0) === 1;
+
+  if (status === 'linked') {
+    const linkedName = mode === 'discord-to-eso'
+      ? link.eso_account_name
+      : (link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || 'Discord member');
+    return { color: 'green', label: 'Linked', className: 'linked', title: `Linked to ${linkedName}${locked ? ' (manual)' : ''}` };
+  }
+
+  if (status === 'candidate') {
+    const candidateName = mode === 'discord-to-eso'
+      ? link.eso_account_name
+      : (link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || 'Discord member');
+    return { color: 'yellow', label: 'Candidate', className: 'candidate', title: `Candidate link: ${candidateName}` };
+  }
+
+  if (status === 'blocked' || status === 'unlinked' || locked) {
+    return { color: 'gray', label: 'Unlinked', className: 'blocked', title: 'Unlinked. Auto-linking is disabled, but manual relinking is available.' };
+  }
+
+  return { color: 'red', label: 'Not linked', className: 'unlinked', title: 'Not linked' };
+}
+
+function renderMemberLinkStatusButton(context) {
+  const mode = context?.mode || '';
+  const value = mode === 'discord-to-eso' ? context.discordUserId : context.esoAccountName;
+  const data = getMemberLinkButtonData(context);
+
+  return `
+    <button
+      class="member-link-status-dot member-link-status-${escapeAttribute(data.className)}"
+      type="button"
+      title="${escapeAttribute(data.title)}"
+      aria-label="${escapeAttribute(data.label)}"
+      data-open-member-link-dialog="${escapeAttribute(mode)}"
+      data-member-link-value="${escapeAttribute(value || '')}"
+    ></button>
+  `;
+}
+
+function getMemberLinkDialogSourceLabel() {
+  if (!memberLinkDialogContext) return '';
+
+  if (memberLinkDialogContext.mode === 'discord-to-eso') {
+    return getDiscordMemberDisplayNameById(memberLinkDialogContext.discordUserId);
+  }
+
+  return memberLinkDialogContext.esoAccountName || '';
+}
+
+function getCurrentMemberLinkForDialog() {
+  if (!memberLinkDialogContext) return null;
+  return memberLinkDialogContext.mode === 'discord-to-eso'
+    ? getMemberLinkByDiscordUserId(memberLinkDialogContext.discordUserId)
+    : getMemberLinkByEsoAccount(memberLinkDialogContext.esoAccountName);
+}
+
+function formatDiscordMatchFieldName(value) {
+  const field = String(value || '').trim().toLowerCase();
+  if (field === 'discord_username' || field === 'username') return 'Username';
+  if (field === 'discord_display_name' || field === 'global_name' || field === 'display_name') return 'Global Name';
+  if (field === 'discord_server_nickname' || field === 'server_nickname' || field === 'nickname') return 'Server Nickname';
+  return '';
+}
+
+function formatDiscordMatchFieldShort(value) {
+  return formatDiscordMatchFieldName(value);
+}
+
+function getMemberLinkMatchedField(link) {
+  const direct = formatDiscordMatchFieldName(link?.match_field || link?.matched_field || link?.discord_match_field);
+  if (direct) return direct;
+
+  const reason = String(link?.match_reason || '').toLowerCase();
+  if (reason.includes('discord_username') || reason.includes('username')) return 'Username';
+  if (reason.includes('discord_display_name') || reason.includes('global') || reason.includes('display')) return 'Global Name';
+  if (reason.includes('discord_server_nickname') || reason.includes('server') || reason.includes('nickname')) return 'Server Nickname';
+
+  const method = String(link?.link_method || '').trim().toLowerCase();
+  if (method === 'exact' || method === 'fuzzy') {
+    const esoName = link?.eso_account_name || '';
+    const candidates = [
+      { field: 'Username', value: link?.discord_username },
+      { field: 'Global Name', value: link?.discord_display_name },
+      { field: 'Server Nickname', value: link?.discord_server_nickname }
+    ];
+
+    let best = null;
+    for (const candidate of candidates) {
+      const score = getSimpleMemberNameMatchScore(esoName, candidate.value);
+      if (!best || score > best.score) {
+        best = { ...candidate, score };
+      }
+    }
+
+    if (best && best.score > 0) {
+      return best.field;
+    }
+  }
+
+  return '';
+}
+
+function normalizeSimpleMemberName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/^@+/, '')
+    .replace(/\([^)]*\)/g, '')
+    .replace(/\[[^\]]*\]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function getSimpleMemberNameMatchScore(left, right) {
+  const a = normalizeSimpleMemberName(left);
+  const b = normalizeSimpleMemberName(right);
+
+  if (!a || !b) return 0;
+  if (a === b) return 100;
+  if ((a.includes(b) || b.includes(a)) && Math.min(a.length, b.length) >= 4) return 88;
+
+  const lengthDelta = Math.abs(a.length - b.length);
+  const prefixLength = [...a].findIndex((char, index) => char !== b[index]);
+  const sharedPrefix = prefixLength === -1 ? Math.min(a.length, b.length) : prefixLength;
+  return Math.max(0, Math.min(75, Math.round((sharedPrefix * 10) - (lengthDelta * 3))));
+}
+
+function getMemberLinkDialogIsLinked() {
+  const link = getCurrentMemberLinkForDialog();
+  return String(link?.link_status || '').trim().toLowerCase() === 'linked';
+}
+
+
+function formatMemberLinkStatusForDisplay(value) {
+  const status = String(value || '').trim().toLowerCase();
+  if (status === 'blocked' || status === 'unlinked') return 'unlinked';
+  return status || 'unlinked';
+}
+
+function formatMemberLinkMethodForDisplay(value) {
+  const method = String(value || '').trim().toLowerCase();
+  if (method === 'manual_unlink') return 'auto-link disabled';
+  return method || 'none';
+}
+
+function renderMemberLinkDialogCurrentLink() {
+  const link = getCurrentMemberLinkForDialog();
+  if (!link) {
+    return '<div class="member-link-current-empty">No current link.</div>';
+  }
+
+  const discordName = link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || '';
+  const lockedText = Number(link.locked || 0) === 1 ? 'Manual / locked' : 'Auto-managed';
+  const matchedFieldShort = formatDiscordMatchFieldShort(link.match_field || link.matched_field || link.discord_match_field);
+  const method = String(link.link_method || '').trim().toLowerCase();
+  const matchSuffix = matchedFieldShort && method !== 'manual'
+    ? ` (${method === 'fuzzy' ? 'Fuzzy ' : ''}${matchedFieldShort})`
+    : '';
+
+  return `
+    <div class="member-link-current-card">
+      <div class="member-link-current-details">
+        <div><span>ESO:</span> ${escapeHtml(link.eso_account_name || '')}</div>
+        <div><span>Discord:</span> ${escapeHtml(discordName)}${escapeHtml(matchSuffix)}</div>
+        <div><span>Status:</span> ${escapeHtml(formatMemberLinkStatusForDisplay(link.link_status))} · ${escapeHtml(formatMemberLinkMethodForDisplay(link.link_method))} · ${escapeHtml(String(link.match_confidence ?? ''))}% · ${escapeHtml(lockedText)}</div>
+        ${getMemberLinkMatchedField(link) ? `<div><span>Matched:</span> Matched on ${escapeHtml(getMemberLinkMatchedField(link))}</div>` : ''}
+      </div>
+      <button
+        id="unlinkMemberLinkFromDialogButton"
+        class="member-link-trash-button"
+        type="button"
+        aria-label="Unlink and disable auto-link"
+        title="Unlink and disable auto-link"
+      >🗑</button>
+    </div>
+  `;
+}
+
+function renderMemberLinkDialogOptions() {
+  if (memberLinkDialogLoading) {
+    return '<div class="member-link-options-muted">Loading suggested matches...</div>';
+  }
+
+  if (memberLinkDialogError) {
+    return `<div class="discord-data-error">${escapeHtml(memberLinkDialogError)}</div>`;
+  }
+
+  const link = getCurrentMemberLinkForDialog();
+  const isLinked = getMemberLinkDialogIsLinked();
+  const canAcceptCandidate = link && String(link.link_status || '').trim().toLowerCase() === 'candidate' && Number(link.locked || 0) !== 1 && memberLinkDialogContext?.mode === 'eso-to-discord';
+
+  const candidateButton = canAcceptCandidate
+    ? `<button class="refresh-discord-button member-link-dialog-wide-button" type="button" data-accept-dialog-member-candidate="${escapeAttribute(link.eso_account_name || '')}">Accept Current Candidate as Auto-Link</button>`
+    : '';
+  const linkedNotice = isLinked
+    ? '<div class="member-link-options-muted">This member is already linked. Use the trash can to unlink and disable auto-linking before choosing a different match.</div>'
+    : '';
+
+  if (!Array.isArray(memberLinkDialogOptions) || memberLinkDialogOptions.length === 0) {
+    return `
+      ${candidateButton}
+      ${linkedNotice}
+      <div class="member-link-options-muted">No suggested matches found.</div>
+    `;
+  }
+
+  const sortedOptions = [...memberLinkDialogOptions].sort((left, right) => {
+    const confidenceDelta = Number(right.confidence || 0) - Number(left.confidence || 0);
+    if (confidenceDelta !== 0) return confidenceDelta;
+    return getMemberLinkOptionSortName(left).localeCompare(getMemberLinkOptionSortName(right), undefined, { sensitivity: 'base' });
+  });
+
+  return `
+    ${candidateButton}
+    ${linkedNotice}
+    <div class="member-link-option-list">
+      ${sortedOptions.map((option) => renderMemberLinkDialogOption(option, { disabled: isLinked })).join('')}
+    </div>
+  `;
+}
+
+function getMemberLinkOptionSortName(option) {
+  const mode = memberLinkDialogContext?.mode || '';
+  if (mode === 'discord-to-eso') return String(option.account_name || '');
+  return String(option.server_nickname || option.global_name || option.username || option.discord_id || '');
+}
+
+function renderMemberLinkDialogOption(option, options = {}) {
+  const mode = memberLinkDialogContext?.mode || '';
+  const label = mode === 'discord-to-eso'
+    ? option.account_name
+    : (option.server_nickname || option.global_name || option.username || option.discord_id || 'Discord member');
+  const matchField = formatDiscordMatchFieldName(option.matchField || option.match_field || option.discordMatchField || option.discord_match_field);
+  const baseSubLabel = mode === 'discord-to-eso'
+    ? `Rank: ${option.rank || ''}`
+    : [option.username, option.global_name, option.server_nickname].filter(Boolean).join(' · ');
+  const subLabel = [baseSubLabel, matchField ? `Matched on ${matchField}` : ''].filter(Boolean).join(' • ');
+  const value = mode === 'discord-to-eso' ? option.account_name : option.discord_id;
+  const disabled = options.disabled === true;
+
+  return `
+    <button class="member-link-option-row" type="button" data-member-link-option-value="${escapeAttribute(value || '')}" ${disabled ? 'disabled' : ''}>
+      <span class="member-link-option-name">${escapeHtml(label || '')}</span>
+      <span class="member-link-option-subtitle">${escapeHtml(subLabel || '')}</span>
+      <span class="member-link-option-confidence">${escapeHtml(String(option.confidence ?? 0))}%</span>
+    </button>
+  `;
+}
+
+function renderMemberLinkDialog() {
+  const mode = memberLinkDialogContext?.mode || '';
+  const sourceLabel = getMemberLinkDialogSourceLabel();
+  const targetLabel = mode === 'discord-to-eso' ? 'ESO Account' : 'Discord Member';
+
+  return `
+    <div class="roster-history-overlay member-link-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="memberLinkDialogTitle">
+      <div class="roster-history-dialog member-link-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="memberLinkDialogTitle">Member Link</h3>
+            <p>${escapeHtml(sourceLabel)} → choose ${escapeHtml(targetLabel)}.</p>
+          </div>
+          <button id="closeMemberLinkDialogButton" class="roster-history-close modal-close-button" type="button" aria-label="Close member link window" title="Close">×</button>
+        </div>
+
+        <div class="member-link-dialog-body">
+          <section class="member-link-dialog-section">
+            <h4>Current Link</h4>
+            ${renderMemberLinkDialogCurrentLink()}
+          </section>
+
+          <section class="member-link-dialog-section">
+            <h4>Suggested Matches</h4>
+            ${renderMemberLinkDialogOptions()}
+          </section>
+        </div>
+
+      </div>
+    </div>
+  `;
+}
+
+async function openMemberLinkDialog(mode, value) {
+  if (!socket?.connected || !isAuthenticatedSession()) {
+    addSystemMessage('member-link-not-connected', 'You must be logged in and connected to manage member links.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  memberLinkDialogOpen = true;
+  memberLinkDialogContext = mode === 'discord-to-eso'
+    ? { mode, discordUserId: value }
+    : { mode: 'eso-to-discord', esoAccountName: value };
+  memberLinkDialogOptions = [];
+  memberLinkDialogLoading = true;
+  memberLinkDialogError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    if (!Array.isArray(memberLinks) || memberLinks.length === 0) {
+      const linksResponse = await emitSocketWithAck('guildsync:request-member-links', {}, 30000);
+      if (linksResponse?.ok) memberLinks = Array.isArray(linksResponse.links) ? linksResponse.links : [];
+    }
+
+    const payload = mode === 'discord-to-eso'
+      ? { mode: 'discord-to-eso', discordUserId: value }
+      : { mode: 'eso-to-discord', accountName: value };
+    const response = await emitSocketWithAck('guildsync:request-member-link-options', payload, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load link suggestions.');
+    memberLinkDialogOptions = Array.isArray(response.options) ? response.options : [];
+  } catch (error) {
+    memberLinkDialogError = formatError(error);
+  } finally {
+    memberLinkDialogLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+function closeMemberLinkDialog() {
+  document.removeEventListener('keydown', handleMemberLinkDialogKeydown);
+  memberLinkDialogOpen = false;
+  memberLinkDialogContext = null;
+  memberLinkDialogOptions = [];
+  memberLinkDialogLoading = false;
+  memberLinkDialogError = '';
+  renderGuildSyncTabLayout();
+}
+
+function handleMemberLinkDialogKeydown(event) {
+  if (!memberLinkDialogOpen) return;
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeMemberLinkDialog();
+  }
+}
+
+async function selectMemberLinkDialogOption(value) {
+  if (!memberLinkDialogContext || !value) return;
+
+  try {
+    const payload = memberLinkDialogContext.mode === 'discord-to-eso'
+      ? { esoAccountName: value, discordUserId: memberLinkDialogContext.discordUserId }
+      : { esoAccountName: memberLinkDialogContext.esoAccountName, discordUserId: value };
+    const response = await emitSocketWithAck('guildsync:manual-link-member', payload, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to link members.');
+    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    addSystemMessage('member-link-saved', response.message || 'Member link saved.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    closeMemberLinkDialog();
+  } catch (error) {
+    memberLinkDialogError = formatError(error);
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function acceptMemberLinkCandidateFromDialog(esoAccountName) {
+  await acceptMemberLinkCandidate(esoAccountName);
+  closeMemberLinkDialog();
+}
+
+async function reloadMemberLinkDialogOptions() {
+  if (!memberLinkDialogContext) return;
+
+  memberLinkDialogLoading = true;
+  memberLinkDialogError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const payload = memberLinkDialogContext.mode === 'discord-to-eso'
+      ? { mode: 'discord-to-eso', discordUserId: memberLinkDialogContext.discordUserId }
+      : { mode: 'eso-to-discord', accountName: memberLinkDialogContext.esoAccountName };
+    const response = await emitSocketWithAck('guildsync:request-member-link-options', payload, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load link suggestions.');
+    memberLinkDialogOptions = Array.isArray(response.options) ? response.options : [];
+  } catch (error) {
+    memberLinkDialogError = formatError(error);
+  } finally {
+    memberLinkDialogLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function unlinkMemberLinkFromDialog() {
+  const link = getCurrentMemberLinkForDialog();
+  const context = memberLinkDialogContext;
+  if (!link && !context) return;
+
+  const confirmed = await openGuildSyncConfirmDialog({
+    title: 'Unlink Member?',
+    message: 'Remove this link and disable future automatic relinking for this member? You can still manually relink immediately afterward.',
+    confirmLabel: 'Unlink',
+    cancelLabel: 'Cancel',
+    confirmClass: 'danger',
+  });
+  if (!confirmed) return;
+
+  try {
+    const payload = context?.mode === 'discord-to-eso'
+      ? { discordUserId: context.discordUserId }
+      : { esoAccountName: context.esoAccountName || link?.eso_account_name };
+    const response = await emitSocketWithAck('guildsync:manual-unlink-member', payload, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
+    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+    addSystemMessage('member-link-unlinked', response.message || 'Member link removed. Auto-linking is disabled, but manual relinking is still available.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    await reloadMemberLinkDialogOptions();
+  } catch (error) {
+    memberLinkDialogError = formatError(error);
+    renderGuildSyncTabLayout();
+  }
+}
+
+function wireMemberLinkDialog() {
+  if (!memberLinkDialogOpen) return;
+
+  document.removeEventListener('keydown', handleMemberLinkDialogKeydown);
+  document.addEventListener('keydown', handleMemberLinkDialogKeydown);
+
+  document.querySelector('#closeMemberLinkDialogButton')?.addEventListener('click', closeMemberLinkDialog);
+  document.querySelector('#unlinkMemberLinkFromDialogButton')?.addEventListener('click', unlinkMemberLinkFromDialog);
+
+  document.querySelectorAll('[data-member-link-option-value]').forEach((button) => {
+    button.addEventListener('click', () => selectMemberLinkDialogOption(button.dataset.memberLinkOptionValue || ''));
+  });
+
+  document.querySelectorAll('[data-accept-dialog-member-candidate]').forEach((button) => {
+    button.addEventListener('click', () => acceptMemberLinkCandidateFromDialog(button.dataset.acceptDialogMemberCandidate || ''));
+  });
+
+  const overlay = document.querySelector('.member-link-dialog-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) closeMemberLinkDialog();
+    });
+  }
+}
+
 function wireAssociateTicketReportDialog() {
   if (!associateTicketReportDialogOpen) {
     return;
   }
 
-  document.querySelector('#closeAssociateTicketReportButton')?.addEventListener('click', () => {
-    associateTicketReportDialogOpen = false;
-    renderGuildSyncTabLayout();
-  });
+  document.querySelector('#closeAssociateTicketReportButton')?.addEventListener('click', closeAssociateTicketReportDialog);
+  document.querySelector('#rerunAssociateTicketReportButton')?.addEventListener('click', () => runAssociateTicketReport());
+  document.querySelector('#copyAssociateTicketReportGridButton')?.addEventListener('click', () => copyAssociateTicketReportGrid());
 
-  document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => runAssociateTicketReport());
-
-  const overlay = document.querySelector('.roster-history-overlay');
+  const overlay = document.querySelector('.report-results-overlay');
   if (overlay) {
     overlay.addEventListener('click', (event) => {
       if (event.target === overlay) {
-        associateTicketReportDialogOpen = false;
-        renderGuildSyncTabLayout();
+        closeAssociateTicketReportDialog();
       }
     });
   }
@@ -962,7 +2130,7 @@ function renderManualBiweeklyTicketDialog() {
             <h3 id="manualBiweeklyTicketTitle">Add Manual Bi-Weekly Tickets</h3>
             <p>Add free/manual raffle tickets such as FFTG. These do not count as purchased tickets.</p>
           </div>
-          <button id="closeManualBiweeklyTicketButton" class="roster-history-close" type="button" aria-label="Close">×</button>
+          <button id="closeManualBiweeklyTicketButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
         </div>
 
         ${manualBiweeklyTicketError ? `<div class="discord-data-error">${escapeHtml(manualBiweeklyTicketError)}</div>` : ''}
@@ -1174,7 +2342,9 @@ function wireEsoRosterPanel() {
   if (rosterSearchInput) {
     rosterSearchInput.addEventListener('input', (event) => {
       rosterSearchText = event.target.value || '';
-      renderGuildSyncTabLayout();
+      rosterSearchSelectionStart = event.target.selectionStart;
+      rosterSearchSelectionEnd = event.target.selectionEnd;
+      renderGuildSyncTabLayout({ restoreRosterSearchFocus: true });
     });
   }
 
@@ -1197,11 +2367,35 @@ function wireEsoRosterPanel() {
     });
   });
 
+  const rosterLinkStatusSelect = document.querySelector('#rosterLinkStatusFilter');
+  if (rosterLinkStatusSelect) {
+    rosterLinkStatusSelect.addEventListener('change', (event) => {
+      const status = String(event.target.value || '').trim();
+      if (status) {
+        rosterSelectedLinkStatuses.add(status);
+        renderGuildSyncTabLayout();
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-remove-roster-link-status-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const status = button.dataset.removeRosterLinkStatusFilter || '';
+      rosterSelectedLinkStatuses.delete(status);
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  document.querySelectorAll('[data-open-member-link-dialog]').forEach((button) => {
+    button.addEventListener('click', () => openMemberLinkDialog(button.dataset.openMemberLinkDialog || '', button.dataset.memberLinkValue || ''));
+  });
+
   const clearButton = document.querySelector('#clearRosterFiltersButton');
   if (clearButton) {
     clearButton.addEventListener('click', () => {
       rosterSearchText = '';
       rosterSelectedRankNames.clear();
+      rosterSelectedLinkStatuses.clear();
       renderGuildSyncTabLayout();
     });
   }
@@ -1699,7 +2893,7 @@ function renderBankingExportGrid(rows) {
             <h3 class="bank-export-title">Export ${escapeHtml(getBankingSectionLabel(bankingExportSection))} Deposits</h3>
             <p class="bank-export-subtitle">Copy this grid and paste it directly into Google Sheets.</p>
           </div>
-          <button id="closeBankingExportGridButton" class="bank-export-close-button" type="button" aria-label="Close export grid">×</button>
+          <button id="closeBankingExportGridButton" class="roster-history-close modal-close-button bank-export-close-button" type="button" aria-label="Close export grid">×</button>
         </div>
 
         <div class="bank-export-toolbar">
@@ -1713,6 +2907,8 @@ function renderBankingExportGrid(rows) {
               <tr>
                 <th>Guildie Name</th>
                 <th>Deposit Amount</th>
+                <th>Number of Tickets</th>
+                <th>Note</th>
               </tr>
             </thead>
             <tbody>
@@ -1732,6 +2928,8 @@ function renderBankingExportGridRow(entry) {
     <tr>
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td>${escapeHtml(String(Number(entry.amount) || 0))}</td>
+      <td>${escapeHtml(String(Number(entry.ticketAmount) || 0))}</td>
+      <td>${escapeHtml(entry.note || '')}</td>
     </tr>
   `;
 }
@@ -1739,7 +2937,7 @@ function renderBankingExportGridRow(entry) {
 function renderEmptyBankingExportGridRow() {
   return `
     <tr>
-      <td class="bank-empty-row" colspan="2">No deposits to export for ${escapeHtml(getBankingSectionLabel(bankingExportSection))}.</td>
+      <td class="bank-empty-row" colspan="4">No deposits to export for ${escapeHtml(getBankingSectionLabel(bankingExportSection))}.</td>
     </tr>
   `;
 }
@@ -1858,10 +3056,15 @@ function wireBankDepositsPanel() {
 }
 
 function getBankingExportTsv(rows) {
-  const lines = [['Guildie Name', 'Deposit Amount']];
+  const lines = [['Guildie Name', 'Deposit Amount', 'Tickets', 'Note']];
 
   for (const entry of rows) {
-    lines.push([entry.displayName || '', String(Number(entry.amount) || 0)]);
+    lines.push([
+      entry.displayName || '',
+      String(Number(entry.amount) || 0),
+      String(Number(entry.ticketAmount) || 0),
+      entry.note || ''
+    ]);
   }
 
   return lines.map((row) => row.map(formatTsvCell).join('\t')).join('\n');
@@ -1871,35 +3074,66 @@ function formatTsvCell(value) {
   return String(value ?? '').replace(/[\t\r\n]+/g, ' ').trim();
 }
 
+async function copyTextToClipboard(text) {
+  const value = String(text ?? '');
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (error) {
+      // Fall through to the textarea-based copy below.
+    }
+  }
+
+  const textArea = document.createElement('textarea');
+  textArea.value = value;
+  textArea.setAttribute('readonly', 'readonly');
+  textArea.style.position = 'fixed';
+  textArea.style.left = '0';
+  textArea.style.top = '0';
+  textArea.style.width = '1px';
+  textArea.style.height = '1px';
+  textArea.style.opacity = '0';
+  textArea.style.pointerEvents = 'none';
+  textArea.style.zIndex = '-1';
+
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  textArea.setSelectionRange(0, textArea.value.length);
+
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } finally {
+    document.body.removeChild(textArea);
+  }
+
+  return copied;
+}
+
 async function copyBankingExportGrid() {
   const rows = getBankingRowsForSection(bankingExportSection);
   const tsv = getBankingExportTsv(rows);
 
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(tsv);
-    } else {
-      const textArea = document.querySelector('#bankingExportTsv');
-      textArea.focus();
-      textArea.select();
-      document.execCommand('copy');
-    }
-
+  const copied = await copyTextToClipboard(tsv);
+  if (copied) {
     addSystemMessage('banking-export-copied', 'Bank deposit export grid copied to clipboard.', {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
     });
-  } catch (error) {
-    const textArea = document.querySelector('#bankingExportTsv');
-
-    if (textArea) {
-      textArea.focus();
-      textArea.select();
-    }
-
-    addSystemMessage('banking-export-copy-error', 'Could not copy automatically. The export text is selected so you can press Ctrl+C.', {
-      ttlMs: TRANSIENT_MESSAGE_TTL_MS
-    });
+    return;
   }
+
+  const textArea = document.querySelector('#bankingExportTsv');
+  if (textArea) {
+    textArea.focus();
+    textArea.select();
+  }
+
+  addSystemMessage('banking-export-copy-error', 'Could not copy automatically. The export text is selected so you can press Ctrl+C.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
 }
 
 function getBankingRowsForSection(section) {
@@ -2345,11 +3579,35 @@ function wireDiscordMemberDataPanel() {
     });
   });
 
+  const linkStatusSelect = document.querySelector('#discordLinkStatusFilter');
+  if (linkStatusSelect) {
+    linkStatusSelect.addEventListener('change', (event) => {
+      const status = String(event.target.value || '').trim();
+      if (status) {
+        discordSelectedLinkStatuses.add(status);
+        renderGuildSyncTabLayout();
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-remove-discord-link-status-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const status = button.dataset.removeDiscordLinkStatusFilter || '';
+      discordSelectedLinkStatuses.delete(status);
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  document.querySelectorAll('[data-open-member-link-dialog]').forEach((button) => {
+    button.addEventListener('click', () => openMemberLinkDialog(button.dataset.openMemberLinkDialog || '', button.dataset.memberLinkValue || ''));
+  });
+
   const clearButton = document.querySelector('#clearDiscordFiltersButton');
   if (clearButton) {
     clearButton.addEventListener('click', () => {
       discordSearchText = '';
       discordSelectedRoleNames.clear();
+      discordSelectedLinkStatuses.clear();
       renderGuildSyncTabLayout();
     });
   }
@@ -2572,7 +3830,13 @@ function getFilteredDiscordMembers() {
 
     if (selectedRoleNames.length > 0) {
       const memberRoleNames = new Set(member.roles.map((role) => role.role_name));
-      return selectedRoleNames.every((roleName) => memberRoleNames.has(roleName));
+      if (!selectedRoleNames.every((roleName) => memberRoleNames.has(roleName))) {
+        return false;
+      }
+    }
+
+    if (discordSelectedLinkStatuses.size > 0 && !discordSelectedLinkStatuses.has(getDiscordMemberLinkFilterStatus(member))) {
+      return false;
     }
 
     return true;
@@ -2682,6 +3946,27 @@ function restoreDiscordSearchFocus() {
   }
 }
 
+function restoreRosterSearchFocus() {
+  const searchInput = document.querySelector('#rosterMemberSearch');
+
+  if (!searchInput) {
+    return;
+  }
+
+  searchInput.focus({ preventScroll: true });
+
+  if (typeof searchInput.setSelectionRange === 'function') {
+    const start = Number.isInteger(rosterSearchSelectionStart)
+      ? rosterSearchSelectionStart
+      : searchInput.value.length;
+    const end = Number.isInteger(rosterSearchSelectionEnd)
+      ? rosterSearchSelectionEnd
+      : start;
+
+    searchInput.setSelectionRange(start, end);
+  }
+}
+
 function getAllDiscordRoleNames() {
   const roleNames = new Set();
 
@@ -2702,7 +3987,7 @@ function renderDiscordMemberRow(member) {
   const roles = member.roles || [];
 
   return `
-    <tr>
+    <tr data-discord-user-id="${escapeAttribute(member.discord_id || '')}">
       <td>
         <div class="discord-member-cell">
           <div class="discord-member-avatar">
@@ -2722,6 +4007,7 @@ function renderDiscordMemberRow(member) {
       : '<span class="discord-no-roles">No roles</span>'}
         </div>
       </td>
+      <td class="member-link-action-cell">${renderMemberLinkStatusButton({ mode: 'discord-to-eso', discordUserId: member.discord_id })}</td>
     </tr>
   `;
 }
@@ -2733,7 +4019,7 @@ function renderEmptyDiscordMemberRow() {
 
   return `
     <tr>
-      <td colspan="4" class="discord-empty-row">${escapeHtml(message)}</td>
+      <td colspan="5" class="discord-empty-row">${escapeHtml(message)}</td>
     </tr>
   `;
 }
@@ -3057,10 +4343,7 @@ function renderOpenProfileMenuContents() {
     .querySelector('#associateTicketReportButton')
     ?.addEventListener('click', () => {
       closeProfileMenu(false);
-      associateTicketReportDialogOpen = true;
-      associateTicketReportError = '';
-      renderGuildSyncTabLayout();
-      runAssociateTicketReport();
+      openAssociatePromotionReportDialog();
     });
 
   document
@@ -3207,7 +4490,7 @@ async function logoutGuildSync() {
 }
 
 function connectSocket() {
-  const socketURL = guildSyncSession.socket_url || 'http://127.0.0.1:3001';
+  const socketURL = guildSyncSession.socket_url || 'https://guildsync.perdues.me';
 
   disconnectSocket(false);
 
@@ -3272,6 +4555,15 @@ function connectSocket() {
 
   socket.on('guildsync:roster-data-updated', (payload) => {
     handleRosterDataUpdated(payload);
+  });
+
+  socket.on('guildsync:member-links-updated', (payload = {}) => {
+    if (Array.isArray(payload.links)) {
+      memberLinks = payload.links;
+      if (activeGuildSyncTab === 'discord-members' || activeGuildSyncTab === 'eso-members' || activeGuildSyncTab === 'settings' || memberLinkDialogOpen) {
+        renderGuildSyncTabLayout();
+      }
+    }
   });
 
   socket.on('guildsync:discord-refresh-status', (payload = {}) => {
