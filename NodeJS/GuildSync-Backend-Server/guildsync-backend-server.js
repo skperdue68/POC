@@ -296,6 +296,7 @@ app.post('/api/guildsync/upload-savedvars/:kind', requireGuildSyncWebUser, async
       const result = await processRosterData(applicationDB, { data });
 
       await broadcastRosterDataUpdate();
+      await broadcastMemberLinksUpdate();
 
       return res.json({
         ok: true,
@@ -485,6 +486,7 @@ io.on('connection', (socket) => {
       sendSocketResponse(socket, 'guildsync:discord-members-result', callback, response);
 
       await broadcastDiscordMemberDataUpdate();
+      await broadcastMemberLinksUpdate();
     } catch (error) {
       Log('Failed to process guildsync:sending-discord-members payload:', error);
 
@@ -528,6 +530,7 @@ io.on('connection', (socket) => {
       sendSocketResponse(socket, 'guildsync:discord-member-upsert-result', callback, response);
 
       await broadcastDiscordMemberDataUpdate();
+      await broadcastMemberLinksUpdate();
     } catch (error) {
       Log('Failed to process guildsync:discord-member-upsert payload:', error);
 
@@ -929,6 +932,7 @@ io.on('connection', (socket) => {
 
       sendSocketResponse(socket, 'guildsync:roster-data-result', callback, response);
       await broadcastRosterDataUpdate();
+      await broadcastMemberLinksUpdate();
     } catch (error) {
       Log(`Roster data processing failed: ${error.message}`);
 

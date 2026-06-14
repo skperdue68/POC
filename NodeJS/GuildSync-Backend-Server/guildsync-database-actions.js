@@ -568,6 +568,7 @@ export async function upsertDiscordMember(applicationDB, member) {
   }
 
   await setDiscordRefreshNow(applicationDB);
+  await runMemberAutoLinking(applicationDB);
 
   return {
     members_processed: 1,

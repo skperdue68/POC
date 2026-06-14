@@ -1110,6 +1110,26 @@ function getRosterMemberLinkFilterStatus(member) {
   return getMemberLinkRelationshipFilterStatus(getMemberLinksByEsoAccount(member?.account_name));
 }
 
+function getRosterMemberLinkTooltip(esoAccountName) {
+  const links = getMemberLinksByEsoAccount(esoAccountName);
+  const data = getMemberLinkButtonData({ mode: 'eso-to-discord', esoAccountName });
+  const linkedNames = links
+    .filter((link) => String(link.link_status || '').trim().toLowerCase() === 'linked')
+    .map((link) => link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || '')
+    .filter(Boolean);
+  const candidateNames = links
+    .filter((link) => String(link.link_status || '').trim().toLowerCase() === 'candidate')
+    .map((link) => link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || '')
+    .filter(Boolean);
+
+  return [
+    data.label,
+    data.title,
+    linkedNames.join(' '),
+    candidateNames.join(' ')
+  ].filter(Boolean).join(' ');
+}
+
 function memberLinkFilterSetMatches(filterSet, currentStatus) {
   if (!filterSet || filterSet.size === 0) return true;
   if (filterSet.has(currentStatus)) return true;
