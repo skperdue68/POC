@@ -1197,12 +1197,13 @@ io.on('connection', (socket) => {
     }
 
     try {
-      await manualUnlinkMember(applicationDB, payload || {});
+      const unlinkResult = await manualUnlinkMember(applicationDB, payload || {});
       const links = await getMemberLinks(applicationDB);
       await broadcastMemberLinksUpdate(links);
       sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
         ok: true,
-        message: 'Member link removed. Auto-linking is disabled, but manual relinking is still available.',
+        message: unlinkResult?.message || 'Member link removed.',
+        ...unlinkResult,
         links,
         at: new Date().toLocaleString()
       });

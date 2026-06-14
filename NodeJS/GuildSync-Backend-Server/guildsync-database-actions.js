@@ -2170,11 +2170,11 @@ export async function acceptMemberLinkCandidate(applicationDB, payload = {}) {
     discordDisplayName: candidate.discord_display_name,
     discordServerNickname: candidate.discord_server_nickname,
     linkStatus: 'linked',
-    linkMethod: 'fuzzy',
+    linkMethod: 'manual',
     matchConfidence: candidate.match_confidence,
-    matchReason: 'Accepted fuzzy candidate',
+    matchReason: 'Accepted fuzzy candidate manually',
     matchField: candidate.match_field,
-    auto_link_blocked: 0
+    auto_link_blocked: 1
   });
 }
 
@@ -2233,38 +2233,89 @@ export async function manualUnlinkMember(applicationDB, payload = {}) {
   const esoAccountName = String(payload.esoAccountName || payload.eso_account_name || '').trim().replace(/^@+/, '');
   const discordUserId = String(payload.discordUserId || payload.discord_user_id || '').trim();
 
-  if (esoAccountName) {
-    await applicationDB.execute(`
-      UPDATE guildsync_member_links
-      SET discord_user_id = NULL,
-          discord_username = NULL,
-          discord_display_name = NULL,
-          discord_server_nickname = NULL,
-          link_status = 'unlinked',
-          link_method = 'manual_unlink',
-          match_confidence = 0,
-          match_reason = 'Auto-link disabled by user after unlink',
-          match_field = NULL,
-          auto_link_blocked = 1
-      WHERE LOWER(eso_account_name) = LOWER(?)
-    `, [esoAccountName]);
-    return;
+  if (!esoAccountName && !discordUserId) {
+    throw new Error('ESO account name or Discord user id is required.');
   }
 
-  if (discordUserId) {
-    await applicationDB.execute(`
-      UPDATE guildsync_member_links
-      SET discord_user_id = NULL,
-          discord_username = NULL,
-          discord_display_name = NULL,
-          discord_server_nickname = NULL,
-          link_status = 'unlinked',
-          link_method = 'manual_unlink',
-          match_confidence = 0,
-          match_reason = 'Auto-link disabled by user after unlink',
-          match_field = NULL,
-          auto_link_blocked = 1
-      WHERE discord_user_id = ?
-    `, [discordUserId]);
+  const [rows] = esoAccountName
+    ? await applicationDB.execute(
+      `
+        SELECT *
+        FROM guildsync_member_links
+        WHERE LOWER(eso_account_name) = LOWER(?)
+      `,
+      [esoAccountName]
+    )
+    : await applicationDB.execute(
+      `
+        SELECT *
+        FROM guildsync_member_links
+        WHERE discord_user_id = ?
+      `,
+      [discordUserId]
+    );
+
+  let exactAutoLinksBlocked = 0;
+  let linksRemovedAndRechecked = 0;
+
+  for (const link of rows) {
+    const accountName = String(link.eso_account_name || '').trim();
+    if (!accountName) {
+      continue;
+    }
+
+    const status = String(link.link_status || '').trim().toLowerCase();
+    const method = String(link.link_method || '').trim().toLowerCase();
+
+    // Only an active exact auto-link should create an auto-link block when unlinked.
+    // Manual links and fuzzy/candidate links are treated as user choices/suggestions.
+    // Removing them should clear the link row and let normal auto/fuzzy matching run again.
+    const shouldBlockAutoRelink = status === 'linked' && method === 'exact';
+
+    if (shouldBlockAutoRelink) {
+      await applicationDB.execute(
+        `
+          UPDATE guildsync_member_links
+          SET discord_user_id = NULL,
+              discord_username = NULL,
+              discord_display_name = NULL,
+              discord_server_nickname = NULL,
+              link_status = 'unlinked',
+              link_method = 'manual_unlink',
+              match_confidence = 0,
+              match_reason = 'Exact auto-link blocked by user after unlink',
+              match_field = NULL,
+              auto_link_blocked = 1
+          WHERE LOWER(eso_account_name) = LOWER(?)
+        `,
+        [accountName]
+      );
+      exactAutoLinksBlocked += 1;
+    } else {
+      await applicationDB.execute(
+        `
+          DELETE FROM guildsync_member_links
+          WHERE LOWER(eso_account_name) = LOWER(?)
+        `,
+        [accountName]
+      );
+      linksRemovedAndRechecked += 1;
+    }
   }
+
+  // Re-run matching after removing a manual/fuzzy/candidate link so the account can return
+  // to its natural state: exact auto-link if one exists, otherwise fuzzy/candidate suggestions.
+  if (linksRemovedAndRechecked > 0) {
+    await runMemberAutoLinking(applicationDB);
+  }
+
+  return {
+    exact_auto_links_blocked: exactAutoLinksBlocked,
+    links_removed_and_rechecked: linksRemovedAndRechecked,
+    non_blocking_links_removed: linksRemovedAndRechecked,
+    auto_linking_rechecked: linksRemovedAndRechecked > 0,
+    message: exactAutoLinksBlocked > 0
+      ? 'Exact auto-link removed and blocked. Manual relinking is still available.'
+      : 'Member link removed. Normal auto/fuzzy matching was rechecked.'
+  };
 }

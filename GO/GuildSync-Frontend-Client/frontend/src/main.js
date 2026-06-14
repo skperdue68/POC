@@ -81,8 +81,6 @@ let rosterMembers = [];
 let rosterLastRefreshValue = null;
 let rosterDataLoading = false;
 let rosterAutoRefreshAttempted = false;
-let bankingAutoRefreshAttempted = false;
-let memberLinksAutoRefreshAttempted = false;
 let rosterSearchText = '';
 let rosterSearchSelectionStart = null;
 let rosterSearchSelectionEnd = null;
@@ -116,6 +114,7 @@ let guildSyncConfirmResolve = null;
 
 const MEMBER_LINK_STATUS_FILTERS = [
   { id: 'linked', label: 'Linked' },
+  { id: 'manual', label: 'Manual' },
   { id: 'fuzzy', label: 'Fuzzy / Candidate' },
   { id: 'unlinked', label: 'Unlinked' },
 ];
@@ -597,14 +596,7 @@ function renderGuildSyncTabLayout(options = {}) {
     refreshRosterDataFromBackend({ silent: true });
   }
 
-  if (
-    activeGuildSyncTab === 'more' &&
-    socket?.connected &&
-    bankingEntries.length === 0 &&
-    !bankingDataLoading &&
-    !bankingAutoRefreshAttempted
-  ) {
-    bankingAutoRefreshAttempted = true;
+  if (activeGuildSyncTab === 'more' && socket?.connected && bankingEntries.length === 0 && !bankingDataLoading) {
     refreshBankingDataFromBackend({ silent: true });
   }
 
@@ -613,10 +605,8 @@ function renderGuildSyncTabLayout(options = {}) {
     socket?.connected &&
     isAuthenticatedSession() &&
     memberLinks.length === 0 &&
-    !memberLinksLoading &&
-    !memberLinksAutoRefreshAttempted
+    !memberLinksLoading
   ) {
-    memberLinksAutoRefreshAttempted = true;
     refreshMemberLinks({ silent: true });
   }
 }
@@ -674,9 +664,9 @@ function renderDiscordMemberDataPanel() {
 
         <div class="discord-filter-row discord-link-filter-row">
           <div class="discord-role-filter-wrap member-link-filter-wrap">
-            <label class="discord-filter-label inline-filter-label" for="discordLinkStatusFilter">Link Status</label>
+            <label class="discord-filter-label inline-filter-label" for="discordLinkStatusFilter">ESO Account Linked</label>
             <select id="discordLinkStatusFilter" class="discord-role-select">
-              <option value="">Add link status...</option>
+              <option value="">Add ESO account linked filter...</option>
               ${MEMBER_LINK_STATUS_FILTERS
       .filter((item) => !discordSelectedLinkStatuses.has(item.id))
       .map((item) => `<option value="${escapeAttribute(item.id)}">${escapeHtml(item.label)}</option>`)
@@ -684,7 +674,7 @@ function renderDiscordMemberDataPanel() {
             </select>
             <div class="discord-selected-roles">
               ${selectedLinkStatuses.length === 0
-      ? '<span class="discord-no-role-filter">All link statuses</span>'
+      ? '<span class="discord-no-role-filter">All ESO account link statuses</span>'
       : selectedLinkStatuses
         .map((status) => renderMemberLinkStatusFilterChip('discord', status))
         .join('')}
@@ -701,7 +691,7 @@ function renderDiscordMemberDataPanel() {
                 ${renderDiscordSortableHeader('global_name', 'Global Name')}
                 ${renderDiscordSortableHeader('server_nickname', 'Server Nickname')}
                 ${renderDiscordSortableHeader('roles', 'Roles')}
-                <th class="member-link-action-header">Linked</th>
+                <th class="member-link-action-header">ESO Account Linked</th>
               </tr>
             </thead>
             <tbody>
@@ -772,9 +762,9 @@ function renderEsoRosterPanel() {
 
         <div class="discord-filter-row discord-link-filter-row">
           <div class="discord-role-filter-wrap member-link-filter-wrap">
-            <label class="discord-filter-label inline-filter-label" for="rosterLinkStatusFilter">Link Status</label>
+            <label class="discord-filter-label inline-filter-label" for="rosterLinkStatusFilter">Discord Account Linked</label>
             <select id="rosterLinkStatusFilter" class="discord-role-select">
-              <option value="">Add link status...</option>
+              <option value="">Add Discord account linked filter...</option>
               ${MEMBER_LINK_STATUS_FILTERS
       .filter((item) => !rosterSelectedLinkStatuses.has(item.id))
       .map((item) => `<option value="${escapeAttribute(item.id)}">${escapeHtml(item.label)}</option>`)
@@ -782,7 +772,7 @@ function renderEsoRosterPanel() {
             </select>
             <div class="discord-selected-roles">
               ${selectedLinkStatuses.length === 0
-      ? '<span class="discord-no-role-filter">All link statuses</span>'
+      ? '<span class="discord-no-role-filter">All Discord account link statuses</span>'
       : selectedLinkStatuses
         .map((status) => renderMemberLinkStatusFilterChip('roster', status))
         .join('')}
@@ -797,7 +787,7 @@ function renderEsoRosterPanel() {
                 <th>Account Name</th>
                 <th>Rank</th>
                 <th>Joined</th>
-                <th class="member-link-action-header">Linked</th>
+                <th class="member-link-action-header">Discord Account Linked</th>
               </tr>
             </thead>
             <tbody>
@@ -948,13 +938,21 @@ function getMemberLinkRelationshipFilterStatus(link) {
 
   const status = String(link.link_status || '').trim().toLowerCase();
   const method = String(link.link_method || '').trim().toLowerCase();
+  const locked = Number(link.locked || link.auto_link_blocked || 0) === 1;
 
-  if (status === 'candidate' || method === 'fuzzy') {
-    return 'fuzzy';
+  // Filter by the current relationship state first.
+  // A linked fuzzy match is still linked; it should not appear under Fuzzy / Candidate.
+  if (status === 'linked') {
+    if (method === 'manual' || method === 'manual_link' || locked) {
+      return 'manual';
+    }
+
+    return 'linked';
   }
 
-  if (status === 'linked') {
-    return 'linked';
+  // Fuzzy means an unaccepted candidate/suggestion, not a currently linked relationship.
+  if (status === 'candidate' || method === 'fuzzy') {
+    return 'fuzzy';
   }
 
   return 'unlinked';
@@ -1399,7 +1397,7 @@ function renderMemberLinksRows() {
                 <td class="member-links-action-col">
                   <div class="member-link-actions">
                     ${status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
-                    ${(status === 'linked' || status === 'candidate') ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" aria-label="Unlink and disable auto-link" title="Unlink and disable auto-link">🗑</button>` : ''}
+                    ${status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" aria-label="Unlink member link" title="Unlink member link">🗑</button>` : ''}
                   </div>
                 </td>
                 <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
@@ -1474,7 +1472,7 @@ async function acceptMemberLinkCandidate(esoAccountName) {
 async function unlinkMemberLink(esoAccountName) {
   const confirmed = await openGuildSyncConfirmDialog({
     title: 'Unlink Member?',
-    message: `Remove the link for ${esoAccountName} and block future auto-linking? You can still manually relink later.`,
+    message: `Remove the link for ${esoAccountName}? Exact auto-links will be blocked from relinking automatically; fuzzy/manual links will return to normal suggested matching.`,
     confirmLabel: 'Unlink',
     cancelLabel: 'Cancel',
     confirmClass: 'danger',
@@ -1485,7 +1483,7 @@ async function unlinkMemberLink(esoAccountName) {
     const response = await emitSocketWithAck('guildsync:manual-unlink-member', { esoAccountName }, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
     memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
-    addSystemMessage('member-link-unlinked', response.message || 'Member link removed. Auto-linking is disabled.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    addSystemMessage('member-link-unlinked', response.message || 'Member link removed.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
     memberLinksError = formatError(error);
   }
@@ -1496,7 +1494,7 @@ async function unlinkMemberLink(esoAccountName) {
 async function unlinkDiscordMemberLink(discordUserId) {
   const confirmed = await openGuildSyncConfirmDialog({
     title: 'Unlink Discord Member?',
-    message: 'Remove this Discord member link and disable future automatic relinking? You can still manually relink later.',
+    message: 'Remove this Discord member link? Exact auto-links will be blocked from relinking automatically; fuzzy/manual links will return to normal suggested matching.',
     confirmLabel: 'Unlink',
     cancelLabel: 'Cancel',
     confirmClass: 'danger',
@@ -1507,7 +1505,7 @@ async function unlinkDiscordMemberLink(discordUserId) {
     const response = await emitSocketWithAck('guildsync:manual-unlink-member', { discordUserId }, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
     memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
-    addSystemMessage('member-link-unlinked', response.message || 'Member link removed. Auto-linking is disabled.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    addSystemMessage('member-link-unlinked', response.message || 'Member link removed.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
     memberLinksError = formatError(error);
   }
@@ -1727,10 +1725,22 @@ function getMemberLinkDialogIsLinked() {
   return String(link?.link_status || '').trim().toLowerCase() === 'linked';
 }
 
+function getMemberLinkDialogIsSuggested() {
+  const link = getCurrentMemberLinkForDialog();
+  return String(link?.link_status || '').trim().toLowerCase() === 'candidate';
+}
+
+function shouldBlockMemberLinkOnUnlink(link) {
+  const status = String(link?.link_status || '').trim().toLowerCase();
+  const method = String(link?.link_method || '').trim().toLowerCase();
+  return status === 'linked' && method === 'exact';
+}
+
 
 function formatMemberLinkStatusForDisplay(value) {
   const status = String(value || '').trim().toLowerCase();
   if (status === 'blocked' || status === 'unlinked') return 'unlinked';
+  if (status === 'candidate') return 'suggested';
   return status || 'unlinked';
 }
 
@@ -1743,32 +1753,45 @@ function formatMemberLinkMethodForDisplay(value) {
 function renderMemberLinkDialogCurrentLink() {
   const link = getCurrentMemberLinkForDialog();
   if (!link) {
-    return '<div class="member-link-current-empty">No current link.</div>';
+    return '<div class="member-link-current-empty">No suggested link.</div>';
   }
 
   const discordName = link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || '';
+  const status = String(link.link_status || '').trim().toLowerCase();
+  const isLinked = status === 'linked';
+  const isSuggested = status === 'candidate';
   const lockedText = Number(link.locked || 0) === 1 ? 'Manual / locked' : 'Auto-managed';
-  const matchedFieldShort = formatDiscordMatchFieldShort(link.match_field || link.matched_field || link.discord_match_field);
-  const method = String(link.link_method || '').trim().toLowerCase();
-  const matchSuffix = matchedFieldShort && method !== 'manual'
-    ? ` (${method === 'fuzzy' ? 'Fuzzy ' : ''}${matchedFieldShort})`
-    : '';
+  const actionButton = isLinked
+    ? `
+      <button
+        id="unlinkMemberLinkFromDialogButton"
+        class="member-link-trash-button"
+        type="button"
+        aria-label="Unlink member link"
+        title="Unlink member link"
+      >🗑</button>
+    `
+    : isSuggested
+      ? `
+        <button
+          class="member-link-report-action member-link-report-accept"
+          type="button"
+          data-accept-dialog-member-candidate="${escapeAttribute(link.eso_account_name || '')}"
+          aria-label="Accept suggested link"
+          title="Accept suggested link"
+        >✓</button>
+      `
+      : '';
 
   return `
     <div class="member-link-current-card">
       <div class="member-link-current-details">
         <div><span>ESO:</span> ${escapeHtml(link.eso_account_name || '')}</div>
-        <div><span>Discord:</span> ${escapeHtml(discordName)}${escapeHtml(matchSuffix)}</div>
+        <div><span>Discord:</span> ${escapeHtml(discordName)}</div>
         <div><span>Status:</span> ${escapeHtml(formatMemberLinkStatusForDisplay(link.link_status))} · ${escapeHtml(formatMemberLinkMethodForDisplay(link.link_method))} · ${escapeHtml(String(link.match_confidence ?? ''))}% · ${escapeHtml(lockedText)}</div>
         ${getMemberLinkMatchedField(link) ? `<div><span>Matched:</span> Matched on ${escapeHtml(getMemberLinkMatchedField(link))}</div>` : ''}
       </div>
-      <button
-        id="unlinkMemberLinkFromDialogButton"
-        class="member-link-trash-button"
-        type="button"
-        aria-label="Unlink and disable auto-link"
-        title="Unlink and disable auto-link"
-      >🗑</button>
+      ${actionButton}
     </div>
   `;
 }
@@ -1784,13 +1807,9 @@ function renderMemberLinkDialogOptions() {
 
   const link = getCurrentMemberLinkForDialog();
   const isLinked = getMemberLinkDialogIsLinked();
-  const canAcceptCandidate = link && String(link.link_status || '').trim().toLowerCase() === 'candidate' && Number(link.locked || 0) !== 1 && memberLinkDialogContext?.mode === 'eso-to-discord';
-
-  const candidateButton = canAcceptCandidate
-    ? `<button class="refresh-discord-button member-link-dialog-wide-button" type="button" data-accept-dialog-member-candidate="${escapeAttribute(link.eso_account_name || '')}">Accept Current Candidate as Auto-Link</button>`
-    : '';
+  const candidateButton = '';
   const linkedNotice = isLinked
-    ? '<div class="member-link-options-muted">This member is already linked. Use the trash can to unlink and disable auto-linking before choosing a different match.</div>'
+    ? '<div class="member-link-options-muted">This member is already linked. Use the trash can to unlink before choosing a different match.</div>'
     : '';
 
   if (!Array.isArray(memberLinkDialogOptions) || memberLinkDialogOptions.length === 0) {
@@ -1862,7 +1881,7 @@ function renderMemberLinkDialog() {
 
         <div class="member-link-dialog-body">
           <section class="member-link-dialog-section">
-            <h4>Current Link</h4>
+            <h4>${getMemberLinkDialogIsLinked() ? 'Current Link' : 'Suggested Link'}</h4>
             ${renderMemberLinkDialogCurrentLink()}
           </section>
 
@@ -1983,7 +2002,9 @@ async function unlinkMemberLinkFromDialog() {
 
   const confirmed = await openGuildSyncConfirmDialog({
     title: 'Unlink Member?',
-    message: 'Remove this link and disable future automatic relinking for this member? You can still manually relink immediately afterward.',
+    message: shouldBlockMemberLinkOnUnlink(link)
+      ? 'Remove this exact auto-link and block it from being automatically linked again? You can still manually relink later.'
+      : 'Remove this link? Fuzzy and manual links will return to normal suggested matching and will not be blocked.',
     confirmLabel: 'Unlink',
     cancelLabel: 'Cancel',
     confirmClass: 'danger',
@@ -1997,7 +2018,7 @@ async function unlinkMemberLinkFromDialog() {
     const response = await emitSocketWithAck('guildsync:manual-unlink-member', payload, 30000);
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to unlink member.');
     memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
-    addSystemMessage('member-link-unlinked', response.message || 'Member link removed. Auto-linking is disabled, but manual relinking is still available.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    addSystemMessage('member-link-unlinked', response.message || 'Member link removed.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
     await reloadMemberLinkDialogOptions();
   } catch (error) {
     memberLinkDialogError = formatError(error);

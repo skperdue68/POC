@@ -1047,6 +1047,29 @@ body {
   width: 32%;
 }
 
+/* Discord member data has a fifth link-status column.
+   Keep the table inside the available panel width by making Roles narrower
+   and giving the link-status column an explicit compact width. */
+.discord-member-table:not(.eso-roster-table) th:nth-child(1) {
+  width: 21%;
+}
+
+.discord-member-table:not(.eso-roster-table) th:nth-child(2) {
+  width: 20%;
+}
+
+.discord-member-table:not(.eso-roster-table) th:nth-child(3) {
+  width: 20%;
+}
+
+.discord-member-table:not(.eso-roster-table) th:nth-child(4) {
+  width: 27%;
+}
+
+.discord-member-table:not(.eso-roster-table) th:nth-child(5) {
+  width: 12%;
+}
+
 .discord-member-table tbody tr:hover {
   background: rgba(37, 99, 235, 0.08);
 }
@@ -2441,6 +2464,29 @@ body {
   width: 72px;
   text-align: center;
   white-space: nowrap;
+}
+
+.discord-member-table:not(.eso-roster-table) .member-link-action-header,
+.discord-member-table:not(.eso-roster-table) .member-link-action-cell {
+  width: 12%;
+  min-width: 112px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.discord-member-table:not(.eso-roster-table) .member-link-action-header {
+  white-space: normal;
+  line-height: 1.15;
+}
+
+.discord-member-table:not(.eso-roster-table) th,
+.discord-member-table:not(.eso-roster-table) td {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.discord-member-table:not(.eso-roster-table) .discord-member-roles {
+  max-width: 100%;
 }
 
 .member-link-status-dot {
