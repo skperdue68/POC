@@ -4,7 +4,10 @@ import { fileURLToPath } from 'url';
 import { io } from 'socket.io-client';
 import { Log } from './helper.js';
 import {
+  getDiscordHistoricalScanStatus,
+  markDiscordHistoricalScanComplete,
   sendDiscordMemberDelete,
+  sendDiscordMemberLastSeen,
   sendDiscordMemberUpsert,
   sendDiscordRoleDelete,
   sendDiscordRoleUpsert,
@@ -15,8 +18,10 @@ import {
   Client,
   Collection,
   Events,
+  ChannelType,
   GatewayIntentBits,
-  MessageFlags
+  MessageFlags,
+  Partials
 } from 'discord.js';
 
 import * as roles from './commands/roles.js';
@@ -32,7 +37,9 @@ const {
   DISCORD_TOKEN,
   DISCORD_GUILD_ID,
   GUILDSYNC_SOCKET_URL,
-  GUILDSYNC_BOT_KEY
+  GUILDSYNC_BOT_KEY,
+  GUILDSYNC_HISTORICAL_SCAN_ON_STARTUP,
+  GUILDSYNC_HISTORICAL_SCAN_MESSAGE_LIMIT_PER_CHANNEL
 } = process.env;
 
 if (!DISCORD_TOKEN) {
@@ -66,7 +73,15 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.DirectMessages
+  ],
+  partials: [
+    Partials.Message,
+    Partials.Channel,
+    Partials.Reaction
   ]
 });
 
@@ -83,6 +98,7 @@ for (const command of commands) {
 let startupSyncDone = false;
 let startupSyncRunning = false;
 let requestedSyncRunning = false;
+let historicalScanRunning = false;
 
 guildSyncSocket.on('connect', async () => {
   Log(`Connected to GuildSync websocket as ${guildSyncSocket.id}`);
@@ -172,6 +188,8 @@ client.on(Events.InteractionCreate, async interaction => {
     return;
   }
 
+  await recordGuildMemberActivity(interaction.member, `slash_command:${interaction.commandName}`);
+
   const command = interaction.client.commands.get(interaction.commandName);
 
   if (!command) {
@@ -198,6 +216,63 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.reply(message);
     }
   }
+});
+
+
+client.on(Events.MessageCreate, async message => {
+  if (!message.guild || message.author?.bot) {
+    return;
+  }
+
+  await recordGuildMemberActivity(message.member, 'message_create');
+});
+
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+  if (user?.bot) {
+    return;
+  }
+
+  try {
+    if (reaction.partial) {
+      reaction = await reaction.fetch();
+    }
+
+    const guild = reaction.message?.guild;
+
+    if (!guild) {
+      return;
+    }
+
+    const member = await guild.members.fetch(user.id).catch(() => null);
+
+    await recordGuildMemberActivity(member, 'reaction_add');
+  } catch (error) {
+    Log(`Discord reaction activity tracking failed: ${error.message}`);
+  }
+});
+
+client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  const member = newState.member || oldState.member;
+
+  if (!member || member.user?.bot) {
+    return;
+  }
+
+  let action = 'voice_state_update';
+
+  if (!oldState.channelId && newState.channelId) {
+    action = 'voice_join';
+  } else if (oldState.channelId && !newState.channelId) {
+    action = 'voice_leave';
+  } else if (oldState.channelId !== newState.channelId) {
+    action = 'voice_move';
+  } else if (oldState.selfMute !== newState.selfMute || oldState.serverMute !== newState.serverMute) {
+    action = 'voice_mute_change';
+  } else if (oldState.selfDeaf !== newState.selfDeaf || oldState.serverDeaf !== newState.serverDeaf) {
+    action = 'voice_deaf_change';
+  }
+
+  await recordGuildMemberActivity(member, action);
 });
 
 
@@ -289,6 +364,207 @@ async function handleDiscordLiveUpdate(description, action) {
 }
 
 
+function getUnixTimestampSeconds(dateValue = Date.now()) {
+  return Math.floor(new Date(dateValue).getTime() / 1000).toString();
+}
+
+async function recordGuildMemberActivity(member, action) {
+  if (!member || member.user?.bot) {
+    return;
+  }
+
+  if (!guildSyncSocket.connected) {
+    Log(`Discord activity skipped for ${member.user?.tag || member.user?.id || 'unknown'}: GuildSync websocket is not connected.`);
+    return;
+  }
+
+  try {
+    const result = await sendDiscordMemberLastSeen(guildSyncSocket, {
+      discord_id: member.user.id,
+      username: member.user.username,
+      timestamp: getUnixTimestampSeconds(),
+      action
+    });
+
+    if (result?.ok === false) {
+      throw new Error(result.message || 'GuildSync rejected Discord last-seen activity.');
+    }
+  } catch (error) {
+    Log(`Discord activity update failed for ${member.user?.tag || member.user?.id || 'unknown'}: ${error.message}`);
+  }
+}
+
+async function runHistoricalScanOnceIfEnabled(guild) {
+  const enabled = String(GUILDSYNC_HISTORICAL_SCAN_ON_STARTUP || '').toLowerCase() === 'true';
+
+  if (!enabled || historicalScanRunning) {
+    return;
+  }
+
+  historicalScanRunning = true;
+
+  try {
+    Log('Discord historical scan startup option is enabled. Checking backend completion status...');
+
+    const status = await getDiscordHistoricalScanStatus(guildSyncSocket);
+
+    Log(
+      `Discord historical scan status received from backend: completed=${status?.completed ? 'yes' : 'no'}, completed_at=${status?.completed_at || 'not set'}.`
+    );
+
+    if (!status?.ok) {
+      throw new Error(status?.message || 'GuildSync could not provide historical scan status.');
+    }
+
+    if (status.completed) {
+      Log(`Discord historical scan skipped: already completed at ${status.completed_at || 'unknown time'}.`);
+      return;
+    }
+
+    Log(`Discord historical scan is starting for ${guild.name} (${guild.id}).`);
+
+    const result = await scanHistoricalGuildMessages(guild);
+
+    Log(
+      `Discord historical scan finished locally. Telling backend to mark complete. Messages checked: ${result.message_count}. Members updated: ${result.member_count}.`
+    );
+
+    const completeResult = await markDiscordHistoricalScanComplete(guildSyncSocket, result);
+
+    if (!completeResult?.ok) {
+      throw new Error(completeResult?.message || 'GuildSync rejected historical scan completion.');
+    }
+
+    Log(
+      `Discord historical scan completed. Messages checked: ${result.message_count}. Members updated: ${result.member_count}.`
+    );
+  } catch (error) {
+    Log(`Discord historical scan failed: ${error.message}`);
+  } finally {
+    historicalScanRunning = false;
+  }
+}
+
+async function scanHistoricalGuildMessages(guild) {
+  const limitPerChannel = Math.max(
+    1,
+    Number(GUILDSYNC_HISTORICAL_SCAN_MESSAGE_LIMIT_PER_CHANNEL || 1000)
+  );
+
+  const channels = await guild.channels.fetch();
+  const latestByUserID = new Map();
+  let messageCount = 0;
+  let scannedChannelCount = 0;
+  let skippedChannelCount = 0;
+
+  Log(
+    `Historical scan found ${channels.size} channel(s). Message scan limit is ${limitPerChannel} message(s) per text/announcement channel.`
+  );
+
+  for (const channel of channels.values()) {
+    if (!channel || !channel.isTextBased?.() || !channel.messages?.fetch) {
+      skippedChannelCount += 1;
+      continue;
+    }
+
+    if (![ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(channel.type)) {
+      skippedChannelCount += 1;
+      continue;
+    }
+
+    scannedChannelCount += 1;
+    Log(`Historical scan reading #${channel.name || channel.id} (${channel.id}).`);
+
+    let before;
+    let fetchedForChannel = 0;
+
+    while (fetchedForChannel < limitPerChannel) {
+      const limit = Math.min(100, limitPerChannel - fetchedForChannel);
+      const messages = await channel.messages.fetch({
+        limit,
+        ...(before ? { before } : {})
+      }).catch((error) => {
+        Log(`Historical scan skipped #${channel.name || channel.id}: ${error.message}`);
+        return null;
+      });
+
+      if (!messages || messages.size === 0) {
+        Log(`Historical scan #${channel.name || channel.id}: no more messages returned.`);
+        break;
+      }
+
+      Log(
+        `Historical scan #${channel.name || channel.id}: fetched ${messages.size} message(s); channel total so far ${fetchedForChannel + messages.size}/${limitPerChannel}.`
+      );
+
+      for (const message of messages.values()) {
+        if (!message.guild || message.author?.bot) {
+          continue;
+        }
+
+        messageCount += 1;
+        fetchedForChannel += 1;
+
+        const current = latestByUserID.get(message.author.id);
+
+        if (!current || message.createdTimestamp > current.createdTimestamp) {
+          latestByUserID.set(message.author.id, {
+            discord_id: message.author.id,
+            username: message.author.username,
+            timestamp: getUnixTimestampSeconds(message.createdTimestamp),
+            action: 'historical_message_scan',
+            createdTimestamp: message.createdTimestamp
+          });
+        }
+      }
+
+      before = messages.last()?.id;
+
+      if (messages.size < limit) {
+        break;
+      }
+    }
+
+    Log(
+      `Historical scan finished #${channel.name || channel.id}: checked ${fetchedForChannel} qualifying non-bot message(s).`
+    );
+  }
+
+  Log(
+    `Historical scan message collection complete. Scanned channels: ${scannedChannelCount}. Skipped channels: ${skippedChannelCount}. Qualifying messages: ${messageCount}. Unique active members found: ${latestByUserID.size}.`
+  );
+
+  let memberCount = 0;
+
+  for (const activity of latestByUserID.values()) {
+    Log(
+      `Historical scan sending last-seen update for ${activity.username} (${activity.discord_id}) at ${activity.timestamp} from ${activity.action}.`
+    );
+
+    const result = await sendDiscordMemberLastSeen(guildSyncSocket, activity);
+
+    if (result?.ok === false) {
+      Log(`Historical scan could not update ${activity.username}: ${result.message || 'unknown error'}`);
+      continue;
+    }
+
+    if ((result?.updated || 0) > 0) {
+      memberCount += 1;
+      Log(`Historical scan backend updated ${activity.username} (${activity.discord_id}).`);
+    } else {
+      Log(`Historical scan backend received ${activity.username} (${activity.discord_id}) but did not update a row.`);
+    }
+  }
+
+  Log(`Historical scan update send complete. Backend updated ${memberCount}/${latestByUserID.size} member(s).`);
+
+  return {
+    message_count: messageCount,
+    member_count: memberCount
+  };
+}
+
+
 async function runStartupSyncIfReady(reason) {
   if (startupSyncDone) {
     return;
@@ -322,6 +598,8 @@ async function runStartupSyncIfReady(reason) {
     Log(
       `Automatic startup sync completed. Roles: ${result.roles_processed}, Members: ${result.members_processed}, Removed: ${result.members_removed}`
     );
+
+    await runHistoricalScanOnceIfEnabled(guild);
   } catch (error) {
     Log(`Automatic startup sync failed: ${error.message}`);
   } finally {

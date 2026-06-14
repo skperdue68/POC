@@ -106,6 +106,13 @@ let discordRankAuditReportDialogOpen = false;
 let discordRankAuditReportRows = [];
 let discordRankAuditReportLoading = false;
 let discordRankAuditReportError = '';
+let discordLastSeenReportDialogOpen = false;
+let discordLastSeenReportRows = [];
+let discordLastSeenReportLoading = false;
+let discordLastSeenReportError = '';
+let discordLastSeenReportSearchTerm = '';
+let discordLastSeenReportSortColumn = '';
+let discordLastSeenReportSortDirection = '';
 let memberLinks = [];
 let memberLinksLoading = false;
 let memberLinksError = '';
@@ -270,6 +277,7 @@ function showMainWindow() {
   wireMemberLinkDialog();
   wireAssociateTicketReportDialog();
   wireDiscordRankAuditReportDialog();
+  wireDiscordLastSeenReportDialog();
   wireMemberLinksReportDialog();
   wireGuildSyncConfirmDialog();
   updateStatusDot();
@@ -364,6 +372,7 @@ function renderGuildSyncTabContent() {
     ${memberLinkDialogOpen ? renderMemberLinkDialog() : ''}
     ${associateTicketReportDialogOpen ? renderAssociateTicketReportDialog() : ''}
     ${discordRankAuditReportDialogOpen ? renderDiscordRankAuditReportDialog() : ''}
+    ${discordLastSeenReportDialogOpen ? renderDiscordLastSeenReportDialog() : ''}
     ${memberLinksReportDialogOpen ? renderMemberLinksReportDialog() : ''}
     ${guildSyncConfirmDialogOpen ? renderGuildSyncConfirmDialog() : ''}
   `;
@@ -376,6 +385,7 @@ function isBlockingModalOpen() {
     || memberLinkDialogOpen
     || associateTicketReportDialogOpen
     || discordRankAuditReportDialogOpen
+    || discordLastSeenReportDialogOpen
     || memberLinksReportDialogOpen
     || bankingExportGridOpen;
 }
@@ -590,6 +600,7 @@ function renderGuildSyncTabLayout(options = {}) {
   wireMemberLinkDialog();
   wireAssociateTicketReportDialog();
   wireDiscordRankAuditReportDialog();
+  wireDiscordLastSeenReportDialog();
   wireMemberLinksReportDialog();
 
   if (options.restoreDiscordSearchFocus) {
@@ -1227,6 +1238,16 @@ function renderReportsPanel() {
               ${discordRankAuditReportLoading ? 'Running...' : 'Run'}
             </button>
           </article>
+
+          <article class="report-option-card">
+            <div class="report-option-copy">
+              <h3>Discord Last Seen</h3>
+              <p>Shows Discord roster members with avatar, preferred server display name, and the most recent server activity time tracked by GuildSync.</p>
+            </div>
+            <button id="runDiscordLastSeenReportButton" class="refresh-discord-button report-run-button" type="button" ${discordLastSeenReportLoading ? 'disabled' : ''}>
+              ${discordLastSeenReportLoading ? 'Loading...' : 'Run'}
+            </button>
+          </article>
         </section>
 
         <article class="report-option-card">
@@ -1250,6 +1271,7 @@ function wireReportsPanel() {
 
   document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => openAssociatePromotionReportDialog());
   document.querySelector('#runDiscordRankAuditReportButton')?.addEventListener('click', () => openDiscordRankAuditReportDialog());
+  document.querySelector('#runDiscordLastSeenReportButton')?.addEventListener('click', () => openDiscordLastSeenReportDialog());
   document.querySelector('#runMemberLinksReportButton')?.addEventListener('click', () => openMemberLinksReportDialog());
 }
 
@@ -1529,6 +1551,358 @@ async function copyDiscordRankAuditReportGrid() {
   addSystemMessage('discord-rank-audit-report-copy-failed', 'Could not copy automatically. The grid text is selected for manual copy.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
 }
 
+function openDiscordLastSeenReportDialog() {
+  discordLastSeenReportDialogOpen = true;
+  discordLastSeenReportError = '';
+  discordLastSeenReportSearchTerm = '';
+  renderGuildSyncTabLayout();
+  runDiscordLastSeenReport();
+  if (memberLinks.length === 0 && !memberLinksLoading) {
+    refreshMemberLinks({ silent: true });
+  }
+}
+
+function closeDiscordLastSeenReportDialog() {
+  discordLastSeenReportDialogOpen = false;
+  discordLastSeenReportError = '';
+  discordLastSeenReportSearchTerm = '';
+  discordLastSeenReportSortColumn = '';
+  discordLastSeenReportSortDirection = '';
+  renderGuildSyncTabLayout();
+}
+
+function renderDiscordLastSeenReportDialog() {
+  const rows = getSortedDiscordLastSeenReportRows();
+  const totalRows = discordLastSeenReportRows.length;
+
+  return `
+    <div class="roster-history-overlay report-results-overlay discord-last-seen-report-overlay" role="dialog" aria-modal="true" aria-labelledby="discordLastSeenReportTitle">
+      <div class="roster-history-dialog report-results-dialog discord-last-seen-report-dialog">
+        <div class="roster-history-header report-results-header">
+          <div>
+            <h3 id="discordLastSeenReportTitle">Discord Last Seen</h3>
+            <p>Last server-specific activity tracked by GuildSync. Times are shown in your local time zone.</p>
+          </div>
+          <button id="closeDiscordLastSeenReportButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
+        </div>
+
+        <div class="report-results-toolbar">
+          <button id="copyDiscordLastSeenReportGridButton" class="bank-export-copy-button" type="button" ${totalRows === 0 ? 'disabled' : ''}>Copy Grid</button>
+          <button id="rerunDiscordLastSeenReportButton" class="refresh-discord-button" type="button" ${discordLastSeenReportLoading ? 'disabled' : ''}>${discordLastSeenReportLoading ? 'Loading...' : 'Run Again'}</button>
+          <span class="roster-history-muted">${escapeHtml(String(totalRows))} Discord member${totalRows === 1 ? '' : 's'}</span>
+        </div>
+
+        <input
+          id="discordLastSeenReportSearchInput"
+          class="member-links-report-search-input discord-last-seen-search-input"
+          type="search"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search Discord member, username, last seen action, or date..."
+          value="${escapeAttribute(discordLastSeenReportSearchTerm)}"
+        />
+
+        ${discordLastSeenReportError ? `<div class="discord-data-error discord-last-seen-report-error">${escapeHtml(discordLastSeenReportError)}</div>` : ''}
+
+        <div class="report-results-content discord-last-seen-report-content">
+          ${discordLastSeenReportLoading && totalRows === 0 ? '<div class="roster-history-muted">Loading Discord roster last seen data...</div>' : ''}
+          ${!discordLastSeenReportLoading && totalRows === 0 ? '<div class="roster-history-muted">No Discord members found.</div>' : ''}
+          ${totalRows > 0 ? renderDiscordLastSeenReportRows(rows) : ''}
+        </div>
+        <textarea id="discordLastSeenReportTsv" class="bank-export-tsv" readonly>${escapeHtml(getDiscordLastSeenReportTsv(rows))}</textarea>
+      </div>
+    </div>
+  `;
+}
+
+function renderDiscordLastSeenReportRows(rows = []) {
+  return `
+    <div class="roster-history-event-table-shell report-result-table-shell discord-last-seen-table-shell">
+      <table class="discord-member-table roster-history-event-table report-result-table discord-last-seen-table">
+        <thead>
+          <tr>
+            <th>${renderDiscordLastSeenSortButton('name', 'Discord Member')}</th>
+            <th>${renderDiscordLastSeenSortButton('eso', 'ESO')}</th>
+            <th>${renderDiscordLastSeenSortButton('date', 'Last Seen')}</th>
+            <th>${renderDiscordLastSeenSortButton('days', 'Days Since')}</th>
+            <th>${renderDiscordLastSeenSortButton('action', 'Action')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr class="discord-last-seen-row ${escapeAttribute(getDiscordLastSeenAgeClass(row.last_seen))}" data-discord-last-seen-row data-discord-last-seen-search="${escapeAttribute(getDiscordLastSeenSearchText(row))}">
+              <td>
+                <div class="discord-member-cell discord-last-seen-member-cell">
+                  ${renderDiscordLastSeenAvatar(row)}
+                  <span>${escapeHtml(getDiscordLastSeenDisplayName(row))}</span>
+                </div>
+              </td>
+              <td class="discord-last-seen-eso-cell">${renderDiscordLastSeenEsoLinkIndicator(row)}</td>
+              <td>${escapeHtml(formatDiscordLastSeenDate(row.last_seen))}</td>
+              <td>${escapeHtml(formatDiscordLastSeenAgeDays(row.last_seen))}</td>
+              <td>${escapeHtml(formatDiscordLastSeenAction(row.last_seen_action))}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div id="discordLastSeenReportSearchEmpty" class="roster-history-muted" hidden>No Discord members match your search.</div>
+    </div>
+  `;
+}
+
+function renderDiscordLastSeenSortButton(column, label) {
+  const isActive = discordLastSeenReportSortColumn === column;
+  const arrow = isActive ? (discordLastSeenReportSortDirection === 'asc' ? '▲' : '▼') : '↕';
+  const title = isActive ? `${label}: ${discordLastSeenReportSortDirection === 'asc' ? 'ascending' : 'descending'}` : `${label}: unsorted`;
+
+  return `
+    <button class="discord-sort-header discord-last-seen-sort-header${isActive ? ' active' : ''}" type="button" data-discord-last-seen-sort="${escapeAttribute(column)}" title="${escapeAttribute(title)}">
+      <span>${escapeHtml(label)}</span>
+      <span class="discord-sort-arrow" aria-hidden="true">${escapeHtml(arrow)}</span>
+    </button>
+  `;
+}
+
+function getSortedDiscordLastSeenReportRows() {
+  const rows = [...discordLastSeenReportRows];
+  const column = discordLastSeenReportSortColumn;
+  const direction = discordLastSeenReportSortDirection;
+
+  if (!column || !direction) {
+    return rows;
+  }
+
+  const multiplier = direction === 'desc' ? -1 : 1;
+  return rows.sort((left, right) => {
+    if (column === 'date') {
+      const leftValue = Number(left.last_seen || 0) || 0;
+      const rightValue = Number(right.last_seen || 0) || 0;
+      return (leftValue - rightValue) * multiplier;
+    }
+
+    if (column === 'days') {
+      return (getDiscordLastSeenSortAgeDays(left.last_seen) - getDiscordLastSeenSortAgeDays(right.last_seen)) * multiplier;
+    }
+
+    if (column === 'action') {
+      return formatDiscordLastSeenAction(left.last_seen_action).localeCompare(formatDiscordLastSeenAction(right.last_seen_action), undefined, { sensitivity: 'base' }) * multiplier;
+    }
+
+    if (column === 'eso') {
+      const leftLink = getDiscordLastSeenEsoLinkData(left);
+      const rightLink = getDiscordLastSeenEsoLinkData(right);
+      const statusOrder = { linked: 0, candidate: 1, unlinked: 2 };
+      const statusDelta = ((statusOrder[leftLink.status] ?? 9) - (statusOrder[rightLink.status] ?? 9));
+      if (statusDelta !== 0) return statusDelta * multiplier;
+      return leftLink.esoAccountName.localeCompare(rightLink.esoAccountName, undefined, { sensitivity: 'base' }) * multiplier;
+    }
+
+    return getDiscordLastSeenDisplayName(left).localeCompare(getDiscordLastSeenDisplayName(right), undefined, { sensitivity: 'base' }) * multiplier;
+  });
+}
+
+function cycleDiscordLastSeenReportSort(column) {
+  if (discordLastSeenReportSortColumn !== column) {
+    discordLastSeenReportSortColumn = column;
+    discordLastSeenReportSortDirection = 'asc';
+  } else if (discordLastSeenReportSortDirection === 'asc') {
+    discordLastSeenReportSortDirection = 'desc';
+  } else {
+    discordLastSeenReportSortColumn = '';
+    discordLastSeenReportSortDirection = '';
+  }
+
+  renderGuildSyncTabLayout();
+}
+
+function getDiscordLastSeenDisplayName(member) {
+  return member?.server_nickname || member?.global_name || member?.username || member?.discord_id || '';
+}
+
+function getDiscordLastSeenSearchText(member) {
+  return [
+    getDiscordLastSeenDisplayName(member),
+    member?.server_nickname,
+    member?.global_name,
+    member?.username,
+    member?.discord_id,
+    member?.last_seen_action,
+    getDiscordLastSeenEsoLinkSearchText(member),
+    formatDiscordLastSeenDate(member?.last_seen),
+    formatDiscordLastSeenAgeDays(member?.last_seen),
+  ].filter(Boolean).join(' ');
+}
+
+
+function getDiscordLastSeenEsoLinkData(member) {
+  const link = getMemberLinkByDiscordUserId(member?.discord_id);
+  const status = String(link?.link_status || '').trim().toLowerCase();
+  const esoAccountName = String(link?.eso_account_name || '').trim();
+
+  if (status === 'linked' && esoAccountName) {
+    return {
+      status: 'linked',
+      className: 'linked',
+      label: 'Linked ESO account',
+      esoAccountName,
+      title: `Linked ESO account: ${esoAccountName}`,
+    };
+  }
+
+  if ((status === 'candidate' || String(link?.link_method || '').trim().toLowerCase() === 'fuzzy') && esoAccountName) {
+    return {
+      status: 'candidate',
+      className: 'candidate',
+      label: 'Fuzzy ESO account candidate',
+      esoAccountName,
+      title: `Fuzzy ESO account candidate: ${esoAccountName}`,
+    };
+  }
+
+  return {
+    status: 'unlinked',
+    className: 'unlinked',
+    label: 'No linked ESO account',
+    esoAccountName: '',
+    title: 'No linked ESO account',
+  };
+}
+
+function renderDiscordLastSeenEsoLinkIndicator(member) {
+  const data = getDiscordLastSeenEsoLinkData(member);
+  return `
+    <span
+      class="member-link-status-dot discord-last-seen-eso-link-dot member-link-status-${escapeAttribute(data.className)}"
+      title="${escapeAttribute(data.title)}"
+      aria-label="${escapeAttribute(data.label)}"
+      role="img"
+    ></span>
+  `;
+}
+
+function getDiscordLastSeenEsoLinkSearchText(member) {
+  const data = getDiscordLastSeenEsoLinkData(member);
+  return [data.status, data.label, data.esoAccountName].filter(Boolean).join(' ');
+}
+
+function getDiscordLastSeenAvatarUrl(member) {
+  const avatar = String(member?.avatar || '').trim();
+  const discordId = String(member?.discord_id || '').trim();
+  if (!avatar || !discordId) return '';
+  if (/^https?:\/\//i.test(avatar)) return avatar;
+  const extension = avatar.startsWith('a_') ? 'gif' : 'png';
+  return `https://cdn.discordapp.com/avatars/${encodeURIComponent(discordId)}/${encodeURIComponent(avatar)}.${extension}?size=64`;
+}
+
+function renderDiscordLastSeenAvatar(member) {
+  const displayName = getDiscordLastSeenDisplayName(member);
+  const initials = displayName ? displayName.slice(0, 2).toUpperCase() : '?';
+  const url = getDiscordLastSeenAvatarUrl(member);
+  if (!url) return `<span class="discord-member-avatar discord-last-seen-avatar-fallback">${escapeHtml(initials)}</span>`;
+  return `<span class="discord-member-avatar"><img src="${escapeAttribute(url)}" alt="" loading="lazy" /></span>`;
+}
+
+function formatDiscordLastSeenDate(value) {
+  const numeric = Number(value);
+  if (!numeric) return 'Never';
+
+  const date = new Date(numeric * 1000);
+  if (Number.isNaN(date.getTime())) return String(value || '');
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(date).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  return `${parts.month}/${parts.day}/${parts.year} ${parts.hour}:${parts.minute} ${parts.dayPeriod}`;
+}
+
+function getDiscordLastSeenAgeClass(value) {
+  const numeric = Number(value);
+  if (!numeric) return 'discord-last-seen-unknown';
+
+  const ageDays = (Date.now() - numeric * 1000) / 86400000;
+  if (ageDays > 30) return 'discord-last-seen-red';
+  if (ageDays >= 15) return 'discord-last-seen-yellow';
+  return 'discord-last-seen-green';
+}
+
+function formatDiscordLastSeenAgeDays(value) {
+  const numeric = Number(value);
+  if (!numeric) return 'Never';
+
+  const ageMs = Date.now() - numeric * 1000;
+  if (!Number.isFinite(ageMs)) return '';
+  if (ageMs < 0) return '0 days';
+
+  const ageDays = Math.floor(ageMs / 86400000);
+  return `${ageDays} day${ageDays === 1 ? '' : 's'}`;
+}
+
+
+function getDiscordLastSeenSortAgeDays(value) {
+  const numeric = Number(value);
+  if (!numeric) return Number.POSITIVE_INFINITY;
+
+  const ageMs = Date.now() - numeric * 1000;
+  if (!Number.isFinite(ageMs)) return Number.POSITIVE_INFINITY;
+  if (ageMs < 0) return 0;
+  return Math.floor(ageMs / 86400000);
+}
+
+function formatDiscordLastSeenAction(value) {
+  return String(value || '').trim() || 'None tracked';
+}
+
+
+function getDiscordLastSeenReportTsv(rows = getSortedDiscordLastSeenReportRows()) {
+  const lines = [['Discord Member', 'ESO Link Status', 'ESO Account', 'Last Seen', 'Days Since', 'Action', 'Discord Username', 'Discord ID']];
+
+  for (const row of rows) {
+    const esoLink = getDiscordLastSeenEsoLinkData(row);
+    lines.push([
+      getDiscordLastSeenDisplayName(row),
+      esoLink.label || '',
+      esoLink.esoAccountName || '',
+      formatDiscordLastSeenDate(row?.last_seen),
+      formatDiscordLastSeenAgeDays(row?.last_seen),
+      formatDiscordLastSeenAction(row?.last_seen_action),
+      row?.username || '',
+      row?.discord_id || '',
+    ]);
+  }
+
+  return lines.map((row) => row.map(formatTsvCell).join('\t')).join('\n');
+}
+
+async function copyDiscordLastSeenReportGrid() {
+  const rows = getSortedDiscordLastSeenReportRows().filter((row) => {
+    const searchValue = normalizeSimpleMemberName(discordLastSeenReportSearchTerm);
+    if (!searchValue) return true;
+    return normalizeSimpleMemberName(getDiscordLastSeenSearchText(row)).includes(searchValue);
+  });
+  const tsv = getDiscordLastSeenReportTsv(rows);
+
+  const copied = await copyTextToClipboard(tsv);
+  if (copied) {
+    addSystemMessage('discord-last-seen-report-copied', 'Discord Last Seen report copied to clipboard.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  const textArea = document.querySelector('#discordLastSeenReportTsv');
+  if (textArea) {
+    textArea.focus();
+    textArea.select();
+  }
+  addSystemMessage('discord-last-seen-report-copy-failed', 'Could not copy automatically. The grid text is selected for manual copy.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+}
 
 function openMemberLinksReportDialog() {
   memberLinksReportDialogOpen = true;
@@ -2625,6 +2999,84 @@ function wireDiscordRankAuditReportDialog() {
         closeDiscordRankAuditReportDialog();
       }
     });
+  }
+}
+
+function wireDiscordLastSeenReportDialog() {
+  if (!discordLastSeenReportDialogOpen) {
+    return;
+  }
+
+  document.querySelector('#closeDiscordLastSeenReportButton')?.addEventListener('click', closeDiscordLastSeenReportDialog);
+  document.querySelector('#rerunDiscordLastSeenReportButton')?.addEventListener('click', () => runDiscordLastSeenReport());
+  document.querySelector('#copyDiscordLastSeenReportGridButton')?.addEventListener('click', () => copyDiscordLastSeenReportGrid());
+
+  document.querySelectorAll('[data-discord-last-seen-sort]').forEach((button) => {
+    button.addEventListener('click', () => cycleDiscordLastSeenReportSort(button.dataset.discordLastSeenSort || ''));
+  });
+
+  const searchInput = document.querySelector('#discordLastSeenReportSearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', handleDiscordLastSeenReportSearchInput);
+    applyDiscordLastSeenReportSearchFilter();
+  }
+
+  const overlay = document.querySelector('.discord-last-seen-report-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        closeDiscordLastSeenReportDialog();
+      }
+    });
+  }
+}
+
+function handleDiscordLastSeenReportSearchInput(event) {
+  discordLastSeenReportSearchTerm = event.target.value || '';
+  applyDiscordLastSeenReportSearchFilter();
+}
+
+function applyDiscordLastSeenReportSearchFilter() {
+  const searchValue = normalizeSimpleMemberName(discordLastSeenReportSearchTerm);
+  const rows = [...document.querySelectorAll('[data-discord-last-seen-row]')];
+  let visibleCount = 0;
+
+  rows.forEach((row) => {
+    const searchText = normalizeSimpleMemberName(row.dataset.discordLastSeenSearch || row.textContent || '');
+    const visible = !searchValue || searchText.includes(searchValue);
+    row.hidden = !visible;
+    if (visible) visibleCount += 1;
+  });
+
+  const emptyMessage = document.querySelector('#discordLastSeenReportSearchEmpty');
+  if (emptyMessage) {
+    emptyMessage.hidden = visibleCount !== 0;
+  }
+}
+
+async function runDiscordLastSeenReport() {
+  if (!socket?.connected || !isAuthenticatedSession()) {
+    discordLastSeenReportError = 'You must be logged in and connected to run this report.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  discordLastSeenReportLoading = true;
+  discordLastSeenReportError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-discord-member-dataJSON', {}, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load Discord roster data.');
+
+    discordMembers = normalizeDiscordMembers(response.members);
+    discordLastSeenReportRows = [...discordMembers];
+  } catch (error) {
+    discordLastSeenReportError = formatError(error);
+  } finally {
+    discordLastSeenReportLoading = false;
+    renderGuildSyncTabLayout();
+    focusInputById('discordLastSeenReportSearchInput');
   }
 }
 
@@ -4457,6 +4909,8 @@ function normalizeDiscordMembers(members) {
       username: String(member?.username || '').trim(),
       global_name: String(member?.global_name || '').trim(),
       server_nickname: String(member?.server_nickname || '').trim(),
+      last_seen: String(member?.last_seen || member?.lastSeen || '').trim(),
+      last_seen_action: String(member?.last_seen_action || member?.lastSeenAction || '').trim(),
       avatar: String(member?.avatar || '').trim(),
       roles: Array.isArray(member?.roles) ? member.roles.map(normalizeDiscordRole).filter(Boolean) : []
     }))

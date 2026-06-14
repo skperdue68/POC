@@ -19,6 +19,9 @@ import {
   deleteDiscordMember,
   upsertDiscordRole,
   deleteDiscordRole,
+  updateDiscordMemberLastSeen,
+  getDiscordHistoricalScanStatus,
+  markDiscordHistoricalScanComplete,
   getDiscordDataDate,
   getDiscordMemberDataJSON,
   getBankingDataDate,
@@ -535,6 +538,133 @@ io.on('connection', (socket) => {
       };
 
       sendSocketResponse(socket, 'guildsync:discord-member-upsert-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:discord-member-last-seen', async (payload = {}, callback) => {
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'Only the authenticated Discord bot can update Discord member last-seen activity.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-last-seen-result', callback, response);
+      return;
+    }
+
+    try {
+      Log(
+        `Discord member activity payload received: discord_id=${payload.discord_id || 'missing'}, username=${payload.username || 'missing'}, timestamp=${payload.timestamp || 'missing'}, action=${payload.action || 'missing'}.`
+      );
+
+      const result = await updateDiscordMemberLastSeen(applicationDB, payload);
+
+      Log(
+        `Discord member activity received: ${payload.username || payload.discord_id || 'unknown'} ${payload.action || 'unknown'} at ${payload.timestamp || 'unknown'}. Updated ${result.updated} row(s).`
+      );
+
+      const response = {
+        ok: true,
+        message: result.updated > 0 ? 'Discord member last-seen activity saved.' : 'Discord member was not found; no last-seen row updated.',
+        updated: result.updated,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-last-seen-result', callback, response);
+
+      if (result.updated > 0) {
+        await broadcastDiscordMemberDataUpdate();
+      }
+    } catch (error) {
+      Log('Failed to process guildsync:discord-member-last-seen payload:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to update Discord member last-seen activity.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-last-seen-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:discord-historical-scan-status', async (payload = {}, callback) => {
+    Log(`Discord historical scan status request received from socket ${socket.id}. Auth type: ${socket.guildSyncAuthType || 'unknown'}.`);
+
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'Only the authenticated Discord bot can request Discord historical scan status.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-historical-scan-status-result', callback, response);
+      return;
+    }
+
+    try {
+      const status = await getDiscordHistoricalScanStatus(applicationDB);
+
+      Log(
+        `Discord historical scan status returned to bot: completed=${status.completed ? 'yes' : 'no'}, completed_at=${status.completed_at || 'not set'}.`
+      );
+
+      sendSocketResponse(socket, 'guildsync:discord-historical-scan-status-result', callback, {
+        ok: true,
+        ...status,
+        at: new Date().toLocaleString()
+      });
+    } catch (error) {
+      Log('Failed to process guildsync:discord-historical-scan-status:', error);
+
+      sendSocketResponse(socket, 'guildsync:discord-historical-scan-status-result', callback, {
+        ok: false,
+        message: error.message || 'Failed to get Discord historical scan status.',
+        at: new Date().toLocaleString()
+      });
+    }
+  });
+
+  socket.on('guildsync:discord-historical-scan-complete', async (payload = {}, callback) => {
+    Log(
+      `Discord historical scan completion received from socket ${socket.id}. Messages checked: ${payload.message_count ?? 'unknown'}. Members updated: ${payload.member_count ?? 'unknown'}.`
+    );
+
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'Only the authenticated Discord bot can mark Discord historical scan complete.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-historical-scan-complete-result', callback, response);
+      return;
+    }
+
+    try {
+      const result = await markDiscordHistoricalScanComplete(applicationDB, payload);
+
+      Log(
+        `Discord historical scan marked complete in database. Completed at: ${result.completed_at || 'unknown'}. Messages checked: ${result.message_count ?? payload.message_count ?? 'unknown'}. Members updated: ${result.member_count ?? payload.member_count ?? 'unknown'}.`
+      );
+
+      sendSocketResponse(socket, 'guildsync:discord-historical-scan-complete-result', callback, {
+        ok: true,
+        message: 'Discord historical scan marked complete.',
+        ...result,
+        at: new Date().toLocaleString()
+      });
+
+      await broadcastDiscordMemberDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:discord-historical-scan-complete:', error);
+
+      sendSocketResponse(socket, 'guildsync:discord-historical-scan-complete-result', callback, {
+        ok: false,
+        message: error.message || 'Failed to mark Discord historical scan complete.',
+        at: new Date().toLocaleString()
+      });
     }
   });
 

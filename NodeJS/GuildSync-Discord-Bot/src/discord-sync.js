@@ -250,3 +250,28 @@ export async function sendDiscordMemberDelete(member, guildSyncSocket) {
     }
   );
 }
+
+export async function sendDiscordMemberLastSeen(guildSyncSocket, payload = {}) {
+  return await emitWithAck(
+    guildSyncSocket,
+    'guildsync:discord-member-last-seen',
+    payload
+  );
+}
+
+export async function getDiscordHistoricalScanStatus(guildSyncSocket) {
+  return await emitWithAck(
+    guildSyncSocket,
+    'guildsync:discord-historical-scan-status',
+    {}
+  );
+}
+
+export async function markDiscordHistoricalScanComplete(guildSyncSocket, payload = {}) {
+  return await emitWithAck(
+    guildSyncSocket,
+    'guildsync:discord-historical-scan-complete',
+    payload
+  );
+}
+

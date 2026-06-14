@@ -3075,3 +3075,79 @@ body {
   background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.88);
 }
+
+
+/* Discord Last Seen report */
+.discord-last-seen-report-dialog {
+  width: min(1180px, 98%);
+}
+
+.discord-last-seen-table th:nth-child(1),
+.discord-last-seen-table td:nth-child(1) {
+  width: 34%;
+}
+
+.discord-last-seen-table th:nth-child(2),
+.discord-last-seen-table td:nth-child(2) {
+  width: 8%;
+  text-align: center;
+}
+
+.discord-last-seen-table th:nth-child(3),
+.discord-last-seen-table td:nth-child(3) {
+  width: 22%;
+}
+
+.discord-last-seen-table th:nth-child(4),
+.discord-last-seen-table td:nth-child(4) {
+  width: 13%;
+}
+
+.discord-last-seen-table th:nth-child(5),
+.discord-last-seen-table td:nth-child(5) {
+  width: 23%;
+}
+
+.discord-last-seen-table .discord-last-seen-row.discord-last-seen-green td {
+  color: #86EFAC;
+}
+
+.discord-last-seen-table .discord-last-seen-row.discord-last-seen-yellow td {
+  color: #FDE68A;
+}
+
+.discord-last-seen-table .discord-last-seen-row.discord-last-seen-red td {
+  color: #FCA5A5;
+}
+
+.discord-last-seen-table .discord-last-seen-row.discord-last-seen-unknown td {
+  color: rgba(226, 232, 240, 0.72);
+}
+
+.discord-last-seen-member-cell {
+  gap: 10px;
+}
+
+.discord-last-seen-sort-header {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.discord-last-seen-table tr[hidden] {
+  display: none !important;
+}
+
+
+.discord-last-seen-eso-cell {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.discord-last-seen-eso-link-dot {
+  cursor: default;
+}
+
+.discord-last-seen-eso-link-dot:hover,
+.discord-last-seen-eso-link-dot:focus-visible {
+  transform: none;
+}

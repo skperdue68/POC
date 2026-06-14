@@ -99,6 +99,8 @@ async function initializeSchema(db) {
       username VARCHAR(255) NOT NULL,
       global_name VARCHAR(255),
       server_nickname VARCHAR(255),
+      last_seen VARCHAR(25),
+      last_seen_action VARCHAR(64),
       avatar TEXT NULL,
       import_current BOOLEAN NOT NULL DEFAULT FALSE
     )
@@ -131,6 +133,9 @@ async function initializeSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_roles
     ON discord_roles (role_name)
   `);
+
+  await ensureColumn(db, 'discord_members', 'last_seen', 'VARCHAR(25) NULL', 'server_nickname');
+  await ensureColumn(db, 'discord_members', 'last_seen_action', 'VARCHAR(64) NULL', 'last_seen');
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_discord_members
@@ -679,6 +684,94 @@ function getRoleIDsFromMember(member) {
   return [...roleIDs];
 }
 
+
+export async function updateDiscordMemberLastSeen(applicationDB, payload = {}) {
+  const discordID = String(payload.discord_id || payload.id || '').trim();
+  const username = String(payload.username || '').trim();
+  const action = String(payload.action || 'unknown').trim().slice(0, 64);
+  const timestamp = String(payload.timestamp || '').trim().slice(0, 25);
+
+  if (!discordID && !username) {
+    return {
+      updated: 0
+    };
+  }
+
+  if (!timestamp) {
+    throw new Error('Missing last_seen timestamp.');
+  }
+
+  const parameters = [timestamp, action || 'unknown'];
+  let whereSql = 'discord_id = ?';
+
+  if (discordID) {
+    parameters.push(discordID);
+  } else {
+    whereSql = 'username = ?';
+    parameters.push(username);
+  }
+
+  const [result] = await applicationDB.execute(
+    `
+      UPDATE discord_members
+      SET
+        last_seen = ?,
+        last_seen_action = ?
+      WHERE ${whereSql}
+    `,
+    parameters
+  );
+
+  if (result.affectedRows > 0) {
+    await setDiscordRefreshNow(applicationDB);
+  }
+
+  return {
+    updated: result.affectedRows || 0,
+    discord_id: discordID || null,
+    username: username || null,
+    last_seen: timestamp,
+    last_seen_action: action || 'unknown'
+  };
+}
+
+export async function getDiscordHistoricalScanStatus(applicationDB) {
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT value
+      FROM guildsync_settings
+      WHERE setting_key = ?
+      LIMIT 1
+    `,
+    ['discord_historical_scan_completed']
+  );
+
+  return {
+    completed: rows[0]?.value === '1',
+    completed_at: rows[0]?.value === '1' ? await getSettingValue(applicationDB, 'discord_historical_scan_completed_at') : null
+  };
+}
+
+export async function markDiscordHistoricalScanComplete(applicationDB, payload = {}) {
+  const completedAt = new Date().toISOString();
+  const messageCount = String(payload.message_count || 0);
+  const memberCount = String(payload.member_count || 0);
+
+  await setSetting(applicationDB, 'discord_historical_scan_completed', '1');
+  await setSetting(applicationDB, 'discord_historical_scan_completed_at', completedAt);
+  await setSetting(applicationDB, 'discord_historical_scan_message_count', messageCount);
+  await setSetting(applicationDB, 'discord_historical_scan_member_count', memberCount);
+
+  await setDiscordRefreshNow(applicationDB);
+
+  return {
+    completed: true,
+    completed_at: completedAt,
+    message_count: messageCount,
+    member_count: memberCount
+  };
+}
+
 export async function getDiscordDataDate(applicationDB) {
   const [rows] = await applicationDB.execute(
     `
@@ -708,6 +801,8 @@ export async function getDiscordMemberDataJSON(applicationDB) {
         'username', member_rows.username,
         'global_name', member_rows.global_name,
         'server_nickname', member_rows.server_nickname,
+        'last_seen', member_rows.last_seen,
+        'last_seen_action', member_rows.last_seen_action,
         'avatar', member_rows.avatar,
         'roles', member_rows.roles
       )
@@ -718,6 +813,8 @@ export async function getDiscordMemberDataJSON(applicationDB) {
         dm.username,
         dm.global_name,
         dm.server_nickname,
+        dm.last_seen,
+        dm.last_seen_action,
         dm.avatar,
         COALESCE(r.roles, JSON_ARRAY()) AS roles
       FROM discord_members dm
@@ -1957,6 +2054,48 @@ async function setSetting(db, settingKey, value) {
       settingKey,
       value
     ]
+  );
+}
+
+
+async function getSettingValue(db, settingKey) {
+  const [rows] = await db.execute(
+    `
+      SELECT value
+      FROM guildsync_settings
+      WHERE setting_key = ?
+      LIMIT 1
+    `,
+    [settingKey]
+  );
+
+  return rows[0]?.value || null;
+}
+
+async function ensureColumn(db, tableName, columnName, columnDefinition, afterColumnName = null) {
+  const [rows] = await db.execute(
+    `
+      SELECT COUNT(*) AS column_count
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ?
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+    `,
+    [GUILDSYNC_DB_NAME, tableName, columnName]
+  );
+
+  const exists = Number(rows[0]?.column_count || 0) > 0;
+
+  if (exists) {
+    return;
+  }
+
+  const afterSql = afterColumnName
+    ? ` AFTER ${quoteIdentifier(afterColumnName)}`
+    : '';
+
+  await db.query(
+    `ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}${afterSql}`
   );
 }
 
