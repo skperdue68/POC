@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 
@@ -36,6 +38,7 @@ import {
   manualUnlinkMember,
   runMemberAutoLinking,
   processRosterData,
+  parseGuildSyncBankingSavedVarsLua,
   parseGuildSyncRosterSavedVarsLua
 } from './guildsync-database-actions.js';
 
@@ -48,8 +51,13 @@ const PORT = Number(process.env.PORT || 3001);
 const DISCORD_CLIENT_ID = requiredEnv('DISCORD_CLIENT_ID');
 const DISCORD_CLIENT_SECRET = requiredEnv('DISCORD_CLIENT_SECRET');
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'http://127.0.0.1:53682/callback';
+const DISCORD_WEB_REDIRECT_URI = process.env.DISCORD_WEB_REDIRECT_URI || 'https://guildsync.perdues.me/api/auth/discord/web-callback';
+const GUILDSYNC_WEB_PUBLIC_URL = process.env.GUILDSYNC_WEB_PUBLIC_URL || 'https://guildsync.perdues.me';
 const GUILDSYNC_JWT_SECRET = requiredEnv('GUILDSYNC_JWT_SECRET');
 const GUILDSYNC_TOKEN_TTL_SECONDS = Number(process.env.GUILDSYNC_TOKEN_TTL_SECONDS || 86400);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const WEB_DIST_DIR = process.env.GUILDSYNC_WEB_DIST_DIR || path.join(__dirname, 'public');
 
 const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 
@@ -78,7 +86,7 @@ const io = new Server(server, {
 });
 
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 app.post('/api/auth/discord/desktop-token', async (req, res) => {
   try {
@@ -165,6 +173,152 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
       error: error.message || 'Discord authentication failed.'
     });
   }
+});
+
+
+app.get('/api/auth/discord/web-login', (req, res) => {
+  const state = Buffer.from(JSON.stringify({
+    nonce: Math.random().toString(36).slice(2),
+    created_at: Date.now()
+  })).toString('base64url');
+
+  const params = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    redirect_uri: DISCORD_WEB_REDIRECT_URI,
+    response_type: 'code',
+    scope: 'identify email',
+    state
+  });
+
+  return res.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`);
+});
+
+app.get('/api/auth/discord/web-callback', async (req, res) => {
+  try {
+    const code = String(req.query?.code || '').trim();
+
+    if (!code) {
+      return res.status(400).send(renderWebAuthResultPage({
+        ok: false,
+        message: 'Missing Discord authorization code.'
+      }));
+    }
+
+    const discordToken = await exchangeCodeWithDiscord(code, DISCORD_WEB_REDIRECT_URI);
+    const discordUser = await fetchDiscordUser(discordToken.access_token);
+    const dbUser = await upsertLoginUser(loginDB, discordUser);
+
+    if (!dbUser.allowed) {
+      return res.status(403).send(renderWebAuthResultPage({
+        ok: false,
+        message: `Discord user ${preferredUserName(dbUser)} is authenticated, but access is pending approval.`
+      }));
+    }
+
+    const guildSyncUser = buildGuildSyncUserFromDBUser(dbUser);
+    const token = createGuildSyncJWT(guildSyncUser);
+
+    return res.send(renderWebAuthResultPage({
+      ok: true,
+      token,
+      user: guildSyncUser,
+      message: `Logged in and authorized as ${guildSyncUser.display_name}.`
+    }));
+  } catch (error) {
+    Log('Discord web-callback error:', error);
+    return res.status(500).send(renderWebAuthResultPage({
+      ok: false,
+      message: error.message || 'Discord web authentication failed.'
+    }));
+  }
+});
+
+app.get('/api/auth/session', (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ ok: false, message: 'Missing session token.' });
+    }
+
+    const claims = jwt.verify(token, GUILDSYNC_JWT_SECRET, {
+      issuer: 'guildsync-auth-server',
+      audience: 'guildsync-desktop'
+    });
+
+    return res.json({
+      ok: true,
+      user: {
+        discord_user_id: claims.sub,
+        username: claims.username || '',
+        global_name: claims.global_name || '',
+        display_name: claims.display_name || claims.global_name || claims.username || '',
+        avatar_url: claims.avatar_url || '',
+        role: claims.role || 'user'
+      }
+    });
+  } catch (error) {
+    return res.status(401).json({ ok: false, message: 'Invalid or expired session token.' });
+  }
+});
+
+app.post('/api/guildsync/upload-savedvars/:kind', requireGuildSyncWebUser, async (req, res) => {
+  try {
+    const kind = String(req.params.kind || '').trim().toLowerCase();
+    const fileName = String(req.body?.file_name || '').trim();
+    const rawLuaText = String(req.body?.raw_lua_text || '').trim();
+
+    if (!rawLuaText) {
+      return res.status(400).json({ ok: false, message: 'Missing SavedVariables file content.' });
+    }
+
+    if (kind === 'banking') {
+      const data = parseGuildSyncBankingSavedVarsLua(rawLuaText);
+      const result = await insertBankingEntries(applicationDB, {
+        source: data.table_name || 'GuildSyncBanking',
+        entries: data.entries || []
+      });
+
+      await broadcastBankingDataUpdate();
+
+      return res.json({
+        ok: true,
+        message: `Banking SavedVariables uploaded and processed. Entries: ${result.banking_entries_received}.`,
+        file_name: fileName || null,
+        ...result
+      });
+    }
+
+    if (kind === 'roster') {
+      const data = parseGuildSyncRosterSavedVarsLua(rawLuaText);
+      const result = await processRosterData(applicationDB, { data });
+
+      await broadcastRosterDataUpdate();
+
+      return res.json({
+        ok: true,
+        message: `Roster SavedVariables uploaded and processed. Guild list members: ${result.guildlist_members_received}. Stream events: ${result.stream_events_received}.`,
+        file_name: fileName || null,
+        ...result
+      });
+    }
+
+    return res.status(400).json({ ok: false, message: 'Upload kind must be banking or roster.' });
+  } catch (error) {
+    Log('SavedVariables upload failed:', error);
+    return res.status(500).json({
+      ok: false,
+      message: error.message || 'SavedVariables upload failed.'
+    });
+  }
+});
+
+app.use(express.static(WEB_DIST_DIR));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) {
+    return next();
+  }
+
+  return res.sendFile(path.join(WEB_DIST_DIR, 'index.html'));
 });
 
 // Authentication Middleware
@@ -1462,6 +1616,111 @@ function sendSocketResponse(socket, eventName, callback, response) {
   }
 
   socket.emit(eventName, response);
+}
+
+
+function buildGuildSyncUserFromDBUser(dbUser = {}) {
+  return {
+    discord_user_id: dbUser.discord_user_id,
+    username: dbUser.username || '',
+    global_name: dbUser.global_name || '',
+    display_name: preferredUserName(dbUser),
+    avatar: dbUser.avatar || '',
+    avatar_url: discordAvatarURL(dbUser.discord_user_id, dbUser.avatar),
+    email: dbUser.email || '',
+    role: dbUser.role || 'user'
+  };
+}
+
+function createGuildSyncJWT(guildSyncUser = {}) {
+  return jwt.sign(
+    {
+      sub: guildSyncUser.discord_user_id,
+      username: guildSyncUser.username,
+      global_name: guildSyncUser.global_name,
+      display_name: guildSyncUser.display_name,
+      avatar_url: guildSyncUser.avatar_url,
+      role: guildSyncUser.role
+    },
+    GUILDSYNC_JWT_SECRET,
+    {
+      issuer: 'guildsync-auth-server',
+      audience: 'guildsync-desktop',
+      expiresIn: GUILDSYNC_TOKEN_TTL_SECONDS
+    }
+  );
+}
+
+function getBearerToken(req) {
+  const authorization = String(req.headers.authorization || '').trim();
+  if (!authorization.toLowerCase().startsWith('bearer ')) {
+    return '';
+  }
+  return authorization.slice(7).trim();
+}
+
+function requireGuildSyncWebUser(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ ok: false, message: 'You must be logged in to upload SavedVariables files.' });
+    }
+
+    const claims = jwt.verify(token, GUILDSYNC_JWT_SECRET, {
+      issuer: 'guildsync-auth-server',
+      audience: 'guildsync-desktop'
+    });
+
+    req.guildSyncUser = claims;
+    return next();
+  } catch {
+    return res.status(401).json({ ok: false, message: 'Invalid or expired GuildSync session.' });
+  }
+}
+
+function renderWebAuthResultPage(result = {}) {
+  const safePayload = JSON.stringify({
+    ok: result.ok === true,
+    token: result.token || '',
+    user: result.user || null,
+    message: result.message || ''
+  }).replace(/</g, '\\u003c');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GuildSync Login</title>
+</head>
+<body>
+  <script>
+    const result = ${safePayload};
+    if (result.ok && result.token) {
+      const session = {
+        logged_in: true,
+        allowed: true,
+        token: result.token,
+        user: result.user,
+        discord_user_id: result.user?.discord_user_id || '',
+        username: result.user?.username || '',
+        global_name: result.user?.global_name || '',
+        display_name: result.user?.display_name || result.user?.global_name || result.user?.username || '',
+        avatar_url: result.user?.avatar_url || '',
+        role: result.user?.role || 'user',
+        status_message: result.message || 'Logged in.'
+      };
+      localStorage.setItem('guildsync-web-session', JSON.stringify(session));
+      localStorage.setItem('guildsync-web-token', result.token);
+      window.location.replace('/');
+    } else {
+      document.body.innerHTML = '<main style="font-family: sans-serif; max-width: 720px; margin: 4rem auto; line-height: 1.5;"><h1>GuildSync Login</h1><p>'
+        + (result.message || 'Login failed.')
+        + '</p><p><a href="/">Return to GuildSync</a></p></main>';
+    }
+  </script>
+</body>
+</html>`;
 }
 
 async function exchangeCodeWithDiscord(code, redirectURI) {

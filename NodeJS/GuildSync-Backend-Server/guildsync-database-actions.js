@@ -1697,6 +1697,39 @@ function createAutomaticRosterEventId(timestamp) {
   return `Auto${timestamp}${Math.floor(Math.random() * 100000000)}`;
 }
 
+
+export function parseGuildSyncBankingSavedVarsLua(rawLuaText = '') {
+  const tableText = extractLuaAssignmentTable(rawLuaText, 'GuildSyncBanking');
+  const parsed = parseEsoLuaTableForRoster(tableText);
+  const defaultSection = parsed?.Default || {};
+  const accountName = Object.keys(defaultSection).find((key) => key.startsWith('@')) || '';
+  const accountWide = accountName
+    ? defaultSection?.[accountName]?.['$AccountWide'] || {}
+    : {};
+
+  const biweekly = Array.isArray(accountWide.biweekly) ? accountWide.biweekly : [];
+  const monthly = Array.isArray(accountWide.monthly) ? accountWide.monthly : [];
+  const other = Array.isArray(accountWide.other) ? accountWide.other : [];
+
+  const entries = [
+    ...biweekly.map((entry) => ({ ...entry, type: 'biweekly' })),
+    ...monthly.map((entry) => ({ ...entry, type: 'monthly' })),
+    ...other.map((entry) => ({ ...entry, type: 'other' }))
+  ];
+
+  return {
+    table_name: 'GuildSyncBanking',
+    account_name: accountName,
+    entries,
+    entries_count: entries.length,
+    section_counts: {
+      biweekly: biweekly.length,
+      monthly: monthly.length,
+      other: other.length
+    }
+  };
+}
+
 export function parseGuildSyncRosterSavedVarsLua(rawLuaText = '') {
   const tableText = extractLuaAssignmentTable(rawLuaText, 'GuildSyncRoster');
   const parsed = parseEsoLuaTableForRoster(tableText);
