@@ -304,11 +304,6 @@ local function GSR_SaveRosterEvent(guildId, guildName, event)
     local record = GSR_BuildRosterRecord(guildId, event)
 
     stateSv.lastProcessedId = eventId
-    stateSv.lastProcessedAt = GetTimeStamp()
-    stateSv.lastProcessedEventTime = record.timestampS
-    stateSv.guildName = guildName
-    stateSv.guildId = guildId
-    stateSv.category = ROSTER_HISTORY_TYPE.category
 
     if GSR_Trim(record.eventType) == "unknown" then
         GSR_Debug("Skipped unknown roster event. EventId=" .. tostring(eventId))
@@ -333,11 +328,6 @@ local function GSR_UpdateStreamProgressForSkippedEvent(guildId, guildName, event
     end
 
     stateSv.lastProcessedId = eventId
-    stateSv.lastProcessedAt = GetTimeStamp()
-    stateSv.lastProcessedEventTime = tonumber(event:GetEventTimestampS())
-    stateSv.guildName = guildName
-    stateSv.guildId = guildId
-    stateSv.category = ROSTER_HISTORY_TYPE.category
 end
 
 local function GSR_CreateProcessor(guildId, processorNameSuffix)
@@ -412,11 +402,6 @@ local function GSR_StartRosterStream()
     else
         GSR_Print("Starting roster stream from the beginning because LastProcessedId is not set.")
     end
-
-    stateSv.guildName = guildName
-    stateSv.guildId = guildId
-    stateSv.category = ROSTER_HISTORY_TYPE.category
-    stateSv.startedAt = GetTimeStamp()
 
     local started = processor:StartStreaming(lastProcessedId, function(event)
         if GSR_EventPassesRosterFilter(event) then
