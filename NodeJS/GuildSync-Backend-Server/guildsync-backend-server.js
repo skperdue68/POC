@@ -615,8 +615,8 @@ io.on('connection', (socket) => {
         data = parseGuildSyncRosterSavedVarsLua(String(payload.raw_lua_text || ''));
       }
 
-      const guildMembers = data?.guildDump?.guildMembers && typeof data.guildDump.guildMembers === 'object'
-        ? Object.keys(data.guildDump.guildMembers).length
+      const guildMembers = data?.guildList?.guildListMembers && typeof data.guildList.guildListMembers === 'object'
+        ? Object.keys(data.guildList.guildListMembers).length
         : 0;
 
       const rosterEvents = data?.rosterEvents && typeof data.rosterEvents === 'object'
@@ -626,7 +626,7 @@ io.on('connection', (socket) => {
       const fileName = String(payload.file_name || '').trim();
 
       Log(
-        `Roster data received from ${authenticatedUsername || 'unknown user'}${fileName ? ` for ${fileName}` : ''}. Dump members: ${guildMembers}. Stream events: ${rosterEvents}.`
+        `Roster data received from ${authenticatedUsername || 'unknown user'}${fileName ? ` for ${fileName}` : ''}. Guild list members: ${guildMembers}. Stream events: ${rosterEvents}.`
       );
 
       const applicationDB = await openAppDataDB();

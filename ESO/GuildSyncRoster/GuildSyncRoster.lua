@@ -1,20 +1,54 @@
+GuildSyncRosterState = GuildSyncRosterState or {}
 GuildSyncRoster = GuildSyncRoster or {}
 
-local ADDON_NAME = "GuildSyncRoster"
-local SAVED_VARS_NAME = "GuildSyncRoster"
-local SAVED_VARS_VERSION = 1
-
 local TARGET_GUILD_NAME = "Alphabet Mafia"
-local ROSTER_CATEGORY = GUILD_HISTORY_EVENT_CATEGORY_ROSTER
-local MAX_EVENT_EXPORTS_TO_KEEP = 500
+
+local ADDON_NAME = "GuildSyncRoster"
+local SAVED_VARS_NAME = "GuildSyncRosterState"
+local SAVED_VARS_VERSION = 6
+
+local ROSTER_SAVED_VARS_NAME = "GuildSyncRoster"
+local ROSTER_SAVED_VARS_VERSION = 6
+
+local DEBUG_ROSTER = false
+
+local ROSTER_HISTORY_TYPE = {
+    category = GUILD_HISTORY_EVENT_CATEGORY_ROSTER,
+    allowedEventTypes = {
+        [GUILD_HISTORY_ROSTER_EVENT_JOIN] = true,
+        [GUILD_HISTORY_ROSTER_EVENT_LEAVE] = true,
+        [GUILD_HISTORY_ROSTER_EVENT_KICKED] = true,
+        [GUILD_HISTORY_ROSTER_EVENT_PROMOTE] = true,
+        [GUILD_HISTORY_ROSTER_EVENT_DEMOTE] = true,
+        [GUILD_HISTORY_ROSTER_EVENT_APPLICATION_ACCEPTED] = true,
+        [GUILD_HISTORY_ROSTER_EVENT_APPLICATION_DECLINED] = true,
+    }
+}
 
 local gsrSavedVars = nil
+local gsrRosterSavedVars = nil
 local gsrLibHistoire = nil
 local gsrProcessor = nil
 local gsrInitialized = false
 
 local function GSR_Print(message)
     CHAT_ROUTER:AddSystemMessage("|c88CCFF[GuildSyncRoster]|r " .. tostring(message))
+end
+
+local function GSR_TimeString(timestamp)
+    if not timestamp or timestamp == 0 then
+        return "unknown"
+    end
+
+    return os.date("%Y-%m-%d %H:%M:%S", timestamp)
+end
+
+local function GSR_UtcTimeString(timestamp)
+    if not timestamp or timestamp == 0 then
+        return "unknown"
+    end
+
+    return os.date("!%Y-%m-%d %H:%M:%S UTC", timestamp)
 end
 
 local function GSR_Trim(value)
@@ -25,6 +59,14 @@ local function GSR_Trim(value)
     end
 
     return value:match("^%s*(.-)%s*$") or ""
+end
+
+local function GSR_EventPassesRosterFilter(event)
+    if not event then
+        return false
+    end
+
+    return ROSTER_HISTORY_TYPE.allowedEventTypes[event:GetEventType()] == true
 end
 
 local function GSR_GetTargetGuildId()
@@ -46,13 +88,50 @@ local function GSR_EnsureSavedVars()
         return nil
     end
 
-    gsrSavedVars.types = gsrSavedVars.types or {}
-    gsrSavedVars.rosterEvents = gsrSavedVars.rosterEvents or {}
-    gsrSavedVars.stream = gsrSavedVars.stream or {}
-    gsrSavedVars.guildDump = gsrSavedVars.guildDump or {}
-    gsrSavedVars.guildMembers = gsrSavedVars.guildMembers or {}
+    if gsrSavedVars.lastProcessedId ~= nil then
+        local numericId = tonumber(gsrSavedVars.lastProcessedId)
+
+        if numericId then
+            gsrSavedVars.lastProcessedId = numericId
+        else
+            GSR_Print("Saved LastProcessedId was not numeric. Clearing it.")
+            gsrSavedVars.lastProcessedId = nil
+        end
+    end
+
+    if gsrSavedVars.debugRoster ~= true then
+        gsrSavedVars.debugRoster = false
+    end
 
     return gsrSavedVars
+end
+
+local function GSR_EnsureRosterSavedVars()
+    if not gsrRosterSavedVars then
+        return nil
+    end
+
+    gsrRosterSavedVars.guildList = gsrRosterSavedVars.guildList or {}
+    gsrRosterSavedVars.guildList.guildListMembers = gsrRosterSavedVars.guildList.guildListMembers or {}
+    gsrRosterSavedVars.rosterEvents = gsrRosterSavedVars.rosterEvents or {}
+
+    return gsrRosterSavedVars
+end
+
+local function GSR_IsDebugEnabled()
+    local sv = GSR_EnsureSavedVars()
+
+    if not sv then
+        return DEBUG_ROSTER
+    end
+
+    return sv.debugRoster == true
+end
+
+local function GSR_Debug(message)
+    if GSR_IsDebugEnabled() then
+        GSR_Print(message)
+    end
 end
 
 local function GSR_GetRankName(guildId, rankId)
@@ -95,6 +174,7 @@ local function GSR_GetRosterEventName(eventType)
     elseif eventType == GUILD_HISTORY_ROSTER_EVENT_APPLICATION_DECLINED then
         return "application declined"
     end
+
     return "unknown"
 end
 
@@ -131,13 +211,31 @@ local function GSR_BuildRosterRecord(guildId, event)
 
     return {
         eventId = eventId,
-        actingDisplayName = GSR_Trim(GSR_GetInfoValue(info, "actingDisplayName", "actorDisplayName", "sourceDisplayName")),
         targetDisplayName = GSR_Trim(GSR_GetInfoValue(info, "targetDisplayName", "displayName", "memberDisplayName",
             "accountName")),
-        timestampS = timestampS,
-        rankName = GSR_Trim(rankName),
+        actingDisplayName = GSR_Trim(GSR_GetInfoValue(info, "actingDisplayName", "actorDisplayName", "sourceDisplayName")),
         eventType = GSR_GetRosterEventName(rawEventType),
+        rankName = GSR_Trim(rankName),
+        timestampS = timestampS,
     }
+end
+
+local function GSR_PrintRosterEventEntry(source, record)
+    if not record then
+        return
+    end
+
+    local line =
+        "[" .. tostring(source) .. "] "
+        .. "EventId=" .. tostring(record.eventId)
+        .. " Time=" .. GSR_TimeString(record.timestampS)
+        .. " UTC=" .. GSR_UtcTimeString(record.timestampS)
+        .. " EventType=" .. tostring(record.eventType)
+        .. " Target=" .. tostring(record.targetDisplayName)
+        .. " Actor=" .. tostring(record.actingDisplayName)
+        .. " Rank=" .. tostring(record.rankName)
+
+    GSR_Print(line)
 end
 
 local function GSR_GetRosterEventChatMessage(record)
@@ -161,14 +259,12 @@ local function GSR_GetRosterEventChatMessage(record)
         return "Roster promoted: " .. target .. " -> " .. tostring(record.rankName or "")
     elseif record.eventType == "demoted" then
         return "Roster demoted: " .. target .. " -> " .. tostring(record.rankName or "")
-    elseif record.eventType == "rank_changed" then
-        return "Roster rank changed: " .. target .. " -> " .. tostring(record.rankName or "")
-    elseif record.eventType == "application_accepted" then
+    elseif record.eventType == "application accepted" then
         if actor ~= "" then
             return "Roster application accepted: " .. target .. " by " .. actor
         end
         return "Roster application accepted: " .. target
-    elseif record.eventType == "application_declined" then
+    elseif record.eventType == "application declined" then
         if actor ~= "" then
             return "Roster application declined: " .. target .. " by " .. actor
         end
@@ -179,10 +275,16 @@ local function GSR_GetRosterEventChatMessage(record)
 end
 
 local function GSR_SaveRosterEvent(guildId, guildName, event)
-    local sv = GSR_EnsureSavedVars()
+    local stateSv = GSR_EnsureSavedVars()
+    local rosterSv = GSR_EnsureRosterSavedVars()
 
-    if not sv then
-        GSR_Print("SavedVars not ready. Could not save roster event.")
+    if not stateSv then
+        GSR_Print("State SavedVars not ready. Could not save roster event.")
+        return
+    end
+
+    if not rosterSv then
+        GSR_Print("Roster SavedVars not ready. Could not save roster event.")
         return
     end
 
@@ -193,7 +295,7 @@ local function GSR_SaveRosterEvent(guildId, guildName, event)
         return
     end
 
-    local lastProcessedId = tonumber(sv.stream.lastProcessedId)
+    local lastProcessedId = tonumber(stateSv.lastProcessedId)
 
     if lastProcessedId and eventId <= lastProcessedId then
         return
@@ -201,24 +303,44 @@ local function GSR_SaveRosterEvent(guildId, guildName, event)
 
     local record = GSR_BuildRosterRecord(guildId, event)
 
-    if GSR_Trim(record.eventType) == "unknown" then
-        sv.stream.lastProcessedId = eventId
-        sv.stream.lastProcessedAt = GetTimeStamp()
-        sv.stream.lastProcessedEventTime = record.timestampS
+    stateSv.lastProcessedId = eventId
+    stateSv.lastProcessedAt = GetTimeStamp()
+    stateSv.lastProcessedEventTime = record.timestampS
+    stateSv.guildName = guildName
+    stateSv.guildId = guildId
+    stateSv.category = ROSTER_HISTORY_TYPE.category
 
-        GSR_Print("Skipped unknown roster event. EventId=" .. tostring(eventId))
+    if GSR_Trim(record.eventType) == "unknown" then
+        GSR_Debug("Skipped unknown roster event. EventId=" .. tostring(eventId))
         return
     end
 
-    sv.rosterEvents["event_" .. tostring(eventId)] = record
-    sv.stream.lastProcessedId = eventId
-    sv.stream.lastProcessedAt = GetTimeStamp()
-    sv.stream.lastProcessedEventTime = record.timestampS
-
-    GSR_Print(GSR_GetRosterEventChatMessage(record))
+    rosterSv.rosterEvents["event_" .. tostring(eventId)] = record
+    GSR_Debug(GSR_GetRosterEventChatMessage(record))
 end
 
-local function GSR_CreateProcessor(guildId)
+local function GSR_UpdateStreamProgressForSkippedEvent(guildId, guildName, event)
+    local stateSv = GSR_EnsureSavedVars()
+
+    if not stateSv or not event then
+        return
+    end
+
+    local eventId = tonumber(event:GetEventId())
+
+    if not eventId then
+        return
+    end
+
+    stateSv.lastProcessedId = eventId
+    stateSv.lastProcessedAt = GetTimeStamp()
+    stateSv.lastProcessedEventTime = tonumber(event:GetEventTimestampS())
+    stateSv.guildName = guildName
+    stateSv.guildId = guildId
+    stateSv.category = ROSTER_HISTORY_TYPE.category
+end
+
+local function GSR_CreateProcessor(guildId, processorNameSuffix)
     if not gsrLibHistoire then
         GSR_Print("LibHistoire is not ready yet.")
         return nil
@@ -226,8 +348,8 @@ local function GSR_CreateProcessor(guildId)
 
     local processor = gsrLibHistoire:CreateGuildHistoryProcessor(
         guildId,
-        ROSTER_CATEGORY,
-        ADDON_NAME .. "-roster"
+        ROSTER_HISTORY_TYPE.category,
+        ADDON_NAME .. "-" .. tostring(processorNameSuffix or "roster")
     )
 
     if not processor then
@@ -236,30 +358,101 @@ local function GSR_CreateProcessor(guildId)
         return nil
     end
 
-    gsrProcessor = processor
-
     if processor.GetKey then
-        GSR_Print("Roster processor key: " .. tostring(processor:GetKey()))
+        GSR_Debug("Roster processor key: " .. tostring(processor:GetKey()))
     end
 
     return processor
 end
 
-local function GSR_StartRosterStream(args)
-    local sv = GSR_EnsureSavedVars()
+local function GSR_StartRosterStream()
+    local stateSv = GSR_EnsureSavedVars()
 
-    if not sv then
+    if not stateSv then
         GSR_Print("SavedVars not ready.")
         return
     end
 
     if not gsrLibHistoire then
-        GSR_Print("LibHistoire is not initialized yet. Try /gsrinit.")
+        GSR_Print("LibHistoire is not initialized yet.")
         return
     end
 
     if gsrProcessor and gsrProcessor.IsRunning and gsrProcessor:IsRunning() then
-        GSR_Print("Roster stream is already running.")
+        GSR_Debug("Roster stream is already running.")
+        return
+    end
+
+    local guildId, guildIndex, guildName = GSR_GetTargetGuildId()
+
+    if not guildId then
+        return
+    end
+
+    GSR_Debug("Using guild: " ..
+        tostring(guildName) .. " index=" .. tostring(guildIndex) .. " guildId=" .. tostring(guildId))
+
+    local processor = GSR_CreateProcessor(guildId, "stream")
+
+    if not processor then
+        return
+    end
+
+    gsrProcessor = processor
+
+    if not processor.StartStreaming then
+        GSR_Print("This LibHistoire processor does not have StartStreaming().")
+        return
+    end
+
+    local lastProcessedId = tonumber(stateSv.lastProcessedId)
+
+    if lastProcessedId then
+        GSR_Print("Starting roster stream after saved LastProcessedId=" .. tostring(lastProcessedId))
+    else
+        GSR_Print("Starting roster stream from the beginning because LastProcessedId is not set.")
+    end
+
+    stateSv.guildName = guildName
+    stateSv.guildId = guildId
+    stateSv.category = ROSTER_HISTORY_TYPE.category
+    stateSv.startedAt = GetTimeStamp()
+
+    local started = processor:StartStreaming(lastProcessedId, function(event)
+        if GSR_EventPassesRosterFilter(event) then
+            GSR_SaveRosterEvent(guildId, guildName, event)
+        else
+            GSR_UpdateStreamProgressForSkippedEvent(guildId, guildName, event)
+        end
+    end)
+
+    if not started then
+        GSR_Print("Roster stream could not be started.")
+    else
+        GSR_Print("Roster stream started.")
+    end
+end
+
+local function GSR_StopRosterStream()
+    if not gsrProcessor then
+        GSR_Debug("No roster processor has been created.")
+        return
+    end
+
+    if not gsrProcessor.Stop then
+        GSR_Print("Roster processor does not expose Stop().")
+        return
+    end
+
+    local stopped = gsrProcessor:Stop()
+    gsrProcessor = nil
+
+    GSR_Print("Roster processor stopped: " .. tostring(stopped))
+end
+
+local function GSR_DumpRosterEvents()
+    if not gsrLibHistoire then
+        GSR_Print("LibHistoire is not ready yet.")
         return
     end
 
@@ -272,61 +465,59 @@ local function GSR_StartRosterStream(args)
     GSR_Print("Using guild: " ..
         tostring(guildName) .. " index=" .. tostring(guildIndex) .. " guildId=" .. tostring(guildId))
 
-    local processor = GSR_CreateProcessor(guildId)
+    local processor = GSR_CreateProcessor(guildId, "dump")
 
     if not processor then
         return
     end
 
-    if not processor.StartStreaming then
-        GSR_Print("This LibHistoire processor does not have StartStreaming().")
-        return
+    if processor.SetStopOnLastCachedEvent then
+        processor:SetStopOnLastCachedEvent(true)
     end
 
-    local suppliedEventId = tonumber(GSR_Trim(args))
-    local lastProcessedId = suppliedEventId or tonumber(sv.stream.lastProcessedId)
+    local startTime = 0
+    local endTime = GetTimeStamp()
 
-    if suppliedEventId then
-        GSR_Print("Starting roster stream after supplied EventId=" .. tostring(suppliedEventId))
-    else
-        GSR_Print("Starting roster stream after saved LastProcessedId=" .. tostring(lastProcessedId))
-    end
+    GSR_Print("Starting review-only dump of all cached matching roster events.")
+    GSR_Print("Dump does not save roster events and does not update LastProcessedId.")
+    GSR_Print("Start: " .. GSR_TimeString(startTime) .. " / " .. GSR_UtcTimeString(startTime))
+    GSR_Print("End: " .. GSR_TimeString(endTime) .. " / " .. GSR_UtcTimeString(endTime))
 
-    sv.stream.guildName = guildName
-    sv.stream.guildId = guildId
-    sv.stream.category = ROSTER_CATEGORY
-    sv.stream.startedAt = GetTimeStamp()
+    local started = processor:StartIteratingTimeRange(
+        startTime,
+        endTime,
+        function(event)
+            if GSR_EventPassesRosterFilter(event) then
+                local record = GSR_BuildRosterRecord(guildId, event)
 
-    local started = processor:StartStreaming(lastProcessedId, function(event)
-        GSR_SaveRosterEvent(guildId, guildName, event)
-    end)
+                if GSR_Trim(record.eventType) ~= "unknown" then
+                    GSR_PrintRosterEventEntry("dump", record)
+                end
+            end
+        end,
+        function(reason)
+            GSR_Print("Roster event dump stopped. Reason=" .. tostring(reason))
+        end
+    )
 
     if not started then
-        GSR_Print("Roster stream could not be started.")
+        GSR_Print("Roster event dump could not be started.")
     else
-        GSR_Print("Roster stream started.")
+        GSR_Print("Roster event dump started.")
     end
 end
 
-local function GSR_StopRosterStream()
-    if not gsrProcessor then
-        GSR_Print("No roster processor has been created.")
-        return
-    end
-
-    if not gsrProcessor.Stop then
-        GSR_Print("Roster processor does not expose Stop().")
-        return
-    end
-
-    local stopped = gsrProcessor:Stop()
-    GSR_Print("Roster processor stopped: " .. tostring(stopped))
-end
-
-local function GSR_DumpRoster()
+local function GSR_SaveGuildList()
     local guildId, guildIndex, guildName = GSR_GetTargetGuildId()
 
     if not guildId then
+        return
+    end
+
+    local rosterSv = GSR_EnsureRosterSavedVars()
+
+    if not rosterSv then
+        GSR_Print("Roster SavedVars not ready.")
         return
     end
 
@@ -343,18 +534,34 @@ local function GSR_DumpRoster()
         }
     end
 
-    gsrSavedVars.guildDump = {
-        dumpTimestamp = GetTimeStamp(),
-        guildMembers = members,
+    rosterSv.guildList = {
+        listTimestamp = GetTimeStamp(),
+        guildListMembers = members,
     }
 
-    GSR_Print("Saved " .. tostring(memberCount) .. " guild member(s) to GuildSyncRoster.guildDump.guildMembers.")
-    GSR_Print("Run /reloadui, log out, or exit ESO to write GuildSyncRoster.lua to disk.")
+    GSR_Print("Saved " .. tostring(memberCount) .. " guild member(s) to GuildSyncRoster.guildList.guildListMembers.")
+end
+
+local function GSR_SetDebugRoster(enabled)
+    local stateSv = GSR_EnsureSavedVars()
+
+    if not stateSv then
+        GSR_Print("SavedVars not ready.")
+        return
+    end
+
+    stateSv.debugRoster = enabled == true
+
+    if stateSv.debugRoster then
+        GSR_Print("Roster debug output is ON.")
+    else
+        GSR_Print("Roster debug output is OFF.")
+    end
 end
 
 local function GSR_InitLibHistoire()
     if gsrInitialized then
-        GSR_Print("LibHistoire already initialized.")
+        GSR_Debug("LibHistoire already initialized.")
         return
     end
 
@@ -370,29 +577,72 @@ local function GSR_InitLibHistoire()
         gsrLibHistoire = lib
 
         GSR_Print("LibHistoire is ready.")
-        GSR_StartRosterStream("")
+        GSR_StartRosterStream()
     end)
-end
-
-local function GSR_SetDebugRawInfo(enabled)
-    gsrSavedVars.debugRawInfo = enabled == true
-
-    if gsrSavedVars.debugRawInfo then
-        GSR_Print("Raw roster info echo is ON.")
-    else
-        GSR_Print("Raw roster info echo is OFF.")
-    end
 end
 
 local function GSR_ShowHelp()
     GSR_Print("Commands:")
-    GSR_Print("/gsr dump - save the current Alphabet Mafia roster")
-    GSR_Print("/gsr stream - start roster LibHistoire stream")
-    GSR_Print("/gsr stream <eventId> - start roster stream after event id")
-    GSR_Print("/gsr stop - stop roster stream")
-    GSR_Print("/gsr raw on - echo raw GetEventInfo table")
-    GSR_Print("/gsr raw off - hide raw GetEventInfo table")
-    GSR_Print("/gsrinit - retry LibHistoire initialization")
+    GSR_Print("/gsr dump - Review all cached matching roster history events. Does not save or update LastProcessedId.")
+    GSR_Print("/gsr guildlist - Save the current guild member list to GuildSyncRoster.guildList.")
+    GSR_Print(
+        "/gsr stream - Start roster LibHistoire stream after saved LastProcessedId, or from the beginning if not set.")
+    GSR_Print("/gsr stop - Stop roster stream.")
+    GSR_Print("/gsr debug on - Enable roster debug output.")
+    GSR_Print("/gsr debug off - Disable roster debug output.")
+end
+
+local function GSR_HandleCommand(args)
+    args = GSR_Trim(args)
+
+    local command, rest = args:match("^(%S+)%s*(.-)$")
+    command = string.lower(GSR_Trim(command or ""))
+    rest = GSR_Trim(rest or "")
+
+    if command == "" or command == "help" then
+        GSR_ShowHelp()
+        return
+    end
+
+    if command == "dump" then
+        GSR_DumpRosterEvents()
+        return
+    end
+
+    if command == "guildlist" then
+        GSR_SaveGuildList()
+        return
+    end
+
+    if command == "stream" then
+        GSR_StartRosterStream()
+        return
+    end
+
+    if command == "stop" then
+        GSR_StopRosterStream()
+        return
+    end
+
+    if command == "debug" then
+        local lowerRest = string.lower(rest)
+
+        if lowerRest == "on" then
+            GSR_SetDebugRoster(true)
+            return
+        end
+
+        if lowerRest == "off" then
+            GSR_SetDebugRoster(false)
+            return
+        end
+
+        GSR_Print("Usage: /gsr debug on")
+        GSR_Print("Usage: /gsr debug off")
+        return
+    end
+
+    GSR_ShowHelp()
 end
 
 local function OnAddonLoaded(eventCode, addonName)
@@ -407,48 +657,32 @@ local function OnAddonLoaded(eventCode, addonName)
         SAVED_VARS_VERSION,
         nil,
         {
-            types = {},
+            lastProcessedId = nil,
+            debugRoster = false,
+        }
+    )
+
+    gsrRosterSavedVars = ZO_SavedVars:NewAccountWide(
+        ROSTER_SAVED_VARS_NAME,
+        ROSTER_SAVED_VARS_VERSION,
+        nil,
+        {
+            guildList = {
+                listTimestamp = nil,
+                guildListMembers = {},
+            },
             rosterEvents = {},
-            guildMembers = {},
-            stream = {},
-            dumps = {},
-            guildDump = {},
-            lastDump = nil,
-            debugRawInfo = false,
         }
     )
 
     GSR_EnsureSavedVars()
+    GSR_EnsureRosterSavedVars()
 
-    SLASH_COMMANDS["/gsrinit"] = function()
-        GSR_InitLibHistoire()
-    end
-
-    SLASH_COMMANDS["/gsr"] = function(args)
-        args = GSR_Trim(args)
-        local lowerArgs = string.lower(args)
-
-        if lowerArgs == "dump" then
-            GSR_DumpRoster()
-        elseif lowerArgs == "stream" then
-            GSR_StartRosterStream("")
-        elseif string.sub(lowerArgs, 1, 7) == "stream " then
-            local eventId = GSR_Trim(string.sub(args, 8))
-            GSR_StartRosterStream(eventId)
-        elseif lowerArgs == "stop" then
-            GSR_StopRosterStream()
-        elseif lowerArgs == "raw on" then
-            GSR_SetDebugRawInfo(true)
-        elseif lowerArgs == "raw off" then
-            GSR_SetDebugRawInfo(false)
-        else
-            GSR_ShowHelp()
-        end
-    end
+    SLASH_COMMANDS["/gsr"] = GSR_HandleCommand
 
     GSR_Print("GuildSyncRoster loaded. LibHistoire will initialize automatically.")
-    GSR_Print("Manual commands: /gsr dump, /gsr stream, /gsr stop, /gsr raw on")
-    GSR_Print("SavedVars: GuildSyncRoster.lua")
+    GSR_Print("Manual commands: /gsr dump, /gsr guildlist, /gsr stream, /gsr stop, /gsr debug on")
+    GSR_Print("SavedVars: GuildSyncRosterState.lua and GuildSyncRoster.lua")
 
     GSR_InitLibHistoire()
 end

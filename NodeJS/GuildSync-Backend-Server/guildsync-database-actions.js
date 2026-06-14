@@ -1094,19 +1094,19 @@ export async function processRosterData(applicationDB, payload = {}) {
     ? payload.data
     : payload;
 
-  const guildDump = data?.guildDump && typeof data.guildDump === 'object'
-    ? data.guildDump
+  const guildList = data?.guildList && typeof data.guildList === 'object'
+    ? data.guildList
     : null;
 
   const rosterEvents = normalizeRosterEvents(data?.rosterEvents);
 
   const connection = await applicationDB.getConnection();
   const result = {
-    dump_received: Boolean(guildDump),
-    dump_processed: false,
-    dump_skipped_stale: false,
-    dump_members_received: 0,
-    dump_members_upserted: 0,
+    guildlist_received: Boolean(guildList),
+    guildlist_processed: false,
+    guildlist_skipped_stale: false,
+    guildlist_members_received: 0,
+    guildlist_members_upserted: 0,
     automatic_removals_inserted: 0,
     stream_events_received: rosterEvents.length,
     stream_events_inserted: 0,
@@ -1116,12 +1116,12 @@ export async function processRosterData(applicationDB, payload = {}) {
   try {
     await connection.beginTransaction();
 
-    if (guildDump) {
-      const dumpTimestamp = normalizeRosterTimestamp(guildDump.dumpTimestamp);
-      const guildMembers = normalizeGuildDumpMembers(guildDump.guildMembers);
-      result.dump_members_received = guildMembers.length;
+    if (guildList) {
+      const listTimestamp = normalizeRosterTimestamp(guildList.listTimestamp || guildList.dumpTimestamp);
+      const guildMembers = normalizeGuildListMembers(guildList.guildListMembers || guildList.guildMembers);
+      result.guildlist_members_received = guildMembers.length;
 
-      if (dumpTimestamp) {
+      if (listTimestamp) {
         const [settingRows] = await connection.execute(
           `
             SELECT value
@@ -1129,13 +1129,13 @@ export async function processRosterData(applicationDB, payload = {}) {
             WHERE data = ?
             LIMIT 1
           `,
-          ['lastDump']
+          ['lastGuildList']
         );
 
-        const lastDump = Number(settingRows[0]?.value || 0);
+        const lastGuildList = Number(settingRows[0]?.value || 0);
 
-        if (lastDump > Number(dumpTimestamp)) {
-          result.dump_skipped_stale = true;
+        if (lastGuildList > Number(listTimestamp)) {
+          result.guildlist_skipped_stale = true;
         } else {
           await connection.execute(
             `
@@ -1144,7 +1144,7 @@ export async function processRosterData(applicationDB, payload = {}) {
               ON DUPLICATE KEY UPDATE
                 value = VALUES(value)
             `,
-            ['lastDump', String(dumpTimestamp)]
+            ['lastGuildList', String(listTimestamp)]
           );
 
           await connection.execute(`UPDATE guildsyncroster SET in_roster = 0`);
@@ -1170,10 +1170,10 @@ export async function processRosterData(applicationDB, payload = {}) {
                   rank = VALUES(rank),
                   in_roster = 1
               `,
-              [accountName, rankName, String(dumpTimestamp)]
+              [accountName, rankName, String(listTimestamp)]
             );
 
-            result.dump_members_upserted += upsertResult.affectedRows || 0;
+            result.guildlist_members_upserted += upsertResult.affectedRows || 0;
 
             await connection.execute(
               `
@@ -1198,7 +1198,7 @@ export async function processRosterData(applicationDB, payload = {}) {
           for (const removed of removedRows) {
             const accountName = normalizeRosterAccountName(removed.account_name);
             const rankName = normalizeRosterRank(removed.rank);
-            const generatedEventId = createAutomaticRosterEventId(dumpTimestamp);
+            const generatedEventId = createAutomaticRosterEventId(listTimestamp);
 
             await connection.execute(
               `
@@ -1212,7 +1212,7 @@ export async function processRosterData(applicationDB, payload = {}) {
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
               `,
-              [generatedEventId, accountName, 'Removed (Not On Roster)', rankName, String(dumpTimestamp), 'Automatic']
+              [generatedEventId, accountName, 'Removed (Not On Roster)', rankName, String(listTimestamp), 'Automatic']
             );
 
             await connection.execute(
@@ -1232,7 +1232,7 @@ export async function processRosterData(applicationDB, payload = {}) {
           }
 
           await connection.execute(`DELETE FROM guildsyncroster WHERE in_roster = 0`);
-          result.dump_processed = true;
+          result.guildlist_processed = true;
         }
       }
     }
@@ -1283,9 +1283,7 @@ async function processSingleRosterStreamEvent(connection, event = {}) {
     return false;
   }
 
-  const accountName = eventType === 'joined' || eventType === 'left'
-    ? actingDisplayName
-    : targetDisplayName;
+  const accountName = targetDisplayName || actingDisplayName;
 
   const officerName = ['kicked', 'promoted', 'demoted', 'application accepted', 'application declined', 'application_accepted', 'application_declined'].includes(eventType)
     ? actingDisplayName
@@ -1391,7 +1389,7 @@ async function processSingleRosterStreamEvent(connection, event = {}) {
   return (insertResult.affectedRows || 0) > 0;
 }
 
-function normalizeGuildDumpMembers(guildMembers) {
+function normalizeGuildListMembers(guildMembers) {
   if (!guildMembers || typeof guildMembers !== 'object') {
     return [];
   }
@@ -1588,7 +1586,7 @@ export function parseGuildSyncRosterSavedVarsLua(rawLuaText = '') {
   return {
     table_name: 'GuildSyncRoster',
     account_name: accountName,
-    guildDump: accountWide.guildDump || null,
+    guildList: accountWide.guildList || null,
     rosterEvents: accountWide.rosterEvents || {}
   };
 }

@@ -101,13 +101,13 @@ func (a *App) CollectGuildSyncRosterData(event GuildSyncSavedVarsFileModifiedEve
 		return baseResult
 	}
 
-	guildDump, hasGuildDump := getLuaMap(accountWide["guildDump"])
+	guildList, hasGuildList := getLuaMap(accountWide["guildList"])
 	rosterEvents, hasRosterEvents := getLuaMap(accountWide["rosterEvents"])
 
-	guildDumpMemberCount := 0
-	if hasGuildDump {
-		if members, ok := getLuaMap(guildDump["guildMembers"]); ok {
-			guildDumpMemberCount = len(members)
+	guildListMemberCount := 0
+	if hasGuildList {
+		if members, ok := getLuaMap(guildList["guildListMembers"]); ok {
+			guildListMemberCount = len(members)
 		}
 	}
 
@@ -116,8 +116,8 @@ func (a *App) CollectGuildSyncRosterData(event GuildSyncSavedVarsFileModifiedEve
 		rosterEventCount = len(rosterEvents)
 	}
 
-	if guildDumpMemberCount == 0 && rosterEventCount == 0 {
-		baseResult.Message = fmt.Sprintf("No roster dump or stream entries found in %s.", fileName)
+	if guildListMemberCount == 0 && rosterEventCount == 0 {
+		baseResult.Message = fmt.Sprintf("No roster guildlist or stream entries found in %s.", fileName)
 		return baseResult
 	}
 
@@ -125,13 +125,13 @@ func (a *App) CollectGuildSyncRosterData(event GuildSyncSavedVarsFileModifiedEve
 		"table_name":   extracted.tableName,
 		"account_name": accountName,
 		"section_counts": map[string]interface{}{
-			"guildDumpMembers": guildDumpMemberCount,
+			"guildListMembers": guildListMemberCount,
 			"rosterEvents":     rosterEventCount,
 		},
 	}
 
-	if hasGuildDump && guildDumpMemberCount > 0 {
-		data["guildDump"] = guildDump
+	if hasGuildList && guildListMemberCount > 0 {
+		data["guildList"] = guildList
 	}
 
 	if hasRosterEvents && rosterEventCount > 0 {
@@ -139,7 +139,7 @@ func (a *App) CollectGuildSyncRosterData(event GuildSyncSavedVarsFileModifiedEve
 	}
 
 	baseResult.OK = true
-	baseResult.Message = fmt.Sprintf("Collected roster data from %s. Dump members: %d. Stream events: %d. SavedVariables will be cleared after backend confirmation.", fileName, guildDumpMemberCount, rosterEventCount)
+	baseResult.Message = fmt.Sprintf("Collected roster data from %s. Guild list members: %d. Stream events: %d. SavedVariables will be cleared after backend confirmation.", fileName, guildListMemberCount, rosterEventCount)
 	baseResult.Data = data
 
 	return baseResult
@@ -191,7 +191,7 @@ func (a *App) CommitGuildSyncRosterData(filePath string, fileName string) GuildS
 		return baseResult
 	}
 
-	cleanedText, _ := replaceLuaBracketSubtable(originalText, "guildDump", renderEmptyLuaTableSection("guildDump"))
+	cleanedText, _ := replaceLuaBracketSubtable(originalText, "guildList", renderEmptyGuildListSection())
 	cleanedText, _ = replaceLuaBracketSubtable(cleanedText, "rosterEvents", renderEmptyLuaTableSection("rosterEvents"))
 
 	if err := os.WriteFile(filePath, []byte(cleanedText), info.Mode().Perm()); err != nil {
@@ -200,7 +200,7 @@ func (a *App) CommitGuildSyncRosterData(filePath string, fileName string) GuildS
 	}
 
 	baseResult.OK = true
-	baseResult.Message = fmt.Sprintf("Backend confirmed roster data. Cleared guildDump and rosterEvents from %s.", fileName)
+	baseResult.Message = fmt.Sprintf("Backend confirmed roster data. Cleared guildList and rosterEvents from %s.", fileName)
 	baseResult.Data = map[string]interface{}{
 		"backup_path": backupPath,
 	}
@@ -311,6 +311,10 @@ func findMatchingLuaBrace(text string, openBraceIndex int) (int, bool) {
 	}
 
 	return -1, false
+}
+
+func renderEmptyGuildListSection() string {
+	return "[\"guildList\"] = \n{\n\t[\"listTimestamp\"] = nil,\n\t[\"guildListMembers\"] = \n\t{\n\t},\n}"
 }
 
 func renderEmptyLuaTableSection(key string) string {
