@@ -193,20 +193,23 @@ async function initializeSchema(db) {
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_member_links (
-      eso_account_name VARCHAR(64) PRIMARY KEY NOT NULL,
-      discord_user_id VARCHAR(32),
+      eso_account_name VARCHAR(64) NOT NULL,
+      discord_user_id VARCHAR(32) NOT NULL,
       discord_username VARCHAR(255),
       discord_display_name VARCHAR(255),
       discord_server_nickname VARCHAR(255),
-      link_status VARCHAR(20) NOT NULL DEFAULT 'unlinked',
+      link_status VARCHAR(20) NOT NULL DEFAULT 'candidate',
       link_method VARCHAR(20) NOT NULL DEFAULT 'none',
       match_confidence DECIMAL(5,2) NOT NULL DEFAULT 0,
       match_reason VARCHAR(255),
       match_field VARCHAR(64),
       auto_link_blocked TINYINT(1) NOT NULL DEFAULT 0,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (eso_account_name, discord_user_id),
+      INDEX idx_guildsync_member_links_eso_account_name (eso_account_name),
       INDEX idx_guildsync_member_links_discord_user_id (discord_user_id),
       INDEX idx_guildsync_member_links_status (link_status),
+      INDEX idx_guildsync_member_links_method (link_method),
       INDEX idx_guildsync_member_links_auto_link_blocked (auto_link_blocked)
     )
     CHARACTER SET utf8mb4
@@ -1442,6 +1445,145 @@ export async function getAssociateTicketReport(applicationDB) {
 }
 
 
+export async function getDiscordRankAuditReport(applicationDB) {
+  const [rows] = await applicationDB.execute(`
+    SELECT *
+    FROM (
+      SELECT
+        discord.discord_id,
+        discord.username,
+        discord.global_name,
+        discord.server_nickname,
+        COALESCE(discord_rank.discord_rank_name, '') AS discord_rank,
+        COALESCE(discord_rank.discord_rank_order, 999) AS discord_rank_order,
+        COALESCE(discord_rank.discord_rank_roles, '') AS discord_rank_roles,
+        COALESCE(linked_roster.linked_account_count, 0) AS linked_account_count,
+        COALESCE(linked_roster.active_roster_count, 0) AS active_roster_count,
+        COALESCE(linked_roster.eso_accounts, '') AS eso_accounts,
+        COALESCE(linked_roster.highest_eso_rank_name, '') AS eso_rank,
+        COALESCE(linked_roster.highest_eso_rank_order, 999) AS eso_rank_order,
+        CASE
+          WHEN COALESCE(linked_roster.linked_account_count, 0) = 0 THEN 'no_linked_eso_account'
+          WHEN COALESCE(linked_roster.active_roster_count, 0) = 0 THEN 'linked_eso_not_on_roster'
+          WHEN COALESCE(discord_rank.discord_rank_order, 999) < COALESCE(linked_roster.highest_eso_rank_order, 999) THEN 'discord_role_above_roster_rank'
+          WHEN COALESCE(discord_rank.discord_rank_order, 999) > COALESCE(linked_roster.highest_eso_rank_order, 999) THEN 'discord_role_below_roster_rank'
+          ELSE NULL
+        END AS issue_type
+      FROM discord_members discord
+      LEFT JOIN (
+        SELECT
+          ranked.discord_id,
+          MIN(ranked.rank_order) AS discord_rank_order,
+          SUBSTRING_INDEX(
+            GROUP_CONCAT(ranked.rank_name ORDER BY ranked.rank_order ASC, ranked.rank_name ASC SEPARATOR '||'),
+            '||',
+            1
+          ) AS discord_rank_name,
+          GROUP_CONCAT(DISTINCT ranked.role_name ORDER BY ranked.rank_order ASC, ranked.role_name ASC SEPARATOR ', ') AS discord_rank_roles
+        FROM (
+          SELECT
+            member_roles.discord_id,
+            roles.role_name,
+            CASE
+              WHEN LOWER(TRIM(roles.role_name)) = 'kingpin' THEN 'Consigliere'
+              ELSE roles.role_name
+            END AS rank_name,
+            CASE
+              WHEN LOWER(TRIM(roles.role_name)) IN ('kingpin', 'consigliere') THEN 1
+              WHEN LOWER(TRIM(roles.role_name)) IN ('caporegime') THEN 2
+              WHEN LOWER(TRIM(roles.role_name)) = 'capo' THEN 3
+              WHEN LOWER(TRIM(roles.role_name)) = 'soldiers' THEN 4
+              WHEN LOWER(TRIM(roles.role_name)) = 'associates' THEN 5
+              ELSE 999
+            END AS rank_order
+          FROM discord_member_roles member_roles
+          INNER JOIN discord_roles roles
+            ON roles.role_id = member_roles.role_id
+          WHERE LOWER(TRIM(roles.role_name)) IN (
+            'kingpin',
+            'consigliere',
+            'caporegime',
+            'capo',
+            'soldiers',
+            'associates'
+          )
+        ) ranked
+        GROUP BY ranked.discord_id
+      ) discord_rank
+        ON discord_rank.discord_id = discord.discord_id
+      LEFT JOIN (
+        SELECT
+          links.discord_user_id,
+          COUNT(DISTINCT links.eso_account_name) AS linked_account_count,
+          COUNT(DISTINCT roster.account_name) AS active_roster_count,
+          GROUP_CONCAT(
+            DISTINCT CONCAT(
+              links.eso_account_name,
+              COALESCE(CONCAT(' (', roster.rank_name, ')'), ' (not on roster)')
+            )
+            ORDER BY LOWER(links.eso_account_name) ASC
+            SEPARATOR ', '
+          ) AS eso_accounts,
+          MIN(
+            CASE
+              WHEN LOWER(TRIM(roster.rank_name)) IN ('kingpin', 'consigliere') THEN 1
+              WHEN LOWER(TRIM(roster.rank_name)) IN ('caporegime') THEN 2
+              WHEN LOWER(TRIM(roster.rank_name)) = 'capo' THEN 3
+              WHEN LOWER(TRIM(roster.rank_name)) = 'soldier' THEN 4
+              WHEN LOWER(TRIM(roster.rank_name)) = 'associate' THEN 5
+              ELSE 999
+            END
+          ) AS highest_eso_rank_order,
+          SUBSTRING_INDEX(
+            GROUP_CONCAT(
+              CASE
+                WHEN roster.account_name IS NULL THEN NULL
+                WHEN LOWER(TRIM(roster.rank_name)) IN ('kingpin', 'consigliere') THEN 'Consigliere'
+                WHEN LOWER(TRIM(roster.rank_name)) IN ('caporegime') THEN 'Caporegime'
+                WHEN LOWER(TRIM(roster.rank_name)) = 'capo' THEN 'Capo'
+                WHEN LOWER(TRIM(roster.rank_name)) = 'soldier' THEN 'Soldier'
+                WHEN LOWER(TRIM(roster.rank_name)) = 'associate' THEN 'Associate'
+                ELSE roster.rank_name
+              END
+              ORDER BY
+                CASE
+                  WHEN LOWER(TRIM(roster.rank_name)) IN ('kingpin', 'consigliere') THEN 1
+                  WHEN LOWER(TRIM(roster.rank_name)) IN ('caporegime') THEN 2
+                  WHEN LOWER(TRIM(roster.rank_name)) = 'capo' THEN 3
+                  WHEN LOWER(TRIM(roster.rank_name)) = 'soldier' THEN 4
+                  WHEN LOWER(TRIM(roster.rank_name)) = 'associate' THEN 5
+                  ELSE 999
+                END ASC
+              SEPARATOR '||'
+            ),
+            '||',
+            1
+          ) AS highest_eso_rank_name
+        FROM guildsync_member_links links
+        LEFT JOIN guildsync_roster_members roster
+          ON LOWER(roster.account_name) = LOWER(links.eso_account_name)
+          AND roster.in_roster = 1
+        WHERE links.link_status = 'linked'
+        GROUP BY links.discord_user_id
+      ) linked_roster
+        ON linked_roster.discord_user_id = discord.discord_id
+    ) audit_rows
+    WHERE issue_type IS NOT NULL
+    ORDER BY
+      CASE issue_type
+        WHEN 'no_linked_eso_account' THEN 0
+        WHEN 'linked_eso_not_on_roster' THEN 1
+        WHEN 'discord_role_above_roster_rank' THEN 2
+        WHEN 'discord_role_below_roster_rank' THEN 3
+        ELSE 9
+      END,
+      LOWER(COALESCE(server_nickname, global_name, username, discord_id)) ASC
+  `);
+
+  return rows;
+}
+
+
 export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) {
   const accountName = normalizeRosterAccountName(payload.account_name || payload.accountName);
   const note = String(payload.note || payload.reason || '').trim().slice(0, 160);
@@ -1891,28 +2033,53 @@ async function loadMemberLinkInputs(db) {
   return { rosterRows, discordRows, linkRows };
 }
 
+function getMemberLinkPairKey(esoAccountName, discordUserId) {
+  return `${normalizeRosterAccountName(esoAccountName).toLowerCase()}::${String(discordUserId || '').trim()}`;
+}
+
 function buildExistingLinkMaps(linkRows = []) {
+  const byPair = new Map();
   const byEso = new Map();
-  const discordLinked = new Set();
-  const blockedEso = new Set();
-  const blockedDiscord = new Set();
+  const byDiscord = new Map();
+  const blockedPairs = new Set();
+  const linkedPairs = new Set();
 
   for (const link of linkRows) {
-    const esoName = String(link.eso_account_name || '').toLowerCase();
-    const discordID = String(link.discord_user_id || '');
-    byEso.set(esoName, link);
+    const esoName = normalizeRosterAccountName(link.eso_account_name);
+    const discordID = String(link.discord_user_id || '').trim();
 
-    if (discordID && String(link.link_status || '') === 'linked') {
-      discordLinked.add(discordID);
+    if (!esoName || !discordID) {
+      continue;
     }
 
+    const pairKey = getMemberLinkPairKey(esoName, discordID);
+    byPair.set(pairKey, link);
+
+    const esoKey = esoName.toLowerCase();
+    if (!byEso.has(esoKey)) byEso.set(esoKey, []);
+    byEso.get(esoKey).push(link);
+
+    if (!byDiscord.has(discordID)) byDiscord.set(discordID, []);
+    byDiscord.get(discordID).push(link);
+
     if (Number(link.auto_link_blocked || 0) === 1) {
-      blockedEso.add(esoName);
-      if (discordID) blockedDiscord.add(discordID);
+      blockedPairs.add(pairKey);
+    }
+
+    if (String(link.link_status || '').toLowerCase() === 'linked') {
+      linkedPairs.add(pairKey);
     }
   }
 
-  return { byEso, discordLinked, blockedEso, blockedDiscord };
+  return { byPair, byEso, byDiscord, blockedPairs, linkedPairs };
+}
+
+function isMemberLinkPairBlocked(maps, esoAccountName, discordUserId) {
+  return maps.blockedPairs.has(getMemberLinkPairKey(esoAccountName, discordUserId));
+}
+
+function isMemberLinkPairLinked(maps, esoAccountName, discordUserId) {
+  return maps.linkedPairs.has(getMemberLinkPairKey(esoAccountName, discordUserId));
 }
 
 export async function runMemberAutoLinking(applicationDB) {
@@ -1924,7 +2091,7 @@ export async function runMemberAutoLinking(applicationDB) {
   const exactDiscordByName = new Map();
 
   for (const discord of discordRows) {
-    if (!discord.discord_id || maps.blockedDiscord.has(String(discord.discord_id))) continue;
+    if (!discord.discord_id) continue;
 
     for (const candidate of getDiscordNameCandidates(discord)) {
       if (!exactDiscordByName.has(candidate.normalized)) exactDiscordByName.set(candidate.normalized, []);
@@ -1939,45 +2106,48 @@ export async function runMemberAutoLinking(applicationDB) {
 
   for (const roster of rosterRows) {
     const esoName = String(roster.account_name || '').trim();
-    const esoKey = esoName.toLowerCase();
     const normalizedEso = normalizeMemberLinkName(esoName);
-    const existing = maps.byEso.get(esoKey);
 
-    if (!esoName || maps.blockedEso.has(esoKey)) continue;
-
-    if (existing && String(existing.link_status || '') === 'linked' && existing.discord_user_id) {
-      continue;
-    }
+    if (!esoName || !normalizedEso) continue;
 
     const exactMatches = exactDiscordByName.get(normalizedEso) || [];
-    const usableExactMatches = exactMatches.filter((match) => !maps.discordLinked.has(String(match.discord.discord_id)));
+    const usableExactMatches = exactMatches
+      .filter((match) => match.discord?.discord_id)
+      .filter((match) => !isMemberLinkPairBlocked(maps, esoName, match.discord.discord_id))
+      .filter((match) => !isMemberLinkPairLinked(maps, esoName, match.discord.discord_id));
 
     usableExactMatches.sort((left, right) => left.priority - right.priority);
 
-    if (usableExactMatches.length === 1 || (usableExactMatches.length > 1 && usableExactMatches[0].priority < usableExactMatches[1].priority)) {
-      const match = usableExactMatches[0];
-      const discord = match.discord;
-      await upsertMemberLink(applicationDB, {
-        esoAccountName: esoName,
-        discordUserId: discord.discord_id,
-        discordUsername: discord.username,
-        discordDisplayName: discord.global_name,
-        discordServerNickname: discord.server_nickname,
-        linkStatus: 'linked',
-        linkMethod: 'exact',
-        matchConfidence: 100,
-        matchReason: `Exact normalized ${match.field} match`,
-        matchField: match.field,
-        auto_link_blocked: 0
-      });
-      maps.discordLinked.add(String(discord.discord_id));
-      linked += 1;
+    if (usableExactMatches.length > 0) {
+      for (const match of usableExactMatches) {
+        const discord = match.discord;
+        await upsertMemberLink(applicationDB, {
+          esoAccountName: esoName,
+          discordUserId: discord.discord_id,
+          discordUsername: discord.username,
+          discordDisplayName: discord.global_name,
+          discordServerNickname: discord.server_nickname,
+          linkStatus: 'linked',
+          linkMethod: 'exact',
+          matchConfidence: 100,
+          matchReason: `Exact normalized ${match.field} match`,
+          matchField: match.field,
+          auto_link_blocked: 0
+        });
+        maps.linkedPairs.add(getMemberLinkPairKey(esoName, discord.discord_id));
+        linked += 1;
+      }
       continue;
     }
 
     let best = null;
     for (const discord of discordRows) {
-      if (!discord.discord_id || maps.discordLinked.has(String(discord.discord_id)) || maps.blockedDiscord.has(String(discord.discord_id))) continue;
+      if (!discord.discord_id) continue;
+      if (isMemberLinkPairBlocked(maps, esoName, discord.discord_id)) continue;
+      if (isMemberLinkPairLinked(maps, esoName, discord.discord_id)) continue;
+
+      const existingPair = maps.byPair.get(getMemberLinkPairKey(esoName, discord.discord_id));
+      if (existingPair && String(existingPair.link_status || '').toLowerCase() === 'candidate') continue;
 
       const match = getBestDiscordNameMatch(esoName, discord);
       if (!match) continue;
@@ -2014,7 +2184,10 @@ export async function runMemberAutoLinking(applicationDB) {
 
 export async function upsertMemberLink(applicationDB, link = {}) {
   const esoAccountName = String(link.esoAccountName || link.eso_account_name || '').trim().replace(/^@+/, '');
+  const discordUserId = String(link.discordUserId || link.discord_user_id || '').trim();
+
   if (!esoAccountName) throw new Error('ESO account name is required.');
+  if (!discordUserId) throw new Error('Discord user id is required.');
 
   await applicationDB.execute(`
     INSERT INTO guildsync_member_links (
@@ -2032,7 +2205,6 @@ export async function upsertMemberLink(applicationDB, link = {}) {
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
-      discord_user_id = VALUES(discord_user_id),
       discord_username = VALUES(discord_username),
       discord_display_name = VALUES(discord_display_name),
       discord_server_nickname = VALUES(discord_server_nickname),
@@ -2044,11 +2216,11 @@ export async function upsertMemberLink(applicationDB, link = {}) {
       auto_link_blocked = VALUES(auto_link_blocked)
   `, [
     esoAccountName,
-    link.discordUserId || link.discord_user_id || null,
+    discordUserId,
     link.discordUsername || link.discord_username || null,
     link.discordDisplayName || link.discord_display_name || null,
     link.discordServerNickname || link.discord_server_nickname || null,
-    link.linkStatus || link.link_status || 'unlinked',
+    link.linkStatus || link.link_status || 'candidate',
     link.linkMethod || link.link_method || 'none',
     Number(link.matchConfidence ?? link.match_confidence ?? 0),
     link.matchReason || link.match_reason || null,
@@ -2080,7 +2252,8 @@ export async function getMemberLinks(applicationDB) {
     ORDER BY
       CASE links.link_status WHEN 'candidate' THEN 0 WHEN 'linked' THEN 1 ELSE 2 END,
       links.match_confidence DESC,
-      LOWER(links.eso_account_name) ASC
+      LOWER(links.eso_account_name) ASC,
+      LOWER(COALESCE(links.discord_server_nickname, links.discord_display_name, links.discord_username, links.discord_user_id)) ASC
   `);
   return rows;
 }
@@ -2096,10 +2269,8 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
     const source = discordRows.find((row) => String(row.discord_id) === discordUserId);
     const names = source ? getDiscordNameCandidates(source) : [];
     return rosterRows
-      .filter((row) => {
-        const existing = maps.byEso.get(String(row.account_name || '').toLowerCase());
-        return !(existing && existing.link_status === 'linked' && existing.discord_user_id);
-      })
+      .filter((row) => !isMemberLinkPairLinked(maps, row.account_name, discordUserId))
+      .filter((row) => !isMemberLinkPairBlocked(maps, row.account_name, discordUserId))
       .map((row) => {
         let best = { confidence: 0, matchField: '' };
         for (const name of names) {
@@ -2120,7 +2291,8 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
 
   const sourceEso = accountName;
   return discordRows
-    .filter((row) => !maps.discordLinked.has(String(row.discord_id)))
+    .filter((row) => !isMemberLinkPairLinked(maps, sourceEso, row.discord_id))
+    .filter((row) => !isMemberLinkPairBlocked(maps, sourceEso, row.discord_id))
     .map((row) => {
       let best = { confidence: 0, matchField: '' };
       for (const name of getDiscordNameCandidates(row)) {
@@ -2149,19 +2321,29 @@ export async function getMemberLinkOptions(applicationDB, payload = {}) {
 
 export async function acceptMemberLinkCandidate(applicationDB, payload = {}) {
   const esoAccountName = String(payload.esoAccountName || payload.eso_account_name || '').trim().replace(/^@+/, '');
+  const discordUserId = String(payload.discordUserId || payload.discord_user_id || '').trim();
   if (!esoAccountName) throw new Error('ESO account name is required.');
+
+  const params = [esoAccountName];
+  let discordClause = '';
+  if (discordUserId) {
+    discordClause = ' AND discord_user_id = ?';
+    params.push(discordUserId);
+  }
 
   const [rows] = await applicationDB.execute(`
     SELECT *
     FROM guildsync_member_links
     WHERE LOWER(eso_account_name) = LOWER(?)
+      ${discordClause}
       AND link_status = 'candidate'
       AND auto_link_blocked = 0
+    ORDER BY match_confidence DESC
     LIMIT 1
-  `, [esoAccountName]);
+  `, params);
 
   const candidate = rows[0];
-  if (!candidate) throw new Error('No auto-link candidate found for this ESO account.');
+  if (!candidate) throw new Error('No auto-link candidate found for this ESO/Discord pair.');
 
   await upsertMemberLink(applicationDB, {
     esoAccountName,
@@ -2170,11 +2352,11 @@ export async function acceptMemberLinkCandidate(applicationDB, payload = {}) {
     discordDisplayName: candidate.discord_display_name,
     discordServerNickname: candidate.discord_server_nickname,
     linkStatus: 'linked',
-    linkMethod: 'manual',
+    linkMethod: 'fuzzy',
     matchConfidence: candidate.match_confidence,
-    matchReason: 'Accepted fuzzy candidate manually',
+    matchReason: 'Accepted fuzzy candidate',
     matchField: candidate.match_field,
-    auto_link_blocked: 1
+    auto_link_blocked: 0
   });
 }
 
@@ -2200,13 +2382,6 @@ export async function manualLinkMember(applicationDB, payload = {}) {
   const discord = discordRows[0];
   if (!discord) throw new Error('Discord member was not found.');
 
-  await applicationDB.execute(`
-    DELETE FROM guildsync_member_links
-    WHERE discord_user_id = ?
-      AND LOWER(eso_account_name) <> LOWER(?)
-      AND auto_link_blocked = 0
-  `, [discordUserId, esoAccountName]);
-
   const suppliedMatchField = linkFieldNameFromPayload(payload.matchField || payload.match_field || payload.discordMatchField || payload.discord_match_field);
   const suppliedConfidence = Number(payload.matchConfidence ?? payload.match_confidence ?? 100);
   const confidence = Number.isFinite(suppliedConfidence) ? suppliedConfidence : 100;
@@ -2225,7 +2400,7 @@ export async function manualLinkMember(applicationDB, payload = {}) {
     matchConfidence: confidence,
     matchReason,
     matchField: suppliedMatchField,
-    auto_link_blocked: 1
+    auto_link_blocked: 0
   });
 }
 
@@ -2233,89 +2408,48 @@ export async function manualUnlinkMember(applicationDB, payload = {}) {
   const esoAccountName = String(payload.esoAccountName || payload.eso_account_name || '').trim().replace(/^@+/, '');
   const discordUserId = String(payload.discordUserId || payload.discord_user_id || '').trim();
 
-  if (!esoAccountName && !discordUserId) {
-    throw new Error('ESO account name or Discord user id is required.');
+  if (!esoAccountName || !discordUserId) {
+    throw new Error('ESO account and Discord user are required to unlink a specific member link.');
   }
 
-  const [rows] = esoAccountName
-    ? await applicationDB.execute(
-      `
-        SELECT *
-        FROM guildsync_member_links
-        WHERE LOWER(eso_account_name) = LOWER(?)
-      `,
-      [esoAccountName]
-    )
-    : await applicationDB.execute(
-      `
-        SELECT *
-        FROM guildsync_member_links
-        WHERE discord_user_id = ?
-      `,
-      [discordUserId]
-    );
+  const [rows] = await applicationDB.execute(`
+    SELECT *
+    FROM guildsync_member_links
+    WHERE LOWER(eso_account_name) = LOWER(?)
+      AND discord_user_id = ?
+    LIMIT 1
+  `, [esoAccountName, discordUserId]);
 
-  let exactAutoLinksBlocked = 0;
-  let linksRemovedAndRechecked = 0;
-
-  for (const link of rows) {
-    const accountName = String(link.eso_account_name || '').trim();
-    if (!accountName) {
-      continue;
-    }
-
-    const status = String(link.link_status || '').trim().toLowerCase();
-    const method = String(link.link_method || '').trim().toLowerCase();
-
-    // Only an active exact auto-link should create an auto-link block when unlinked.
-    // Manual links and fuzzy/candidate links are treated as user choices/suggestions.
-    // Removing them should clear the link row and let normal auto/fuzzy matching run again.
-    const shouldBlockAutoRelink = status === 'linked' && method === 'exact';
-
-    if (shouldBlockAutoRelink) {
-      await applicationDB.execute(
-        `
-          UPDATE guildsync_member_links
-          SET discord_user_id = NULL,
-              discord_username = NULL,
-              discord_display_name = NULL,
-              discord_server_nickname = NULL,
-              link_status = 'unlinked',
-              link_method = 'manual_unlink',
-              match_confidence = 0,
-              match_reason = 'Exact auto-link blocked by user after unlink',
-              match_field = NULL,
-              auto_link_blocked = 1
-          WHERE LOWER(eso_account_name) = LOWER(?)
-        `,
-        [accountName]
-      );
-      exactAutoLinksBlocked += 1;
-    } else {
-      await applicationDB.execute(
-        `
-          DELETE FROM guildsync_member_links
-          WHERE LOWER(eso_account_name) = LOWER(?)
-        `,
-        [accountName]
-      );
-      linksRemovedAndRechecked += 1;
-    }
+  const existing = rows[0];
+  if (!existing) {
+    return { unlinked: 0, blocked: false };
   }
 
-  // Re-run matching after removing a manual/fuzzy/candidate link so the account can return
-  // to its natural state: exact auto-link if one exists, otherwise fuzzy/candidate suggestions.
-  if (linksRemovedAndRechecked > 0) {
-    await runMemberAutoLinking(applicationDB);
+  const status = String(existing.link_status || '').toLowerCase();
+  const method = String(existing.link_method || '').toLowerCase();
+
+  if (status === 'linked' && method === 'exact') {
+    await applicationDB.execute(`
+      UPDATE guildsync_member_links
+      SET link_status = 'blocked',
+          link_method = 'manual_unlink',
+          match_confidence = 0,
+          match_reason = 'Exact auto-link disabled by user after unlink',
+          auto_link_blocked = 1
+      WHERE LOWER(eso_account_name) = LOWER(?)
+        AND discord_user_id = ?
+    `, [esoAccountName, discordUserId]);
+
+    return { unlinked: 1, blocked: true };
   }
 
-  return {
-    exact_auto_links_blocked: exactAutoLinksBlocked,
-    links_removed_and_rechecked: linksRemovedAndRechecked,
-    non_blocking_links_removed: linksRemovedAndRechecked,
-    auto_linking_rechecked: linksRemovedAndRechecked > 0,
-    message: exactAutoLinksBlocked > 0
-      ? 'Exact auto-link removed and blocked. Manual relinking is still available.'
-      : 'Member link removed. Normal auto/fuzzy matching was rechecked.'
-  };
+  await applicationDB.execute(`
+    DELETE FROM guildsync_member_links
+    WHERE LOWER(eso_account_name) = LOWER(?)
+      AND discord_user_id = ?
+  `, [esoAccountName, discordUserId]);
+
+  await runMemberAutoLinking(applicationDB);
+
+  return { unlinked: 1, blocked: false };
 }

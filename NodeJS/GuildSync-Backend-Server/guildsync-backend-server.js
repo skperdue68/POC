@@ -24,6 +24,7 @@ import {
   insertBankingEntries,
   addManualBiweeklyTicketEntry,
   getAssociateTicketReport,
+  getDiscordRankAuditReport,
   getRosterDataDate,
   getRosterDataJSON,
   getRosterRankHistoryMatches,
@@ -935,6 +936,47 @@ io.on('connection', (socket) => {
   });
 
 
+  socket.on('guildsync:request-discord-rank-audit-report', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to run this report.',
+        rows: [],
+        rows_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-rank-audit-report-result', callback, response);
+      return;
+    }
+
+    try {
+      const rows = await getDiscordRankAuditReport(applicationDB);
+      const response = {
+        ok: true,
+        message: 'Discord rank audit report complete.',
+        rows,
+        rows_returned: rows.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-rank-audit-report-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-discord-rank-audit-report:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to run Discord Rank Audit report.',
+        rows: [],
+        rows_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-rank-audit-report-result', callback, response);
+    }
+  });
+
+
   socket.on('guildsync:request-roster-data', async (payload = {}, callback) => {
     if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
       const response = {
@@ -1202,8 +1244,9 @@ io.on('connection', (socket) => {
       await broadcastMemberLinksUpdate(links);
       sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
         ok: true,
-        message: unlinkResult?.message || 'Member link removed.',
-        ...unlinkResult,
+        message: unlinkResult?.blocked
+          ? 'Exact automatic link removed and blocked. Manual linking is still available.'
+          : 'Member link removed. Automatic/fuzzy matching was refreshed.',
         links,
         at: new Date().toLocaleString()
       });
