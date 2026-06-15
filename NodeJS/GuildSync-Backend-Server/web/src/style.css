@@ -3151,3 +3151,26 @@ body {
 .discord-last-seen-eso-link-dot:focus-visible {
   transform: none;
 }
+
+
+/* Associates Promotion Eligible report: let the dialog content own vertical scrolling.
+   The section table shells are allowed to grow so rows are not trapped/clipped
+   inside nested scroll areas. Horizontal overflow remains available for wide grids. */
+.associate-ticket-report-dialog {
+  height: min(760px, 94vh);
+}
+
+.associate-ticket-report-dialog .report-results-content {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.associate-ticket-report-dialog .report-result-section {
+  flex: 0 0 auto;
+}
+
+.associate-ticket-report-dialog .report-result-table-shell {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+}

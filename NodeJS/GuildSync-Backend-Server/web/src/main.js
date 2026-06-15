@@ -2399,7 +2399,7 @@ async function manuallyLinkEsoToDiscord(esoAccountName) {
 
   if (!optionsResponse?.ok) throw new Error(optionsResponse?.message || 'Failed to load Discord link options.');
   const options = Array.isArray(optionsResponse.options) ? optionsResponse.options.slice(0, 10) : [];
-  if (options.length === 0) throw new Error('No unlinked Discord members are available.');
+  if (options.length === 0) throw new Error('No Discord members are available.');
 
   const listText = options.map((option, index) => {
     const name = option.server_nickname || option.global_name || option.username || option.discord_id;
@@ -2426,7 +2426,7 @@ async function manuallyLinkDiscordToEso(discordUserId) {
 
   if (!optionsResponse?.ok) throw new Error(optionsResponse?.message || 'Failed to load ESO link options.');
   const options = Array.isArray(optionsResponse.options) ? optionsResponse.options.slice(0, 10) : [];
-  if (options.length === 0) throw new Error('No unlinked ESO roster members are available.');
+  if (options.length === 0) throw new Error('No ESO roster members are available.');
 
   const listText = options.map((option, index) => `${index + 1}. ${option.account_name} (${option.confidence || 0}%)`).join('\n');
   const choice = Number(window.prompt(`Choose ESO account to link to this Discord member:\n\n${listText}`, '1'));
@@ -2760,6 +2760,31 @@ function getMemberLinkOptionSortName(option) {
   return String(option.server_nickname || option.global_name || option.username || option.discord_id || '');
 }
 
+function getLinkedDiscordOptionNames(option) {
+  const linked = Array.isArray(option?.linked_discord_members) ? option.linked_discord_members : [];
+  return linked
+    .map((item) => item.discord_server_nickname || item.discord_display_name || item.discord_username || item.discord_user_id || '')
+    .filter(Boolean);
+}
+
+function getLinkedEsoOptionNames(option) {
+  const linked = Array.isArray(option?.linked_eso_accounts) ? option.linked_eso_accounts : [];
+  return linked
+    .map((item) => item.eso_account_name || '')
+    .filter(Boolean);
+}
+
+function getMemberLinkOptionExistingLinkLabel(option) {
+  const mode = memberLinkDialogContext?.mode || '';
+  if (mode === 'discord-to-eso') {
+    const names = getLinkedDiscordOptionNames(option);
+    return names.length > 0 ? `Also linked to Discord: ${names.join(', ')}` : '';
+  }
+
+  const names = getLinkedEsoOptionNames(option);
+  return names.length > 0 ? `Also linked to ESO: ${names.join(', ')}` : '';
+}
+
 function renderMemberLinkDialogOption(option, options = {}) {
   const mode = memberLinkDialogContext?.mode || '';
   const label = mode === 'discord-to-eso'
@@ -2769,11 +2794,24 @@ function renderMemberLinkDialogOption(option, options = {}) {
   const baseSubLabel = mode === 'discord-to-eso'
     ? `Rank: ${option.rank || ''}`
     : [option.username, option.global_name, option.server_nickname].filter(Boolean).join(' · ');
-  const subLabel = [baseSubLabel, matchField ? `Matched on ${matchField}` : ''].filter(Boolean).join(' • ');
+  const existingLinkLabel = getMemberLinkOptionExistingLinkLabel(option);
+  const subLabel = [baseSubLabel, matchField ? `Matched on ${matchField}` : '', existingLinkLabel].filter(Boolean).join(' • ');
   const value = mode === 'discord-to-eso' ? option.account_name : option.discord_id;
   const disabled = options.disabled === true;
 
-  const searchText = [label, baseSubLabel, subLabel, option.account_name, option.username, option.global_name, option.server_nickname, option.discord_id]
+  const searchText = [
+    label,
+    baseSubLabel,
+    subLabel,
+    existingLinkLabel,
+    option.account_name,
+    option.username,
+    option.global_name,
+    option.server_nickname,
+    option.discord_id,
+    ...getLinkedDiscordOptionNames(option),
+    ...getLinkedEsoOptionNames(option)
+  ]
     .filter(Boolean)
     .join(' ');
 

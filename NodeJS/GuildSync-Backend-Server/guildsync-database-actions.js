@@ -2255,6 +2255,49 @@ function isMemberLinkPairLinked(maps, esoAccountName, discordUserId) {
   return maps.linkedPairs.has(getMemberLinkPairKey(esoAccountName, discordUserId));
 }
 
+function isMemberLinkPairAutoUpgradeable(maps, esoAccountName, discordUserId, newConfidence = 0) {
+  if (isMemberLinkPairBlocked(maps, esoAccountName, discordUserId)) return false;
+
+  const existingPair = maps.byPair.get(getMemberLinkPairKey(esoAccountName, discordUserId));
+  if (!existingPair) return true;
+
+  const status = String(existingPair.link_status || '').toLowerCase();
+  const method = String(existingPair.link_method || '').toLowerCase();
+  const existingConfidence = Number(existingPair.match_confidence || 0);
+
+  if (status === 'blocked' || Number(existingPair.auto_link_blocked || 0) === 1) return false;
+  if (status === 'linked' && method === 'manual') return false;
+  if (status === 'linked' && method === 'exact') return false;
+
+  return ['candidate', 'unlinked'].includes(status) || (method === 'fuzzy' && newConfidence > existingConfidence);
+}
+
+async function removeWeakerMemberAutoLinkCandidates(applicationDB, { esoAccountName, discordUserId, matchConfidence }) {
+  const esoName = String(esoAccountName || '').trim().replace(/^@+/, '');
+  const discordId = String(discordUserId || '').trim();
+  const confidence = Number(matchConfidence || 0);
+
+  if (!esoName || !discordId) return;
+
+  await applicationDB.execute(`
+    DELETE FROM guildsync_member_links
+    WHERE auto_link_blocked = 0
+      AND (
+        LOWER(eso_account_name) = LOWER(?)
+        OR discord_user_id = ?
+      )
+      AND NOT (
+        LOWER(eso_account_name) = LOWER(?)
+        AND discord_user_id = ?
+      )
+      AND (
+        link_status IN ('candidate', 'unlinked')
+        OR (link_status = 'linked' AND link_method = 'fuzzy' AND match_confidence < ?)
+      )
+      AND match_confidence < ?
+  `, [esoName, discordId, esoName, discordId, confidence, confidence]);
+}
+
 export async function runMemberAutoLinking(applicationDB) {
   const { rosterRows, discordRows, linkRows } = await loadMemberLinkInputs(applicationDB);
   const maps = buildExistingLinkMaps(linkRows);
@@ -2287,7 +2330,7 @@ export async function runMemberAutoLinking(applicationDB) {
     const usableExactMatches = exactMatches
       .filter((match) => match.discord?.discord_id)
       .filter((match) => !isMemberLinkPairBlocked(maps, esoName, match.discord.discord_id))
-      .filter((match) => !isMemberLinkPairLinked(maps, esoName, match.discord.discord_id));
+      .filter((match) => isMemberLinkPairAutoUpgradeable(maps, esoName, match.discord.discord_id, 100));
 
     usableExactMatches.sort((left, right) => left.priority - right.priority);
 
@@ -2308,6 +2351,11 @@ export async function runMemberAutoLinking(applicationDB) {
           auto_link_blocked: 0
         });
         maps.linkedPairs.add(getMemberLinkPairKey(esoName, discord.discord_id));
+        await removeWeakerMemberAutoLinkCandidates(applicationDB, {
+          esoAccountName: esoName,
+          discordUserId: discord.discord_id,
+          matchConfidence: 100
+        });
         linked += 1;
       }
       continue;
@@ -2317,10 +2365,6 @@ export async function runMemberAutoLinking(applicationDB) {
     for (const discord of discordRows) {
       if (!discord.discord_id) continue;
       if (isMemberLinkPairBlocked(maps, esoName, discord.discord_id)) continue;
-      if (isMemberLinkPairLinked(maps, esoName, discord.discord_id)) continue;
-
-      const existingPair = maps.byPair.get(getMemberLinkPairKey(esoName, discord.discord_id));
-      if (existingPair && String(existingPair.link_status || '').toLowerCase() === 'candidate') continue;
 
       const match = getBestDiscordNameMatch(esoName, discord);
       if (!match) continue;
@@ -2334,7 +2378,12 @@ export async function runMemberAutoLinking(applicationDB) {
       }
     }
 
-    if (best && best.score >= 82) {
+    if (best && best.score >= 82 && isMemberLinkPairAutoUpgradeable(maps, esoName, best.discord.discord_id, best.score)) {
+      await removeWeakerMemberAutoLinkCandidates(applicationDB, {
+        esoAccountName: esoName,
+        discordUserId: best.discord.discord_id,
+        matchConfidence: best.score
+      });
       await upsertMemberLink(applicationDB, {
         esoAccountName: esoName,
         discordUserId: best.discord.discord_id,
