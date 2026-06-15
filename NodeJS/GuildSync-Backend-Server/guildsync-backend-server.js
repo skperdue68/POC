@@ -65,6 +65,11 @@ const WEB_DIST_DIR = process.env.GUILDSYNC_WEB_DIST_DIR || path.join(__dirname, 
 const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
+const GUILDSYNC_CLIENT_DOWNLOAD_FILES = {
+  windows: 'GuildSync-windows-amd64.zip',
+  macos: 'GuildSync-macos.zip',
+  linux: 'GuildSync-linux-amd64.zip'
+};
 
 let loginDB;
 let applicationDB;
@@ -315,6 +320,11 @@ app.post('/api/guildsync/upload-savedvars/:kind', requireGuildSyncWebUser, async
     });
   }
 });
+
+app.use('/downloads', express.static(path.join(__dirname, 'public', 'downloads'), {
+  fallthrough: false,
+  index: false
+}));
 
 app.use(express.static(WEB_DIST_DIR));
 app.get('*', (req, res, next) => {
@@ -951,6 +961,8 @@ io.on('connection', (socket) => {
 
   socket.on('guildsync:client-version', (payload = {}) => {
     const clientVersion = String(payload.version || '').trim();
+    const clientPlatform = normalizeClientPlatform(payload.platform || payload.os || payload.operating_system);
+    const download = getGuildSyncClientDownload(clientPlatform);
     const updateRequired = isVersionLower(clientVersion, CURRENT_GUILDSYNC_CLIENT_VERSION);
 
     socket.emit('guildsync:version-status', {
@@ -958,6 +970,10 @@ io.on('connection', (socket) => {
       client_version: clientVersion,
       latest_version: CURRENT_GUILDSYNC_CLIENT_VERSION,
       update_required: updateRequired,
+      platform: clientPlatform,
+      download,
+      download_url: download.url,
+      download_file_name: download.file_name,
       message: updateRequired
         ? `GuildSync ${clientVersion || 'unknown'} is out of date. Latest version is ${CURRENT_GUILDSYNC_CLIENT_VERSION}.`
         : `GuildSync ${clientVersion || 'unknown'} is current.`
@@ -1927,6 +1943,52 @@ function preferredUserName(user) {
   }
 
   return 'Unknown User';
+}
+
+function normalizeClientPlatform(value) {
+  const platform = String(value || '').trim().toLowerCase();
+
+  if (platform.includes('mac') || platform.includes('darwin') || platform.includes('osx')) {
+    return 'macos';
+  }
+
+  if (platform.includes('linux')) {
+    return 'linux';
+  }
+
+  if (platform.includes('win')) {
+    return 'windows';
+  }
+
+  return 'windows';
+}
+
+function getGuildSyncClientDownload(platform) {
+  const normalizedPlatform = normalizeClientPlatform(platform);
+  const fileName = GUILDSYNC_CLIENT_DOWNLOAD_FILES[normalizedPlatform] || GUILDSYNC_CLIENT_DOWNLOAD_FILES.windows;
+  const labelMap = {
+    windows: 'Windows',
+    macos: 'macOS',
+    linux: 'Linux'
+  };
+
+  return {
+    platform: normalizedPlatform,
+    label: labelMap[normalizedPlatform] || 'Windows',
+    file_name: fileName,
+    url: buildPublicDownloadUrl(`/downloads/${fileName}`)
+  };
+}
+
+function buildPublicDownloadUrl(downloadPath) {
+  const base = String(GUILDSYNC_WEB_PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  const cleanPath = String(downloadPath || '').trim().replace(/^\/+/, '');
+
+  if (!base) {
+    return `/${cleanPath}`;
+  }
+
+  return `${base}/${cleanPath}`;
 }
 
 function isVersionLower(clientVersion, serverVersion) {

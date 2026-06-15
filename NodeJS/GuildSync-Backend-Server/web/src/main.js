@@ -26,6 +26,27 @@ import {
 import { EventsOn } from './web-events.js';
 
 const GUILDSYNC_APP_VERSION = '1.0.3';
+const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
+  windows: {
+    label: 'Windows detected',
+    shortLabel: 'Windows',
+    fileName: 'GuildSync-windows-amd64.zip',
+    href: '/downloads/GuildSync-windows-amd64.zip'
+  },
+  macos: {
+    label: 'macOS detected',
+    shortLabel: 'macOS',
+    fileName: 'GuildSync-macos.zip',
+    href: '/downloads/GuildSync-macos.zip'
+  },
+  linux: {
+    label: 'Linux detected',
+    shortLabel: 'Linux',
+    fileName: 'GuildSync-linux-amd64.zip',
+    href: '/downloads/GuildSync-linux-amd64.zip'
+  }
+};
+
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
@@ -226,7 +247,10 @@ function showMainWindow() {
               <div class="compact-brand-version">Version ${escapeHtml(GUILDSYNC_APP_VERSION)}</div>
             </div>
           </div>
-          <div id="discordArea" class="discord-area"></div>
+          <div class="compact-header-actions">
+            ${renderDesktopClientDownloadButton()}
+            <div id="discordArea" class="discord-area"></div>
+          </div>
         </div>
 
         <nav class="guildsync-tabs" aria-label="GuildSync sections">
@@ -296,6 +320,51 @@ function showMainWindow() {
 
     resizeHandlerAttached = true;
   }
+}
+
+
+function getDetectedDesktopClientDownload() {
+  const userAgentDataPlatform = navigator.userAgentData?.platform || '';
+  const platform = `${userAgentDataPlatform} ${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+
+  if (platform.includes('win')) {
+    return GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS.windows;
+  }
+
+  if (platform.includes('mac') || platform.includes('darwin')) {
+    return GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS.macos;
+  }
+
+  if (platform.includes('linux') || platform.includes('x11')) {
+    return GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS.linux;
+  }
+
+  return {
+    ...GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS.windows,
+    label: 'Desktop client',
+    shortLabel: 'Windows'
+  };
+}
+
+function renderDesktopClientDownloadButton() {
+  const download = getDetectedDesktopClientDownload();
+
+  return `
+    <a
+      class="desktop-client-download-button"
+      href="${escapeAttribute(download.href)}"
+      download="${escapeAttribute(download.fileName)}"
+      title="Download ${escapeAttribute(download.fileName)}"
+      aria-label="Download GuildSync desktop client for ${escapeAttribute(download.shortLabel)}"
+    >
+      <span class="desktop-client-download-icon" aria-hidden="true">⬇</span>
+      <span class="desktop-client-download-copy">
+        <span class="desktop-client-download-title">Download Desktop Client</span>
+        <span class="desktop-client-download-subtitle">${escapeHtml(download.label)} · ZIP</span>
+      </span>
+      <span class="desktop-client-download-caret" aria-hidden="true">▾</span>
+    </a>
+  `;
 }
 
 

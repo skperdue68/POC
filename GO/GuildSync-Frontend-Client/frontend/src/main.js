@@ -23,7 +23,7 @@ import {
   CommitGuildSyncRosterData
 } from '../wailsjs/go/main/App';
 
-import { EventsOn } from '../wailsjs/runtime/runtime';
+import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime';
 
 const GUILDSYNC_APP_VERSION = '1.0.3';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -60,6 +60,14 @@ let guildSyncSession = {
   logged_in: false,
   allowed: false,
   status_message: ''
+};
+
+let desktopClientUpdateInfo = {
+  updateRequired: false,
+  latestVersion: '',
+  downloadUrl: '',
+  fileName: '',
+  platformLabel: ''
 };
 
 let socket = null;
@@ -226,6 +234,7 @@ function showMainWindow() {
               <div class="compact-brand-version">Version ${escapeHtml(GUILDSYNC_APP_VERSION)}</div>
             </div>
           </div>
+          <div id="desktopUpdateArea" class="desktop-update-area"></div>
           <div id="discordArea" class="discord-area"></div>
         </div>
 
@@ -271,6 +280,7 @@ function showMainWindow() {
     });
 
   renderDiscordArea();
+  renderDesktopUpdateArea();
   wireGuildSyncTabs();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
@@ -5755,7 +5765,9 @@ function sendVersionCheck() {
   }
 
   socket.emit('guildsync:client-version', {
-    version: GUILDSYNC_APP_VERSION
+    version: GUILDSYNC_APP_VERSION,
+    platform: getGuildSyncClientPlatform(),
+    client_type: 'wails'
   });
 }
 
@@ -5781,16 +5793,104 @@ function handleVersionStatus(payload) {
 
   if (payload.update_required) {
     const latestVersion = payload.latest_version || 'unknown';
+    const download = payload.download && typeof payload.download === 'object' ? payload.download : {};
+
+    desktopClientUpdateInfo = {
+      updateRequired: true,
+      latestVersion,
+      downloadUrl: String(payload.download_url || download.url || '').trim(),
+      fileName: String(payload.download_file_name || download.file_name || '').trim(),
+      platformLabel: String(download.label || payload.platform || getGuildSyncClientPlatform()).trim()
+    };
 
     addSystemMessage(
       'version',
       `GuildSync is out of date. Current version: ${GUILDSYNC_APP_VERSION}. Latest version: ${latestVersion}.`
     );
 
+    renderDesktopUpdateArea();
     return;
   }
 
+  desktopClientUpdateInfo = {
+    updateRequired: false,
+    latestVersion: '',
+    downloadUrl: '',
+    fileName: '',
+    platformLabel: ''
+  };
+
+  renderDesktopUpdateArea();
   removeSystemMessage('version');
+}
+
+function getGuildSyncClientPlatform() {
+  const userAgent = String(navigator.userAgent || '').toLowerCase();
+  const platform = String(navigator.platform || '').toLowerCase();
+  const combined = `${platform} ${userAgent}`;
+
+  if (combined.includes('mac')) {
+    return 'macos';
+  }
+
+  if (combined.includes('linux')) {
+    return 'linux';
+  }
+
+  return 'windows';
+}
+
+function renderDesktopUpdateArea() {
+  const container = document.querySelector('#desktopUpdateArea');
+
+  if (!container) {
+    return;
+  }
+
+  if (!desktopClientUpdateInfo.updateRequired || !desktopClientUpdateInfo.downloadUrl) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const platformLabel = desktopClientUpdateInfo.platformLabel || 'Desktop';
+  const latestVersion = desktopClientUpdateInfo.latestVersion || 'latest';
+  const fileName = desktopClientUpdateInfo.fileName || 'GuildSync client download';
+
+  container.innerHTML = `
+    <button
+      id="desktopUpdateDownloadButton"
+      class="desktop-update-download-button"
+      type="button"
+      title="Download ${escapeAttribute(fileName)}"
+      aria-label="Download GuildSync ${escapeAttribute(latestVersion)} for ${escapeAttribute(platformLabel)}"
+    >
+      <span class="desktop-update-download-icon" aria-hidden="true">⬇</span>
+      <span class="desktop-update-download-copy">
+        <span class="desktop-update-download-title">Update Available</span>
+        <span class="desktop-update-download-subtitle">${escapeHtml(platformLabel)} · ${escapeHtml(latestVersion)}</span>
+      </span>
+    </button>
+  `;
+
+  const button = container.querySelector('#desktopUpdateDownloadButton');
+  if (button) {
+    button.addEventListener('click', () => {
+      openDesktopClientUpdateDownload();
+    });
+  }
+}
+
+function openDesktopClientUpdateDownload() {
+  const downloadUrl = String(desktopClientUpdateInfo.downloadUrl || '').trim();
+
+  if (!downloadUrl) {
+    addSystemMessage('version-download-error', 'No GuildSync update download URL was provided by the server.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  BrowserOpenURL(downloadUrl);
 }
 
 function addSystemMessage(id, text, options = {}) {
