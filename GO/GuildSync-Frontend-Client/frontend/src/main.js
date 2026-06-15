@@ -242,7 +242,10 @@ function showMainWindow() {
             <div id="statusMessageTrack" class="status-message-track"></div>
           </div>
           <div class="status-spacer"></div>
-          <div id="statusDot" class="status-dot" title="Websocket not connected"></div>
+          <div class="status-connection-wrap" aria-live="polite">
+            <span id="statusConnectionLabel" class="status-connection-label">Server Unavailable</span>
+            <div id="statusDot" class="status-dot" title="Websocket not connected"></div>
+          </div>
         </footer>
       </section>
     </main>
@@ -633,7 +636,6 @@ function renderGuildSyncTabLayout(options = {}) {
   if (
     (activeGuildSyncTab === 'discord-members' || activeGuildSyncTab === 'eso-members' || activeGuildSyncTab === 'settings') &&
     socket?.connected &&
-    isAuthenticatedSession() &&
     memberLinks.length === 0 &&
     !memberLinksLoading
   ) {
@@ -2204,8 +2206,8 @@ function handleMemberLinksReportSearchKeydown(event) {
 }
 
 async function refreshMemberLinks(options = {}) {
-  if (!socket?.connected || !guildSyncSession.logged_in) {
-    memberLinksError = 'You must be logged in and connected to load member links.';
+  if (!socket?.connected) {
+    memberLinksError = 'You must be connected to load member links.';
     renderGuildSyncTabLayout();
     return;
   }
@@ -2314,7 +2316,7 @@ async function manuallyLinkEsoToDiscord(esoAccountName) {
 
   if (!optionsResponse?.ok) throw new Error(optionsResponse?.message || 'Failed to load Discord link options.');
   const options = Array.isArray(optionsResponse.options) ? optionsResponse.options.slice(0, 10) : [];
-  if (options.length === 0) throw new Error('No Discord members are available.');
+  if (options.length === 0) throw new Error('No unlinked Discord members are available.');
 
   const listText = options.map((option, index) => {
     const name = option.server_nickname || option.global_name || option.username || option.discord_id;
@@ -2341,7 +2343,7 @@ async function manuallyLinkDiscordToEso(discordUserId) {
 
   if (!optionsResponse?.ok) throw new Error(optionsResponse?.message || 'Failed to load ESO link options.');
   const options = Array.isArray(optionsResponse.options) ? optionsResponse.options.slice(0, 10) : [];
-  if (options.length === 0) throw new Error('No ESO roster members are available.');
+  if (options.length === 0) throw new Error('No unlinked ESO roster members are available.');
 
   const listText = options.map((option, index) => `${index + 1}. ${option.account_name} (${option.confidence || 0}%)`).join('\n');
   const choice = Number(window.prompt(`Choose ESO account to link to this Discord member:\n\n${listText}`, '1'));
@@ -2675,31 +2677,6 @@ function getMemberLinkOptionSortName(option) {
   return String(option.server_nickname || option.global_name || option.username || option.discord_id || '');
 }
 
-function getLinkedDiscordOptionNames(option) {
-  const linked = Array.isArray(option?.linked_discord_members) ? option.linked_discord_members : [];
-  return linked
-    .map((item) => item.discord_server_nickname || item.discord_display_name || item.discord_username || item.discord_user_id || '')
-    .filter(Boolean);
-}
-
-function getLinkedEsoOptionNames(option) {
-  const linked = Array.isArray(option?.linked_eso_accounts) ? option.linked_eso_accounts : [];
-  return linked
-    .map((item) => item.eso_account_name || '')
-    .filter(Boolean);
-}
-
-function getMemberLinkOptionExistingLinkLabel(option) {
-  const mode = memberLinkDialogContext?.mode || '';
-  if (mode === 'discord-to-eso') {
-    const names = getLinkedDiscordOptionNames(option);
-    return names.length > 0 ? `Also linked to Discord: ${names.join(', ')}` : '';
-  }
-
-  const names = getLinkedEsoOptionNames(option);
-  return names.length > 0 ? `Also linked to ESO: ${names.join(', ')}` : '';
-}
-
 function renderMemberLinkDialogOption(option, options = {}) {
   const mode = memberLinkDialogContext?.mode || '';
   const label = mode === 'discord-to-eso'
@@ -2709,32 +2686,23 @@ function renderMemberLinkDialogOption(option, options = {}) {
   const baseSubLabel = mode === 'discord-to-eso'
     ? `Rank: ${option.rank || ''}`
     : [option.username, option.global_name, option.server_nickname].filter(Boolean).join(' · ');
-  const existingLinkLabel = getMemberLinkOptionExistingLinkLabel(option);
-  const subLabel = [baseSubLabel, matchField ? `Matched on ${matchField}` : '', existingLinkLabel].filter(Boolean).join(' • ');
+  const subLabel = [baseSubLabel, matchField ? `Matched on ${matchField}` : ''].filter(Boolean).join(' • ');
   const value = mode === 'discord-to-eso' ? option.account_name : option.discord_id;
   const disabled = options.disabled === true;
 
-  const searchText = [
-    label,
-    baseSubLabel,
-    subLabel,
-    existingLinkLabel,
-    option.account_name,
-    option.username,
-    option.global_name,
-    option.server_nickname,
-    option.discord_id,
-    ...getLinkedDiscordOptionNames(option),
-    ...getLinkedEsoOptionNames(option)
-  ]
+  const searchText = [label, baseSubLabel, subLabel, option.account_name, option.username, option.global_name, option.server_nickname, option.discord_id]
     .filter(Boolean)
     .join(' ');
 
+  const fullDisplayText = [label, subLabel, `${option.confidence ?? 0}%`]
+    .filter(Boolean)
+    .join(' • ');
+
   return `
-    <button class="member-link-option-row" type="button" data-member-link-option-value="${escapeAttribute(value || '')}" data-member-link-option-search="${escapeAttribute(searchText)}" ${disabled ? 'disabled' : ''}>
-      <span class="member-link-option-name">${escapeHtml(label || '')}</span>
-      <span class="member-link-option-subtitle">${escapeHtml(subLabel || '')}</span>
-      <span class="member-link-option-confidence">${escapeHtml(String(option.confidence ?? 0))}%</span>
+    <button class="member-link-option-row" type="button" data-member-link-option-value="${escapeAttribute(value || '')}" data-member-link-option-search="${escapeAttribute(searchText)}" title="${escapeAttribute(fullDisplayText)}" ${disabled ? 'disabled' : ''}>
+      <span class="member-link-option-name" title="${escapeAttribute(label || '')}">${escapeHtml(label || '')}</span>
+      <span class="member-link-option-subtitle" title="${escapeAttribute(subLabel || '')}">${escapeHtml(subLabel || '')}</span>
+      <span class="member-link-option-confidence" title="${escapeAttribute(String(option.confidence ?? 0))}%">${escapeHtml(String(option.confidence ?? 0))}%</span>
     </button>
   `;
 }
@@ -4016,7 +3984,7 @@ function renderBankDepositsPanel() {
             <span aria-hidden="true">▦</span>
             <span>Export Bi-Weekly</span>
           </button>
-          <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button">
+          <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button" ${isAuthenticatedSession() ? '' : 'disabled title="Login required to add manual tickets."'}>
             <span aria-hidden="true">＋</span>
             <span>Add Manual Tickets</span>
           </button>
@@ -4024,7 +3992,7 @@ function renderBankDepositsPanel() {
             <span aria-hidden="true">▦</span>
             <span>Export 50/50</span>
           </button>
-          <button id="refreshBankingDataButton" class="refresh-discord-button" type="button" ${bankingDataLoading ? 'disabled' : ''}>
+          <button id="refreshBankingDataButton" class="refresh-discord-button" type="button" ${bankingDataLoading || !isAuthenticatedSession() ? 'disabled' : ''} ${isAuthenticatedSession() ? '' : 'title="Login required to send banking file updates. Existing banking data still loads automatically."'}>
             <span class="refresh-discord-icon" aria-hidden="true">↻</span>
             <span>${bankingDataLoading ? 'Refreshing...' : 'Refresh Deposits'}</span>
           </button>
@@ -4044,11 +4012,11 @@ function renderBankDepositsPanel() {
           <table class="bank-deposit-table${showTicketColumn ? '' : ' bank-deposit-table-no-tickets'}">
             <thead>
               <tr>
-                <th>Event ID <span class="bank-info-dot">i</span></th>
-                <th>Date / Time (Local) <span class="bank-info-dot">i</span></th>
+                <th>Event ID</th>
+                <th>Date / Time (Local)</th>
                 <th>Depositor</th>
-                <th>Amount Deposited <span class="bank-info-dot">i</span></th>
-                ${showTicketColumn ? '<th>Tickets Awarded <span class="bank-info-dot">i</span></th>' : ''}
+                <th>Amount Deposited</th>
+                ${showTicketColumn ? '<th>Tickets Awarded</th>' : ''}
               </tr>
             </thead>
             <tbody>
@@ -4222,6 +4190,10 @@ function wireBankDepositsPanel() {
   const manualTicketButton = document.querySelector('#openManualBiweeklyTicketButton');
   if (manualTicketButton) {
     manualTicketButton.addEventListener('click', async () => {
+      if (!isAuthenticatedSession()) {
+        addSystemMessage('manual-ticket-login-required', 'Login required to add manual tickets.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+        return;
+      }
       manualBiweeklyTicketDialogOpen = true;
       manualBiweeklyTicketError = '';
       manualBiweeklyTicketAccountSearchText = manualBiweeklyTicketForm.accountName || '';
@@ -4234,7 +4206,13 @@ function wireBankDepositsPanel() {
 
   const refreshButton = document.querySelector('#refreshBankingDataButton');
   if (refreshButton) {
-    refreshButton.addEventListener('click', () => collectAndSendGuildSyncBankingData({ key: 'banking' }));
+    refreshButton.addEventListener('click', () => {
+      if (!isAuthenticatedSession()) {
+        addSystemMessage('banking-login-required', 'Login required to send banking file updates. Existing banking data still loads automatically.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+        return;
+      }
+      collectAndSendGuildSyncBankingData({ key: 'banking' });
+    });
   }
 }
 
@@ -4525,10 +4503,6 @@ async function refreshBankingDataFromBackend(options = {}) {
         ttlMs: TRANSIENT_MESSAGE_TTL_MS
       });
     }
-    return;
-  }
-
-  if (!isAuthenticatedSession()) {
     return;
   }
 
@@ -6171,6 +6145,7 @@ function recalculateCurrentSystemMessage() {
 
 function updateStatusDot() {
   const dot = document.querySelector('#statusDot');
+  const label = document.querySelector('#statusConnectionLabel');
   if (!dot) {
     return;
   }
@@ -6179,18 +6154,30 @@ function updateStatusDot() {
 
   if (!socket?.connected) {
     dot.classList.add('status-red');
-    dot.title = 'Websocket not connected';
+    dot.title = 'Server Unavailable. Websocket is not connected.';
+    if (label) {
+      label.textContent = 'Server Unavailable';
+      label.title = 'Server Unavailable';
+    }
     return;
   }
 
   if (!isAuthenticatedSession()) {
     dot.classList.add('status-yellow');
-    dot.title = 'Websocket connected. User is not authenticated.';
+    dot.title = 'Login Required. Websocket is connected but user is not authenticated.';
+    if (label) {
+      label.textContent = 'Login Required';
+      label.title = 'Login Required';
+    }
     return;
   }
 
   dot.classList.add('status-green');
-  dot.title = `Websocket connected. Authenticated as ${getDisplayName()}.`;
+  dot.title = `Server Ready. Authenticated as ${getDisplayName()}.`;
+  if (label) {
+    label.textContent = 'Server Ready';
+    label.title = `Server Ready - ${getDisplayName()}`;
+  }
 }
 
 async function syncGuildSyncFileWatcherWithAuthState(options = {}) {

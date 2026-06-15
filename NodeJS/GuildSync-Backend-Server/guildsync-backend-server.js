@@ -1090,19 +1090,6 @@ io.on('connection', (socket) => {
 
 
   socket.on('guildsync:request-banking-data', async (payload = {}, callback) => {
-    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
-      const response = {
-        ok: false,
-        message: 'You must be logged in to retrieve banking data.',
-        entries: [],
-        entries_returned: 0,
-        at: new Date().toLocaleString()
-      };
-
-      sendSocketResponse(socket, 'guildsync:banking-data-request-result', callback, response);
-      return;
-    }
-
     try {
       const [entries, refreshDate] = await Promise.all([
         getBankingDataJSON(applicationDB),
@@ -1266,19 +1253,6 @@ io.on('connection', (socket) => {
 
 
   socket.on('guildsync:request-roster-data', async (payload = {}, callback) => {
-    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
-      const response = {
-        ok: false,
-        message: 'You must be logged in to retrieve roster data.',
-        members: [],
-        members_returned: 0,
-        at: new Date().toLocaleString()
-      };
-
-      sendSocketResponse(socket, 'guildsync:roster-data-request-result', callback, response);
-      return;
-    }
-
     try {
       const [members, refreshDate] = await Promise.all([
         getRosterDataJSON(applicationDB),
@@ -1395,16 +1369,6 @@ io.on('connection', (socket) => {
 
 
   socket.on('guildsync:request-member-links', async (payload = {}, callback) => {
-    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
-      sendSocketResponse(socket, 'guildsync:member-links-result', callback, {
-        ok: false,
-        message: 'You must be logged in to retrieve member links.',
-        links: [],
-        at: new Date().toLocaleString()
-      });
-      return;
-    }
-
     try {
       const links = await getMemberLinks(applicationDB);
       sendSocketResponse(socket, 'guildsync:member-links-result', callback, {

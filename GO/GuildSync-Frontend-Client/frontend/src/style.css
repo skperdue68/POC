@@ -599,6 +599,24 @@ body {
   flex: 0 0 18px;
 }
 
+.status-connection-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+  min-width: 168px;
+}
+
+.status-connection-label {
+  color: rgba(203, 213, 225, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  text-align: right;
+}
+
 .status-dot {
   width: 18px;
   height: 18px;
@@ -2613,13 +2631,15 @@ body {
   border-radius: 14px;
   background: rgba(15, 23, 42, 0.62);
   color: rgba(226, 232, 240, 0.94);
-  padding: 10px 12px;
+  padding: 12px 14px;
   display: grid;
-  grid-template-columns: minmax(160px, 1.2fr) minmax(180px, 2fr) auto;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 2fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   cursor: pointer;
   text-align: left;
+  min-height: 48px;
+  box-sizing: border-box;
 }
 
 .member-link-option-row:hover,
@@ -2632,18 +2652,33 @@ body {
 
 .member-link-option-name {
   font-weight: 800;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.45;
+  padding: 2px 0;
 }
 
 .member-link-option-subtitle {
   color: rgba(148, 163, 184, 0.94);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.45;
+  padding: 2px 0;
 }
 
 .member-link-option-confidence {
   font-weight: 800;
   color: #93c5fd;
+  white-space: nowrap;
+  line-height: 1.45;
+  padding-top: 0;
+  align-self: center;
 }
 
 .member-link-dialog-wide-button {
@@ -3124,6 +3159,132 @@ body {
   transform: none;
 }
 
+
+@media (max-width: 720px) {
+  .member-link-option-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .member-link-option-subtitle {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Member Link modal viewport fit fix
+   Allows the entire dialog body to scroll when the Current Link section is tall,
+   especially on the Discord Member side where one Discord account may have multiple ESO links. */
+.member-link-dialog {
+  width: min(760px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  overflow: hidden;
+}
+
+.member-link-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: 2px;
+}
+
+.member-link-dialog-section {
+  min-height: 0;
+}
+
+.member-link-dialog-section:last-child {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.member-link-option-list {
+  flex: 1 1 auto;
+  min-height: 150px;
+  max-height: min(34vh, 320px);
+}
+
+.member-link-dialog-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.member-link-dialog-body::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.7);
+  border-radius: 999px;
+}
+
+.member-link-dialog-body::-webkit-scrollbar-thumb {
+  background: rgba(96, 165, 250, 0.42);
+  border-radius: 999px;
+}
+
+.member-link-dialog-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(96, 165, 250, 0.68);
+}
+
+/* Alignment fixes: Guild Roster link status and Banking numeric columns */
+.eso-roster-table th.member-link-action-header,
+.eso-roster-table td.member-link-action-cell {
+  text-align: center;
+}
+
+.eso-roster-table th.member-link-action-header .roster-sort-header,
+.eso-roster-table th.member-link-action-header .discord-sort-header {
+  justify-content: center;
+  text-align: center;
+}
+
+.eso-roster-table td.member-link-action-cell {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.bank-deposit-table th:nth-child(4),
+.bank-deposit-table td:nth-child(4),
+.bank-deposit-table th:nth-child(5),
+.bank-deposit-table td:nth-child(5) {
+  text-align: right;
+}
+
+.bank-deposit-table th:nth-child(4),
+.bank-deposit-table th:nth-child(5),
+.bank-deposit-table td:nth-child(4),
+.bank-deposit-table td:nth-child(5) {
+  padding-right: 28px;
+}
+
+/* Member link suggestion row spacing fix
+   Keeps wrapped suggestion text visually centered with equal padding above and below. */
+.member-link-option-row {
+  align-items: center;
+  padding: 14px 16px;
+  gap: 14px;
+  min-height: 56px;
+  line-height: 1.35;
+}
+
+.member-link-option-name,
+.member-link-option-subtitle,
+.member-link-option-confidence {
+  align-self: center;
+  margin: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.member-link-option-name,
+.member-link-option-subtitle {
+  line-height: 1.4;
+}
+
+.member-link-option-confidence {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 100%;
+}
 
 /* Associates Promotion Eligible report: let the dialog content own vertical scrolling.
    The section table shells are allowed to grow so rows are not trapped/clipped
