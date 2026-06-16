@@ -99,8 +99,8 @@ export async function GetGuildSyncFileWatcherStatus() {
     watching: false,
     directory: 'Web upload mode',
     files: [
-      { key: 'banking', fileName: 'GuildSyncBanking.lua', enabled: true, filePath: 'Upload through Reports & Admin' },
-      { key: 'roster', fileName: 'GuildSyncRoster.lua', enabled: true, filePath: 'Upload through Reports & Admin' }
+      { key: 'banking', fileName: 'GuildSyncBanking.lua', enabled: true, filePath: 'Drag/drop onto the GuildSync web window' },
+      { key: 'roster', fileName: 'GuildSyncRoster.lua', enabled: true, filePath: 'Drag/drop onto the GuildSync web window' }
     ]
   };
 }
@@ -110,7 +110,7 @@ export async function SetGuildSyncSavedVarsWatchFileEnabled() {
 }
 
 export async function CollectGuildSyncBankingData() {
-  throw new Error('File watching is not available in the web interface. Use Reports & Admin → Upload ESO SavedVariables.');
+  throw new Error('File watching is not available in the web interface. Drag and drop GuildSync SavedVariables files onto the GuildSync web window.');
 }
 
 export async function CommitGuildSyncBankingData() {
@@ -118,7 +118,7 @@ export async function CommitGuildSyncBankingData() {
 }
 
 export async function CollectGuildSyncRosterData() {
-  throw new Error('File watching is not available in the web interface. Use Reports & Admin → Upload ESO SavedVariables.');
+  throw new Error('File watching is not available in the web interface. Drag and drop GuildSync SavedVariables files onto the GuildSync web window.');
 }
 
 export async function CommitGuildSyncRosterData() {

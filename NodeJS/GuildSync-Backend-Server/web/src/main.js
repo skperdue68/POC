@@ -1472,31 +1472,6 @@ function isGuildSyncWebRuntime() {
   return typeof window !== 'undefined' && window.GUILDSYNC_WEB === true;
 }
 
-function renderWebSavedVariablesUploadPanel() {
-  if (!isGuildSyncWebRuntime()) {
-    return '';
-  }
-
-  return `
-    <article class="report-option-card web-upload-card">
-      <div class="report-option-copy">
-        <h3>Upload ESO SavedVariables</h3>
-        <p>Web users can upload GuildSyncBanking.lua or GuildSyncRoster.lua directly. Files are parsed by the backend and processed only for authenticated GuildSync users.</p>
-        <div class="web-upload-controls">
-          <label class="web-upload-field">
-            <span>GuildSyncBanking.lua</span>
-            <input id="webBankingSavedVarsUpload" type="file" accept=".lua,text/plain" />
-          </label>
-          <label class="web-upload-field">
-            <span>GuildSyncRoster.lua</span>
-            <input id="webRosterSavedVarsUpload" type="file" accept=".lua,text/plain" />
-          </label>
-        </div>
-      </div>
-    </article>
-  `;
-}
-
 function renderReportsPanel() {
   return `
     <div class="guildsync-tab-panel reports-panel" data-active-tab="settings">
@@ -1508,7 +1483,6 @@ function renderReportsPanel() {
       </div>
 
       <div class="reports-scroll-area">
-        ${renderWebSavedVariablesUploadPanel()}
         <section class="reports-list" aria-label="Available reports">
           <article class="report-option-card">
             <div class="report-option-copy">
@@ -1564,8 +1538,6 @@ function wireReportsPanel() {
   document.querySelector('#runDiscordRankAuditReportButton')?.addEventListener('click', () => openDiscordRankAuditReportDialog());
   document.querySelector('#runDiscordLastSeenReportButton')?.addEventListener('click', () => openDiscordLastSeenReportDialog());
   document.querySelector('#runMemberLinksReportButton')?.addEventListener('click', () => openMemberLinksReportDialog());
-  document.querySelector('#webBankingSavedVarsUpload')?.addEventListener('change', (event) => handleWebSavedVariablesUpload(event, 'banking'));
-  document.querySelector('#webRosterSavedVarsUpload')?.addEventListener('change', (event) => handleWebSavedVariablesUpload(event, 'roster'));
 }
 
 async function handleWebSavedVariablesUpload(event, type) {

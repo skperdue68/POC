@@ -2279,10 +2279,10 @@ function renderMemberLinksRows() {
         </thead>
         <tbody>
           ${sortedLinks.map((link) => {
-            const status = String(link.link_status || '').trim().toLowerCase();
-            const method = String(link.link_method || '').trim().toLowerCase();
-            const discordMatchLabel = getMemberLinkReportDiscordDisplay(link);
-            return `
+    const status = String(link.link_status || '').trim().toLowerCase();
+    const method = String(link.link_method || '').trim().toLowerCase();
+    const discordMatchLabel = getMemberLinkReportDiscordDisplay(link);
+    return `
               <tr data-member-links-report-row data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}">
                 <td>${escapeHtml(link.eso_account_name || '')}</td>
                 <td>${discordMatchLabel}</td>
@@ -2297,7 +2297,7 @@ function renderMemberLinksRows() {
                 <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
               </tr>
             `;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>
       <div id="memberLinksReportSearchEmpty" class="roster-history-muted" hidden>No member links match your search.</div>
@@ -3418,8 +3418,8 @@ function renderManualBiweeklyTicketDialog() {
 
           <div class="roster-history-match-list manual-ticket-match-list">
             ${memberMatches.length === 0
-              ? '<div class="roster-history-muted">No matching names</div>'
-              : memberMatches.map((member, index) => `
+      ? '<div class="roster-history-muted">No matching names</div>'
+      : memberMatches.map((member, index) => `
                 <button class="roster-history-match${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? ' is-selected' : ''}" type="button" data-manual-ticket-account="${escapeAttribute(member.account_name)}">
                   <span>${escapeHtml(member.account_name)}</span>
                   <strong>${escapeHtml(member.rank || '')}</strong>
@@ -4403,7 +4403,18 @@ async function collectAndSendGuildSyncApplicationsData(payload = {}) {
     const result = await CollectGuildSyncApplicationsData(payload);
 
     if (!result?.ok) {
-      addSystemMessage('applications-data-pending', result?.message || 'Applications SavedVariables changed, but no application data was sent yet.', {
+      addSystemMessage('applications-data-info', result?.message || 'No application records were found to process.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const collectedRecords = Array.isArray(result?.data?.records)
+      ? result.data.records
+      : [];
+
+    if (collectedRecords.length === 0) {
+      addSystemMessage('applications-data-info', `No application records were found in ${result.fileName || 'GuildSyncApplications.lua'}. Nothing was uploaded.`, {
         ttlMs: TRANSIENT_MESSAGE_TTL_MS
       });
       return;
@@ -4513,7 +4524,10 @@ async function sendQueuedGuildSyncApplicationsUpload(applicationsPayload) {
     : [];
 
   if (records.length === 0) {
-    throw new Error('No application records were available to send. Application data was not cleared.');
+    addSystemMessage('applications-data-info', 'No application records were found to process. Nothing was uploaded.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return { ok: true, sent_count: 0, skipped_empty: true };
   }
 
   let sentCount = 0;
@@ -6068,14 +6082,14 @@ function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
   return `
     <div class="profile-filewatch-list">
       ${files.map((file) => {
-        const key = String(file?.key || file?.fileName || '').trim();
-        const fileName = String(file?.fileName || 'SavedVariables file').trim();
-        const filePath = String(file?.filePath || (directory ? `${directory}\\${fileName}` : fileName)).trim();
-        const enabled = file?.enabled !== false;
-        const active = watching && enabled;
-        const toggleID = `profileFileWatchToggle-${sanitizeID(key || fileName)}`;
+    const key = String(file?.key || file?.fileName || '').trim();
+    const fileName = String(file?.fileName || 'SavedVariables file').trim();
+    const filePath = String(file?.filePath || (directory ? `${directory}\\${fileName}` : fileName)).trim();
+    const enabled = file?.enabled !== false;
+    const active = watching && enabled;
+    const toggleID = `profileFileWatchToggle-${sanitizeID(key || fileName)}`;
 
-        return `
+    return `
           <label class="profile-filewatch-item ${enabled ? 'enabled' : 'disabled'}" title="${escapeAttribute(filePath)}">
             <span class="profile-filewatch-main">
               <span class="profile-filewatch-name">${escapeHtml(fileName)}</span>
@@ -6091,7 +6105,7 @@ function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
             />
           </label>
         `;
-      }).join('')}
+  }).join('')}
     </div>
   `;
 }

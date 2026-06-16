@@ -3166,33 +3166,6 @@ body {
   outline-offset: -1px;
 }
 
-.web-upload-card {
-  margin-bottom: 1rem;
-}
-
-.web-upload-controls {
-  display: grid;
-  gap: 0.75rem;
-  margin-top: 0.9rem;
-}
-
-.web-upload-field {
-  display: grid;
-  gap: 0.35rem;
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 0.9rem;
-}
-
-.web-upload-field input[type="file"] {
-  width: 100%;
-  padding: 0.6rem;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 0.7rem;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.88);
-}
-
-
 /* Discord Last Seen report */
 .discord-last-seen-report-dialog {
   width: min(1180px, 98%);
