@@ -47,7 +47,8 @@ import {
   getPendingGuildSyncApplicationBroadcasts,
   markGuildSyncApplicationBroadcasted,
   parseGuildSyncBankingSavedVarsLua,
-  parseGuildSyncRosterSavedVarsLua
+  parseGuildSyncRosterSavedVarsLua,
+  parseGuildSyncApplicationsSavedVarsLua
 } from './guildsync-database-actions.js';
 
 let discordBotConnected = false;
@@ -431,6 +432,126 @@ io.on('connection', (socket) => {
   } else {
     Log(`Connection: ${socket.id} => Unauthenticated`);
   }
+
+  socket.on('guildsync:upload-savedvars-raw', async (payload = {}, callback) => {
+    try {
+      if (!socket.guildSyncAuthenticated || !socket.guildSyncUser || socket.guildSyncAuthType === 'discord-bot') {
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: false,
+          message: 'You must be logged in to upload GuildSync SavedVariables files.'
+        });
+        return;
+      }
+
+      const fileName = path.basename(String(payload.file_name || payload.fileName || '').trim());
+      const rawLuaText = String(payload.raw_lua_text || payload.rawLuaText || '').trim();
+      const source = String(payload.source || 'web-drag-drop').trim() || 'web-drag-drop';
+      const allowedFiles = new Set(['GuildSyncBanking.lua', 'GuildSyncRoster.lua', 'GuildSyncApplications.lua']);
+
+      if (!allowedFiles.has(fileName)) {
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: false,
+          message: `Unsupported file: ${fileName || 'unknown file'}. Drop only GuildSyncBanking.lua, GuildSyncRoster.lua, or GuildSyncApplications.lua.`
+        });
+        return;
+      }
+
+      if (!rawLuaText) {
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: false,
+          message: `${fileName} did not contain any SavedVariables content.`
+        });
+        return;
+      }
+
+      Log(`Raw SavedVariables upload received from web user ${socket.guildSyncUser.display_name || socket.guildSyncUser.discord_user_id}: ${fileName}.`);
+
+      if (fileName === 'GuildSyncBanking.lua') {
+        const data = parseGuildSyncBankingSavedVarsLua(rawLuaText);
+        const result = await insertBankingEntries(applicationDB, {
+          source: data.table_name || 'GuildSyncBanking',
+          entries: data.entries || []
+        });
+
+        await broadcastBankingDataUpdate();
+
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: true,
+          kind: 'banking',
+          file_name: fileName,
+          message: `GuildSyncBanking.lua uploaded and processed. Entries: ${result.banking_entries_received}.`,
+          ...result
+        });
+        return;
+      }
+
+      if (fileName === 'GuildSyncRoster.lua') {
+        const data = parseGuildSyncRosterSavedVarsLua(rawLuaText);
+        const result = await processRosterData(applicationDB, { data });
+
+        await broadcastRosterDataUpdate();
+        await broadcastMemberLinksUpdate();
+
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: true,
+          kind: 'roster',
+          file_name: fileName,
+          message: `GuildSyncRoster.lua uploaded and processed. Guild list members: ${result.guildlist_members_received}. Stream events: ${result.stream_events_received}.`,
+          ...result
+        });
+        return;
+      }
+
+      if (fileName === 'GuildSyncApplications.lua') {
+        const data = parseGuildSyncApplicationsSavedVarsLua(rawLuaText);
+        const incomingRecords = collectGuildSyncApplicationRecords({
+          source,
+          file_name: fileName,
+          records: data.records || []
+        });
+
+        const recordsForGuild = incomingRecords.filter(record => {
+          const guildID = String(record.guildId || record.guild_id || '').trim();
+          return guildID === GUILDSYNC_APPLICATIONS_GUILD_ID;
+        });
+
+        if (!recordsForGuild.length) {
+          sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+            ok: false,
+            kind: 'applications',
+            file_name: fileName,
+            message: `No application records matched guild ID ${GUILDSYNC_APPLICATIONS_GUILD_ID}.`,
+            records_received: incomingRecords.length,
+            records_skipped: incomingRecords.length
+          });
+          return;
+        }
+
+        const result = await recordGuildSyncApplications(applicationDB, recordsForGuild);
+        const broadcastResult = await broadcastPendingGuildSyncApplications();
+
+        sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+          ok: true,
+          kind: 'applications',
+          file_name: fileName,
+          message: `GuildSyncApplications.lua uploaded and processed. Records: ${result.inserted}. Discord broadcasted: ${broadcastResult.sent}.`,
+          records_received: incomingRecords.length,
+          records_matched_guild: recordsForGuild.length,
+          records_recorded: result.inserted,
+          records_skipped: result.skipped + (incomingRecords.length - recordsForGuild.length),
+          discord_broadcasted: broadcastResult.sent,
+          discord_failed: broadcastResult.failed,
+          at: new Date().toLocaleString()
+        });
+      }
+    } catch (error) {
+      Log(`Raw SavedVariables upload failed: ${error.message}`);
+      sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
+        ok: false,
+        message: error.message || 'SavedVariables upload failed.'
+      });
+    }
+  });
 
   socket.on('guildsync:eso-guild-application-message', async (payload = {}, callback) => {
     try {

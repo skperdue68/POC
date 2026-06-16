@@ -50,6 +50,12 @@ const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
+const WEB_SAVEDVARS_ALLOWED_FILES = new Map([
+  ['GuildSyncBanking.lua', 'banking'],
+  ['GuildSyncRoster.lua', 'roster'],
+  ['GuildSyncApplications.lua', 'applications']
+]);
+
 
 const TRANSIENT_MESSAGE_TTL_MS = 60 * 1000;
 const MESSAGE_VISIBLE_MS = 7000;
@@ -68,6 +74,9 @@ let versionCheckTimer = null;
 let bankingUploadQueueProcessing = false;
 let rosterUploadQueueProcessing = false;
 let guildSyncFileWatcherStatus = null;
+let webSavedVarsDragDepth = 0;
+let webSavedVarsUploadInProgress = false;
+
 
 let systemMessages = new Map();
 let systemMessageTimers = new Map();
@@ -1590,10 +1599,10 @@ async function handleWebSavedVariablesUpload(event, type) {
     });
 
     if (type === 'banking') {
-      await requestBankingData();
+      await refreshBankingDataFromBackend({ silent: true });
     } else if (type === 'roster') {
-      await requestRosterData();
-      await refreshMemberLinksData({ silent: true });
+      await refreshRosterDataFromBackend({ silent: true });
+      await refreshMemberLinks({ silent: true });
     }
   } catch (error) {
     addSystemMessage(`web-upload-${type}-error`, formatError(error), {
@@ -1604,6 +1613,237 @@ async function handleWebSavedVariablesUpload(event, type) {
       input.value = '';
     }
   }
+}
+
+
+function isWebSavedVarsDropAvailable() {
+  return isGuildSyncWebRuntime() && isAuthenticatedSession() && socket?.connected === true;
+}
+
+function ensureWebSavedVarsDropOverlay() {
+  if (!isGuildSyncWebRuntime()) {
+    return null;
+  }
+
+  let overlay = document.querySelector('#webSavedVarsFullScreenDropOverlay');
+  if (overlay) {
+    return overlay;
+  }
+
+  overlay = document.createElement('div');
+  overlay.id = 'webSavedVarsFullScreenDropOverlay';
+  overlay.className = 'web-savedvars-fullscreen-drop-overlay';
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.innerHTML = `
+    <div class="web-savedvars-fullscreen-drop-card">
+      <div class="web-savedvars-drop-icon" aria-hidden="true">⇩</div>
+      <h2>Drop GuildSync SavedVariables File</h2>
+      <p>Allowed files only:</p>
+      <div class="web-savedvars-allowed-file-list">
+        <span>GuildSyncBanking.lua</span>
+        <span>GuildSyncRoster.lua</span>
+        <span>GuildSyncApplications.lua</span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function showWebSavedVarsDropOverlay() {
+  const overlay = ensureWebSavedVarsDropOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  overlay.classList.add('is-visible');
+  overlay.setAttribute('aria-hidden', 'false');
+}
+
+function hideWebSavedVarsDropOverlay() {
+  const overlay = document.querySelector('#webSavedVarsFullScreenDropOverlay');
+  if (!overlay) {
+    return;
+  }
+
+  overlay.classList.remove('is-visible');
+  overlay.setAttribute('aria-hidden', 'true');
+}
+
+function hasFilesInDragEvent(event) {
+  const types = Array.from(event?.dataTransfer?.types || []);
+  return types.includes('Files');
+}
+
+function setWebSavedVarsDropEffect(event) {
+  if (!event?.dataTransfer) {
+    return;
+  }
+
+  event.dataTransfer.dropEffect = isWebSavedVarsDropAvailable() ? 'copy' : 'none';
+}
+
+function getAllowedWebSavedVarsKind(fileName) {
+  const baseName = String(fileName || '').split(/[\\/]/).pop();
+  return WEB_SAVEDVARS_ALLOWED_FILES.get(baseName) || '';
+}
+
+function installWebSavedVarsFullScreenDropZone() {
+  if (!isGuildSyncWebRuntime()) {
+    return;
+  }
+
+  ensureWebSavedVarsDropOverlay();
+
+  const stopBrowserFileDrop = (event) => {
+    if (!hasFilesInDragEvent(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setWebSavedVarsDropEffect(event);
+  };
+
+  document.addEventListener('dragenter', (event) => {
+    if (!hasFilesInDragEvent(event)) {
+      return;
+    }
+
+    stopBrowserFileDrop(event);
+    webSavedVarsDragDepth += 1;
+
+    if (isWebSavedVarsDropAvailable()) {
+      showWebSavedVarsDropOverlay();
+    }
+  }, true);
+
+  document.addEventListener('dragover', (event) => {
+    stopBrowserFileDrop(event);
+
+    if (hasFilesInDragEvent(event) && isWebSavedVarsDropAvailable()) {
+      showWebSavedVarsDropOverlay();
+    }
+  }, true);
+
+  document.addEventListener('dragleave', (event) => {
+    if (!hasFilesInDragEvent(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    webSavedVarsDragDepth = Math.max(0, webSavedVarsDragDepth - 1);
+
+    if (webSavedVarsDragDepth === 0) {
+      hideWebSavedVarsDropOverlay();
+    }
+  }, true);
+
+  document.addEventListener('drop', async (event) => {
+    if (!hasFilesInDragEvent(event)) {
+      return;
+    }
+
+    stopBrowserFileDrop(event);
+    webSavedVarsDragDepth = 0;
+    hideWebSavedVarsDropOverlay();
+
+    if (!isWebSavedVarsDropAvailable()) {
+      addSystemMessage('web-savedvars-drop-not-ready', 'SavedVariables drag/drop is only available while logged in and connected to the GuildSync server.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const files = Array.from(event.dataTransfer?.files || []);
+    await handleWebSavedVarsDroppedFiles(files);
+  }, true);
+
+  window.addEventListener('blur', () => {
+    webSavedVarsDragDepth = 0;
+    hideWebSavedVarsDropOverlay();
+  });
+}
+
+async function handleWebSavedVarsDroppedFiles(files = []) {
+  if (webSavedVarsUploadInProgress) {
+    addSystemMessage('web-savedvars-drop-busy', 'A SavedVariables upload is already processing. Please wait for it to finish.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  const droppedFiles = Array.from(files || []).filter(Boolean);
+  if (!droppedFiles.length) {
+    addSystemMessage('web-savedvars-drop-empty', 'No file was dropped.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  const invalidFile = droppedFiles.find((file) => !getAllowedWebSavedVarsKind(file.name));
+  if (invalidFile) {
+    addSystemMessage('web-savedvars-drop-invalid', `Unsupported file: ${invalidFile.name}. Drop only GuildSyncBanking.lua, GuildSyncRoster.lua, or GuildSyncApplications.lua.`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  webSavedVarsUploadInProgress = true;
+
+  try {
+    for (const file of droppedFiles) {
+      await uploadWebSavedVarsRawFile(file);
+    }
+  } finally {
+    webSavedVarsUploadInProgress = false;
+  }
+}
+
+async function uploadWebSavedVarsRawFile(file) {
+  const kind = getAllowedWebSavedVarsKind(file.name);
+  if (!kind) {
+    throw new Error(`Unsupported file: ${file.name}`);
+  }
+
+  const messageId = `web-savedvars-upload-${kind}`;
+
+  const rawLuaText = await file.text();
+  if (!String(rawLuaText || '').trim()) {
+    throw new Error(`${file.name} is empty.`);
+  }
+
+  addSystemMessage(messageId, `Uploading ${file.name}...`);
+
+  try {
+    const response = await emitSocketWithAck('guildsync:upload-savedvars-raw', {
+      file_name: file.name,
+      raw_lua_text: rawLuaText,
+      source: 'web-drag-drop'
+    }, 120000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || `${file.name} upload was rejected.`);
+    }
+
+    if (kind === 'banking') {
+      await refreshBankingDataFromBackend({ silent: true });
+    } else if (kind === 'roster') {
+      await refreshRosterDataFromBackend({ silent: true });
+      await refreshMemberLinks({ silent: true });
+    }
+
+    addSystemMessage(messageId, response.message || `${file.name} uploaded and processed.`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } catch (error) {
+    addSystemMessage(messageId, formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    throw error;
+  }
+  removeSystemMessage('version');
 }
 
 function openAssociatePromotionReportDialog() {
@@ -2419,10 +2659,10 @@ function renderMemberLinksRows() {
         </thead>
         <tbody>
           ${sortedLinks.map((link) => {
-            const status = String(link.link_status || '').trim().toLowerCase();
-            const method = String(link.link_method || '').trim().toLowerCase();
-            const discordMatchLabel = getMemberLinkReportDiscordDisplay(link);
-            return `
+    const status = String(link.link_status || '').trim().toLowerCase();
+    const method = String(link.link_method || '').trim().toLowerCase();
+    const discordMatchLabel = getMemberLinkReportDiscordDisplay(link);
+    return `
               <tr data-member-links-report-row data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}">
                 <td>${escapeHtml(link.eso_account_name || '')}</td>
                 <td>${discordMatchLabel}</td>
@@ -2437,7 +2677,7 @@ function renderMemberLinksRows() {
                 <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
               </tr>
             `;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>
       <div id="memberLinksReportSearchEmpty" class="roster-history-muted" hidden>No member links match your search.</div>
@@ -3560,8 +3800,8 @@ function renderManualBiweeklyTicketDialog() {
 
           <div class="roster-history-match-list manual-ticket-match-list">
             ${memberMatches.length === 0
-              ? '<div class="roster-history-muted">No matching names</div>'
-              : memberMatches.map((member, index) => `
+      ? '<div class="roster-history-muted">No matching names</div>'
+      : memberMatches.map((member, index) => `
                 <button class="roster-history-match${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? ' is-selected' : ''}" type="button" data-manual-ticket-account="${escapeAttribute(member.account_name)}">
                   <span>${escapeHtml(member.account_name)}</span>
                   <strong>${escapeHtml(member.rank || '')}</strong>
@@ -6003,14 +6243,14 @@ function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
   return `
     <div class="profile-filewatch-list">
       ${files.map((file) => {
-        const key = String(file?.key || file?.fileName || '').trim();
-        const fileName = String(file?.fileName || 'SavedVariables file').trim();
-        const filePath = String(file?.filePath || (directory ? `${directory}\\${fileName}` : fileName)).trim();
-        const enabled = file?.enabled !== false;
-        const active = watching && enabled;
-        const toggleID = `profileFileWatchToggle-${sanitizeID(key || fileName)}`;
+    const key = String(file?.key || file?.fileName || '').trim();
+    const fileName = String(file?.fileName || 'SavedVariables file').trim();
+    const filePath = String(file?.filePath || (directory ? `${directory}\\${fileName}` : fileName)).trim();
+    const enabled = file?.enabled !== false;
+    const active = watching && enabled;
+    const toggleID = `profileFileWatchToggle-${sanitizeID(key || fileName)}`;
 
-        return `
+    return `
           <label class="profile-filewatch-item ${enabled ? 'enabled' : 'disabled'}" title="${escapeAttribute(filePath)}">
             <span class="profile-filewatch-main">
               <span class="profile-filewatch-name">${escapeHtml(fileName)}</span>
@@ -6026,7 +6266,7 @@ function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
             />
           </label>
         `;
-      }).join('')}
+  }).join('')}
     </div>
   `;
 }
@@ -6361,6 +6601,12 @@ function addSystemMessage(id, text, options = {}) {
   }
 
   systemMessages.set(cleanID, cleanText);
+  if (activeSystemMessageID === cleanID) {
+    const track = document.querySelector('#statusMessageTrack');
+    if (track) {
+      track.textContent = cleanText;
+    }
+  }
 
   if (systemMessageTimers.has(cleanID)) {
     window.clearTimeout(systemMessageTimers.get(cleanID));
@@ -6992,4 +7238,5 @@ function escapeAttribute(value) {
 }
 
 wireGuildSyncEvents();
+installWebSavedVarsFullScreenDropZone();
 showSplash();

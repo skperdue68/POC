@@ -2223,6 +2223,67 @@ export function parseGuildSyncRosterSavedVarsLua(rawLuaText = '') {
   };
 }
 
+export function parseGuildSyncApplicationsSavedVarsLua(rawLuaText = '') {
+  const tableText = extractLuaAssignmentTable(rawLuaText, 'GuildSyncApplications');
+  const parsed = parseEsoLuaTableForRoster(tableText);
+  const defaultSection = parsed?.Default || {};
+  const accountName = Object.keys(defaultSection).find((key) => key.startsWith('@')) || '';
+  const accountWide = accountName
+    ? defaultSection?.[accountName]?.['$AccountWide'] || {}
+    : {};
+
+  const recordsSource = accountWide.records || {};
+  const records = normalizeApplicationsSavedVarsRecords(recordsSource);
+
+  return {
+    table_name: 'GuildSyncApplications',
+    account_name: accountName,
+    records,
+    records_count: records.length
+  };
+}
+
+function normalizeApplicationsSavedVarsRecords(recordsSource) {
+  if (!recordsSource || typeof recordsSource !== 'object') {
+    return [];
+  }
+
+  const entries = Array.isArray(recordsSource)
+    ? recordsSource.map((value, index) => [String(index + 1), value])
+    : Object.entries(recordsSource);
+
+  return entries
+    .sort(([leftKey], [rightKey]) => {
+      const leftNumber = Number(leftKey);
+      const rightNumber = Number(rightKey);
+      const leftIsNumber = Number.isInteger(leftNumber);
+      const rightIsNumber = Number.isInteger(rightNumber);
+
+      if (leftIsNumber && rightIsNumber) {
+        return leftNumber - rightNumber;
+      }
+
+      if (leftIsNumber !== rightIsNumber) {
+        return leftIsNumber ? -1 : 1;
+      }
+
+      return String(leftKey).localeCompare(String(rightKey), undefined, { sensitivity: 'base' });
+    })
+    .map(([recordKey, value]) => {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return {
+          ...value,
+          recordKey
+        };
+      }
+
+      return {
+        recordKey,
+        value
+      };
+    });
+}
+
 function extractLuaAssignmentTable(text, tableName) {
   const assignment = new RegExp(`\\b${tableName}\\s*=\\s*\\{`).exec(text);
   if (!assignment) {
