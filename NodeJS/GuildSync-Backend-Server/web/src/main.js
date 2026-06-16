@@ -50,6 +50,7 @@ const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
+const WEB_SAVEDVARS_UPLOAD_BANNER_DISMISSED_STORAGE_KEY = 'guildsync-web-savedvars-upload-banner-dismissed';
 const WEB_SAVEDVARS_ALLOWED_FILES = new Map([
   ['GuildSyncBanking.lua', 'banking'],
   ['GuildSyncRoster.lua', 'roster'],
@@ -279,7 +280,11 @@ function showMainWindow() {
           ${renderGuildSyncTabs()}
         </nav>
 
-        <section id="guildSyncTabContent" class="guildsync-tab-content" aria-live="polite">
+        <div id="webSavedVarsUploadBannerHost">
+          ${renderWebSavedVariablesUploadBanner()}
+        </div>
+
+        <section id="guildSyncTabContent" class="guildsync-tab-content${isWebSavedVariablesUploadBannerDismissed() ? ' web-upload-banner-dismissed' : ''}" aria-live="polite">
           ${renderGuildSyncTabContent()}
         </section>
 
@@ -317,6 +322,7 @@ function showMainWindow() {
     });
 
   renderDiscordArea();
+  wireWebSavedVariablesUploadBanner();
   wireGuildSyncTabs();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
@@ -1470,6 +1476,61 @@ function renderRosterHistoryEvents() {
 
 function isGuildSyncWebRuntime() {
   return typeof window !== 'undefined' && window.GUILDSYNC_WEB === true;
+}
+
+
+function isWebSavedVariablesUploadBannerDismissed() {
+  if (!isGuildSyncWebRuntime()) {
+    return true;
+  }
+
+  try {
+    return localStorage.getItem(WEB_SAVEDVARS_UPLOAD_BANNER_DISMISSED_STORAGE_KEY) === '1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function renderWebSavedVariablesUploadBanner() {
+  if (!isGuildSyncWebRuntime() || isWebSavedVariablesUploadBannerDismissed()) {
+    return '';
+  }
+
+  return `
+    <aside class="web-savedvars-upload-banner" aria-label="ESO SavedVariables upload help">
+      <div class="web-savedvars-upload-banner-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M12 3.25c-2.74 0-5.03 1.94-5.56 4.52C3.9 8.24 2 10.47 2 13.12 2 16.2 4.5 18.7 7.58 18.7h2.19v-4.46H6.91l5.09-5.1 5.09 5.1h-2.86v4.46h2.32c3.01 0 5.45-2.44 5.45-5.45 0-2.62-1.86-4.82-4.33-5.33-.49-2.67-2.84-4.67-5.67-4.67Z" fill="currentColor"/>
+          <path d="M11.02 14.25h1.96v6.5h-1.96v-6.5Z" fill="currentColor"/>
+        </svg>
+      </div>
+      <div class="web-savedvars-upload-banner-copy">
+        <div class="web-savedvars-upload-banner-title">Upload ESO SavedVariables</div>
+        <div class="web-savedvars-upload-banner-text">
+          Drag and drop <strong>GuildSyncBanking.lua</strong>, <strong>GuildSyncRoster.lua</strong>, or <strong>GuildSyncApplications.lua</strong> anywhere on this page to upload them.
+        </div>
+      </div>
+      <button id="webSavedVarsUploadBannerDismissButton" class="web-savedvars-upload-banner-dismiss" type="button" title="Dismiss upload tip" aria-label="Dismiss upload tip">×</button>
+    </aside>
+  `;
+}
+
+function wireWebSavedVariablesUploadBanner() {
+  const dismissButton = document.querySelector('#webSavedVarsUploadBannerDismissButton');
+  if (!dismissButton) {
+    return;
+  }
+
+  dismissButton.addEventListener('click', () => {
+    try {
+      localStorage.setItem(WEB_SAVEDVARS_UPLOAD_BANNER_DISMISSED_STORAGE_KEY, '1');
+    } catch (error) {
+      // Ignore localStorage failures; the banner can still be removed for this page view.
+    }
+
+    document.querySelector('#webSavedVarsUploadBannerHost')?.remove();
+    document.querySelector('.guildsync-tab-content')?.classList.add('web-upload-banner-dismissed');
+  });
 }
 
 function renderReportsPanel() {

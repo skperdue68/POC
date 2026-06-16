@@ -454,24 +454,7 @@
       </div>
       <button id="webSavedVarsUploadBannerDismissButton" class="web-savedvars-upload-banner-dismiss" type="button" title="Dismiss upload tip" aria-label="Dismiss upload tip">\xD7</button>
     </aside>
-  `}function Ba(){const t=document.querySelector("#webSavedVarsUploadBannerDismissButton");!t||t.addEventListener("click",()=>{var e,r;try{localStorage.setItem(hs,"1")}catch{}(e=document.querySelector("#webSavedVarsUploadBannerHost"))==null||e.remove(),(r=document.querySelector(".guildsync-tab-content"))==null||r.classList.add("web-upload-banner-dismissed")})}function xa(){return nt()?`
-    <article class="report-option-card web-upload-card">
-      <div class="report-option-copy">
-        <h3>Upload ESO SavedVariables</h3>
-        <p>Web users can upload GuildSyncBanking.lua or GuildSyncRoster.lua directly. Files are parsed by the backend and processed only for authenticated GuildSync users.</p>
-        <div class="web-upload-controls">
-          <label class="web-upload-field">
-            <span>GuildSyncBanking.lua</span>
-            <input id="webBankingSavedVarsUpload" type="file" accept=".lua,text/plain" />
-          </label>
-          <label class="web-upload-field">
-            <span>GuildSyncRoster.lua</span>
-            <input id="webRosterSavedVarsUpload" type="file" accept=".lua,text/plain" />
-          </label>
-        </div>
-      </div>
-    </article>
-  `:""}function Oa(){return`
+  `}function Ba(){const t=document.querySelector("#webSavedVarsUploadBannerDismissButton");!t||t.addEventListener("click",()=>{var e,r;try{localStorage.setItem(hs,"1")}catch{}(e=document.querySelector("#webSavedVarsUploadBannerHost"))==null||e.remove(),(r=document.querySelector(".guildsync-tab-content"))==null||r.classList.add("web-upload-banner-dismissed")})}function Oa(){return`
     <div class="guildsync-tab-panel reports-panel" data-active-tab="settings">
       <div class="discord-data-header reports-header">
         <div>
@@ -481,7 +464,6 @@
       </div>
 
       <div class="reports-scroll-area">
-        ${xa()}
         <section class="reports-list" aria-label="Available reports">
           <article class="report-option-card">
             <div class="report-option-copy">
@@ -525,7 +507,7 @@
         </article>
       </div>
     </div>
-  `}function $s(){var t,e,r,n,s,i;E==="settings"&&((t=document.querySelector("#runAssociateTicketReportButton"))==null||t.addEventListener("click",()=>Ns()),(e=document.querySelector("#runDiscordRankAuditReportButton"))==null||e.addEventListener("click",()=>za()),(r=document.querySelector("#runDiscordLastSeenReportButton"))==null||r.addEventListener("click",()=>Ja()),(n=document.querySelector("#runMemberLinksReportButton"))==null||n.addEventListener("click",()=>oc()),(s=document.querySelector("#webBankingSavedVarsUpload"))==null||s.addEventListener("change",o=>Mn(o,"banking")),(i=document.querySelector("#webRosterSavedVarsUpload"))==null||i.addEventListener("change",o=>Mn(o,"roster")))}async function Mn(t,e){var s;const r=t.currentTarget,n=((s=r==null?void 0:r.files)==null?void 0:s[0])||null;if(!!n)try{const i=await n.text(),o=await fetch(`/api/guildsync/upload-savedvars/${encodeURIComponent(e)}`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${(g==null?void 0:g.token)||""}`},body:JSON.stringify({file_name:n.name,raw_lua_text:i})}),c=await o.json().catch(()=>({}));if(!o.ok||c.ok===!1)throw new Error(c.error||c.message||`Upload failed with HTTP ${o.status}.`);f(`web-upload-${e}-success`,c.message||`${n.name} uploaded and processed.`,{ttlMs:h}),e==="banking"?await it({silent:!0}):e==="roster"&&(await xe({silent:!0}),await st({silent:!0}))}catch(i){f(`web-upload-${e}-error`,S(i),{ttlMs:h})}finally{r&&(r.value="")}}function Ft(){return nt()&&R()&&(l==null?void 0:l.connected)===!0}function Ms(){if(!nt())return null;let t=document.querySelector("#webSavedVarsFullScreenDropOverlay");return t||(t=document.createElement("div"),t.id="webSavedVarsFullScreenDropOverlay",t.className="web-savedvars-fullscreen-drop-overlay",t.setAttribute("aria-hidden","true"),t.innerHTML=`
+  `}function $s(){var t,e,r,n;E==="settings"&&((t=document.querySelector("#runAssociateTicketReportButton"))==null||t.addEventListener("click",()=>Ns()),(e=document.querySelector("#runDiscordRankAuditReportButton"))==null||e.addEventListener("click",()=>za()),(r=document.querySelector("#runDiscordLastSeenReportButton"))==null||r.addEventListener("click",()=>Ja()),(n=document.querySelector("#runMemberLinksReportButton"))==null||n.addEventListener("click",()=>oc()))}async function Mn(t,e){var s;const r=t.currentTarget,n=((s=r==null?void 0:r.files)==null?void 0:s[0])||null;if(!!n)try{const i=await n.text(),o=await fetch(`/api/guildsync/upload-savedvars/${encodeURIComponent(e)}`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${(g==null?void 0:g.token)||""}`},body:JSON.stringify({file_name:n.name,raw_lua_text:i})}),c=await o.json().catch(()=>({}));if(!o.ok||c.ok===!1)throw new Error(c.error||c.message||`Upload failed with HTTP ${o.status}.`);f(`web-upload-${e}-success`,c.message||`${n.name} uploaded and processed.`,{ttlMs:h}),e==="banking"?await it({silent:!0}):e==="roster"&&(await xe({silent:!0}),await st({silent:!0}))}catch(i){f(`web-upload-${e}-error`,S(i),{ttlMs:h})}finally{r&&(r.value="")}}function Ft(){return nt()&&R()&&(l==null?void 0:l.connected)===!0}function Ms(){if(!nt())return null;let t=document.querySelector("#webSavedVarsFullScreenDropOverlay");return t||(t=document.createElement("div"),t.id="webSavedVarsFullScreenDropOverlay",t.className="web-savedvars-fullscreen-drop-overlay",t.setAttribute("aria-hidden","true"),t.innerHTML=`
     <div class="web-savedvars-fullscreen-drop-card">
       <div class="web-savedvars-drop-icon" aria-hidden="true">\u21E9</div>
       <h2>Drop GuildSync SavedVariables File</h2>

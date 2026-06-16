@@ -458,9 +458,103 @@ body {
   white-space: nowrap;
 }
 
+
+#webSavedVarsUploadBannerHost {
+  position: absolute;
+  top: 194px;
+  left: 22px;
+  right: 22px;
+  z-index: 2;
+  box-sizing: border-box;
+  --wails-draggable: no-drag;
+}
+
+.web-savedvars-upload-banner {
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 18px;
+  box-sizing: border-box;
+  border: 1px solid rgba(59, 130, 246, 0.66);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(25, 55, 111, 0.84) 0%, rgba(11, 26, 60, 0.84) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 14px 34px rgba(0, 0, 0, 0.18),
+    0 0 28px rgba(37, 99, 235, 0.12);
+  color: #f8fbff;
+}
+
+.web-savedvars-upload-banner-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #d9ecff;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.96), rgba(37, 99, 235, 0.96));
+  border: 1px solid rgba(147, 197, 253, 0.52);
+  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.24);
+}
+
+.web-savedvars-upload-banner-icon svg {
+  width: 30px;
+  height: 30px;
+  display: block;
+}
+
+.web-savedvars-upload-banner-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.web-savedvars-upload-banner-title {
+  margin-bottom: 3px;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+}
+
+.web-savedvars-upload-banner-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.web-savedvars-upload-banner-text strong {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.web-savedvars-upload-banner-dismiss {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.28);
+  color: rgba(226, 232, 240, 0.84);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.web-savedvars-upload-banner-dismiss:hover {
+  background: rgba(37, 99, 235, 0.34);
+  color: #ffffff;
+  border-color: rgba(147, 197, 253, 0.58);
+}
+
 .guildsync-tab-content {
   position: absolute;
-  top: 202px;
+  top: 284px;
   left: 22px;
   right: 22px;
   bottom: 74px;
@@ -475,6 +569,10 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 18px 45px rgba(0, 0, 0, 0.10);
   overflow: hidden;
+}
+
+.guildsync-tab-content.web-upload-banner-dismissed {
+  top: 202px;
 }
 
 .guildsync-tab-panel {
@@ -513,7 +611,34 @@ body {
     border-right: none;
   }
 
+  #webSavedVarsUploadBannerHost {
+    top: 226px;
+    left: 16px;
+    right: 16px;
+  }
+
+  .web-savedvars-upload-banner {
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+
+  .web-savedvars-upload-banner-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+  }
+
+  .web-savedvars-upload-banner-icon svg {
+    width: 26px;
+    height: 26px;
+  }
+
   .guildsync-tab-content {
+    top: 388px;
+  }
+
+  .guildsync-tab-content.web-upload-banner-dismissed {
     top: 310px;
   }
 }
@@ -3165,6 +3290,33 @@ body {
   outline: 1px solid rgba(165, 180, 252, 0.72);
   outline-offset: -1px;
 }
+
+.web-upload-card {
+  margin-bottom: 1rem;
+}
+
+.web-upload-controls {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.web-upload-field {
+  display: grid;
+  gap: 0.35rem;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.9rem;
+}
+
+.web-upload-field input[type="file"] {
+  width: 100%;
+  padding: 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.88);
+}
+
 
 /* Discord Last Seen report */
 .discord-last-seen-report-dialog {
