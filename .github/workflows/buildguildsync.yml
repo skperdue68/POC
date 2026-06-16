@@ -97,12 +97,21 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
-      - name: Create GitHub Release
+      # after wails build
+      - name: Package GuildSync Windows release
+        shell: pwsh
+        working-directory: GO/GuildSync-Frontend-Client
+        run: |
+          New-Item -ItemType Directory -Force -Path "release/GuildSync" | Out-Null
+
+          Copy-Item "build/bin/*" "release/GuildSync/" -Recurse -Force
+          Copy-Item ".env.example" "release/GuildSync/.env.example" -Force
+          Copy-Item "../../ESO" "release/GuildSync/ESO" -Recurse -Force
+
+          Compress-Archive -Path "release/GuildSync/*" -DestinationPath "GuildSync-Windows-${{ github.ref_name }}.zip" -Force
+
+      - name: Upload compiled release asset
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: |
-            GO/GuildSync-Frontend-Client/GuildSync-Client-Windows.zip
-          name: GuildSync ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
+          files: GO/GuildSync-Frontend-Client/GuildSync-Windows-${{ github.ref_name }}.zip
