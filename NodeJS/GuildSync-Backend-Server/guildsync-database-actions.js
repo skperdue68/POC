@@ -140,6 +140,29 @@ async function initializeSchema(db) {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS discord_member_history (
+      history_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      discord_id VARCHAR(32) NOT NULL,
+      username VARCHAR(255),
+      global_name VARCHAR(255),
+      server_nickname VARCHAR(255),
+      event_type VARCHAR(64) NOT NULL,
+      field_name VARCHAR(64),
+      old_value TEXT,
+      new_value TEXT,
+      event_timestamp VARCHAR(25) NOT NULL,
+      event_datetime DATETIME NOT NULL,
+      source VARCHAR(64) NOT NULL DEFAULT 'unknown',
+      INDEX idx_discord_member_history_discord_id (discord_id),
+      INDEX idx_discord_member_history_event_type (event_type),
+      INDEX idx_discord_member_history_event_datetime (event_datetime),
+      INDEX idx_discord_member_history_username (username)
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_settings (
       setting_key VARCHAR(255) PRIMARY KEY,
       value TEXT
@@ -483,61 +506,31 @@ export async function upsertDiscordRoles(applicationDB, payload) {
   };
 }
 
+
 export async function upsertDiscordMembers(applicationDB, payload) {
-  const members = Array.isArray(payload?.members)
+  const rawMembers = Array.isArray(payload?.members)
     ? payload.members
     : Array.isArray(payload)
       ? payload
       : [];
+  const members = rawMembers.map((member) => normalizeDiscordMemberPayload(member));
+  const source = String(payload?.source || 'full_sync').trim().slice(0, 64) || 'full_sync';
 
   if (members.length === 0) {
     return {
       members_processed: 0,
       members_removed: 0,
-      member_roles_processed: 0
+      member_roles_processed: 0,
+      history_events_recorded: 0
     };
   }
 
-  const memberSql = `
-    INSERT INTO discord_members (
-      discord_id,
-      avatar,
-      username,
-      global_name,
-      server_nickname,
-      import_current
-    )
-    VALUES (
-      ?,
-      ?,
-      ?,
-      ?,
-      ?,
-      ?
-    )
-    ON DUPLICATE KEY UPDATE
-      avatar = VALUES(avatar),
-      username = VALUES(username),
-      global_name = VALUES(global_name),
-      server_nickname = VALUES(server_nickname),
-      import_current = VALUES(import_current)
-  `;
-
-  const memberRoleSql = `
-    INSERT IGNORE INTO discord_member_roles (
-      discord_id,
-      role_id
-    )
-    VALUES (
-      ?,
-      ?
-    )
-  `;
-
   const connection = await applicationDB.getConnection();
 
+  let membersProcessed = 0;
   let membersRemoved = 0;
   let memberRolesProcessed = 0;
+  let historyEventsRecorded = 0;
 
   try {
     await connection.beginTransaction();
@@ -548,16 +541,50 @@ export async function upsertDiscordMembers(applicationDB, payload) {
     `);
 
     for (const member of members) {
-      const discordID = String(member.discord_id || member.id || '').trim();
-
-      if (!discordID) {
+      if (!member.discord_id) {
         continue;
       }
 
+      const existing = await getDiscordMemberSnapshot(connection, member.discord_id);
+      const existingRoleIDs = await getDiscordMemberRoleIDs(connection, member.discord_id);
+      const newRoleIDs = getRoleIDsFromMember(member);
+
+      historyEventsRecorded += await recordDiscordMemberSnapshotHistory(
+        connection,
+        existing,
+        existingRoleIDs,
+        member,
+        newRoleIDs,
+        source
+      );
+
       await connection.execute(
-        memberSql,
+        `
+          INSERT INTO discord_members (
+            discord_id,
+            avatar,
+            username,
+            global_name,
+            server_nickname,
+            import_current
+          )
+          VALUES (
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?
+          )
+          ON DUPLICATE KEY UPDATE
+            avatar = VALUES(avatar),
+            username = VALUES(username),
+            global_name = VALUES(global_name),
+            server_nickname = VALUES(server_nickname),
+            import_current = VALUES(import_current)
+        `,
         [
-          discordID,
+          member.discord_id,
           member.avatar || null,
           member.username || '',
           member.global_name || null,
@@ -571,22 +598,53 @@ export async function upsertDiscordMembers(applicationDB, payload) {
           DELETE FROM discord_member_roles
           WHERE discord_id = ?
         `,
-        [discordID]
+        [member.discord_id]
       );
 
-      const roleIDs = getRoleIDsFromMember(member);
-
-      for (const roleID of roleIDs) {
+      for (const roleID of newRoleIDs) {
         await connection.execute(
-          memberRoleSql,
+          `
+            INSERT IGNORE INTO discord_member_roles (
+              discord_id,
+              role_id
+            )
+            VALUES (
+              ?,
+              ?
+            )
+          `,
           [
-            discordID,
+            member.discord_id,
             roleID
           ]
         );
 
         memberRolesProcessed += 1;
       }
+
+      membersProcessed += 1;
+    }
+
+    const [removedMembers] = await connection.execute(`
+      SELECT
+        discord_id,
+        avatar,
+        username,
+        global_name,
+        server_nickname
+      FROM discord_members
+      WHERE import_current = 0
+    `);
+
+    for (const removedMember of removedMembers) {
+      historyEventsRecorded += await insertDiscordMemberHistory(connection, {
+        member: removedMember,
+        event_type: 'left_server',
+        field_name: null,
+        old_value: summarizeDiscordMember(removedMember),
+        new_value: null,
+        source
+      });
     }
 
     const [deleteResult] = await connection.execute(`
@@ -608,28 +666,44 @@ export async function upsertDiscordMembers(applicationDB, payload) {
   await runMemberAutoLinking(applicationDB);
 
   return {
-    members_processed: members.length,
+    members_processed: membersProcessed,
     members_removed: membersRemoved,
-    member_roles_processed: memberRolesProcessed
+    member_roles_processed: memberRolesProcessed,
+    history_events_recorded: historyEventsRecorded
   };
 }
 
+export async function upsertDiscordMember(applicationDB, payload) {
+  const member = normalizeDiscordMemberPayload(payload?.member || payload);
+  const source = String(payload?.source || member.source || 'live_event').trim().slice(0, 64) || 'live_event';
 
-export async function upsertDiscordMember(applicationDB, member) {
-  const discordID = String(member?.discord_id || member?.id || '').trim();
-
-  if (!discordID) {
+  if (!member.discord_id) {
     return {
       members_processed: 0,
-      member_roles_processed: 0
+      member_roles_processed: 0,
+      history_events_recorded: 0
     };
   }
 
   const connection = await applicationDB.getConnection();
   let memberRolesProcessed = 0;
+  let historyEventsRecorded = 0;
 
   try {
     await connection.beginTransaction();
+
+    const existing = await getDiscordMemberSnapshot(connection, member.discord_id);
+    const existingRoleIDs = await getDiscordMemberRoleIDs(connection, member.discord_id);
+    const newRoleIDs = getRoleIDsFromMember(member);
+
+    historyEventsRecorded += await recordDiscordMemberSnapshotHistory(
+      connection,
+      existing,
+      existingRoleIDs,
+      member,
+      newRoleIDs,
+      source
+    );
 
     await connection.execute(
       `
@@ -657,7 +731,7 @@ export async function upsertDiscordMember(applicationDB, member) {
           import_current = VALUES(import_current)
       `,
       [
-        discordID,
+        member.discord_id,
         member.avatar || null,
         member.username || '',
         member.global_name || null,
@@ -671,12 +745,10 @@ export async function upsertDiscordMember(applicationDB, member) {
         DELETE FROM discord_member_roles
         WHERE discord_id = ?
       `,
-      [discordID]
+      [member.discord_id]
     );
 
-    const roleIDs = getRoleIDsFromMember(member);
-
-    for (const roleID of roleIDs) {
+    for (const roleID of newRoleIDs) {
       await connection.execute(
         `
           INSERT IGNORE INTO discord_member_roles (
@@ -689,7 +761,7 @@ export async function upsertDiscordMember(applicationDB, member) {
           )
         `,
         [
-          discordID,
+          member.discord_id,
           roleID
         ]
       );
@@ -710,31 +782,65 @@ export async function upsertDiscordMember(applicationDB, member) {
 
   return {
     members_processed: 1,
-    member_roles_processed: memberRolesProcessed
+    member_roles_processed: memberRolesProcessed,
+    history_events_recorded: historyEventsRecorded
   };
 }
 
-export async function deleteDiscordMember(applicationDB, discordID) {
-  const memberID = String(discordID || '').trim();
+export async function deleteDiscordMember(applicationDB, payload) {
+  const memberID = String(payload?.discord_id || payload?.id || payload || '').trim();
+  const source = String(payload?.source || 'live_event').trim().slice(0, 64) || 'live_event';
 
   if (!memberID) {
     return {
-      members_removed: 0
+      members_removed: 0,
+      history_events_recorded: 0
     };
   }
 
-  const [result] = await applicationDB.execute(
-    `
-      DELETE FROM discord_members
-      WHERE discord_id = ?
-    `,
-    [memberID]
-  );
+  const connection = await applicationDB.getConnection();
+  let membersRemoved = 0;
+  let historyEventsRecorded = 0;
+
+  try {
+    await connection.beginTransaction();
+
+    const existing = await getDiscordMemberSnapshot(connection, memberID);
+
+    if (existing) {
+      historyEventsRecorded += await insertDiscordMemberHistory(connection, {
+        member: existing,
+        event_type: 'left_server',
+        field_name: null,
+        old_value: summarizeDiscordMember(existing),
+        new_value: null,
+        source
+      });
+    }
+
+    const [result] = await connection.execute(
+      `
+        DELETE FROM discord_members
+        WHERE discord_id = ?
+      `,
+      [memberID]
+    );
+
+    membersRemoved = result.affectedRows || 0;
+
+    await connection.commit();
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
 
   await setDiscordRefreshNow(applicationDB);
 
   return {
-    members_removed: result.affectedRows || 0
+    members_removed: membersRemoved,
+    history_events_recorded: historyEventsRecorded
   };
 }
 
@@ -840,15 +946,60 @@ export async function updateDiscordMemberLastSeen(applicationDB, payload = {}) {
     throw new Error('Missing last_seen timestamp.');
   }
 
-  const parameters = [timestamp, action || 'unknown'];
+  const activitySeconds = Number(timestamp);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const weekAgoSeconds = nowSeconds - (7 * 24 * 60 * 60);
+  const isHistoricalUpdate = action === 'historical_message_scan' || String(payload.source || '').trim() === 'historical_scan';
+
+  const lookupParameters = [];
   let whereSql = 'discord_id = ?';
 
   if (discordID) {
-    parameters.push(discordID);
+    lookupParameters.push(discordID);
   } else {
     whereSql = 'username = ?';
-    parameters.push(username);
+    lookupParameters.push(username);
   }
+
+  if (isHistoricalUpdate) {
+    if (!Number.isFinite(activitySeconds) || activitySeconds < weekAgoSeconds) {
+      return {
+        updated: 0,
+        skipped: true,
+        reason: 'Historical activity is older than one week.',
+        discord_id: discordID || null,
+        username: username || null,
+        last_seen: timestamp,
+        last_seen_action: action || 'unknown'
+      };
+    }
+
+    const [existingRows] = await applicationDB.execute(
+      `
+        SELECT last_seen
+        FROM discord_members
+        WHERE ${whereSql}
+        LIMIT 1
+      `,
+      lookupParameters
+    );
+
+    const priorLastSeen = Number(existingRows[0]?.last_seen || 0);
+
+    if (Number.isFinite(priorLastSeen) && priorLastSeen >= weekAgoSeconds) {
+      return {
+        updated: 0,
+        skipped: true,
+        reason: 'Existing last-seen value is already within the last week.',
+        discord_id: discordID || null,
+        username: username || null,
+        last_seen: timestamp,
+        last_seen_action: action || 'unknown'
+      };
+    }
+  }
+
+  const parameters = [timestamp, action || 'unknown', ...lookupParameters];
 
   const [result] = await applicationDB.execute(
     `
@@ -875,19 +1026,20 @@ export async function updateDiscordMemberLastSeen(applicationDB, payload = {}) {
 }
 
 export async function getDiscordHistoricalScanStatus(applicationDB) {
-  const [rows] = await applicationDB.execute(
-    `
-      SELECT value
-      FROM guildsync_settings
-      WHERE setting_key = ?
-      LIMIT 1
-    `,
-    ['discord_historical_scan_completed']
-  );
+  const completed = await getSettingValue(applicationDB, 'discord_historical_scan_completed');
+  const completedAt = await getSettingValue(applicationDB, 'discord_historical_scan_completed_at');
+  const nowMs = Date.now();
+  const completedAtMs = completedAt ? Date.parse(completedAt) : NaN;
+  const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+  const shouldRun = !completedAt || Number.isNaN(completedAtMs) || nowMs - completedAtMs >= oneWeekMs;
 
   return {
-    completed: rows[0]?.value === '1',
-    completed_at: rows[0]?.value === '1' ? await getSettingValue(applicationDB, 'discord_historical_scan_completed_at') : null
+    completed: completed === '1',
+    completed_at: completedAt,
+    should_run: shouldRun,
+    next_allowed_at: completedAt && !Number.isNaN(completedAtMs)
+      ? new Date(completedAtMs + oneWeekMs).toISOString()
+      : null
   };
 }
 
@@ -997,6 +1149,87 @@ export async function getDiscordMemberDataJSON(applicationDB) {
 
 
 
+
+
+export async function getDiscordMemberHistoryMatches(applicationDB, query = '') {
+  const search = String(query || '').trim();
+
+  if (!search) {
+    return [];
+  }
+
+  const like = `%${search}%`;
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        h.discord_id AS discord_id,
+        COALESCE(MAX(NULLIF(dm.username, '')), MAX(NULLIF(h.username, '')), h.discord_id) AS username,
+        COALESCE(MAX(NULLIF(dm.global_name, '')), MAX(NULLIF(h.global_name, ''))) AS global_name,
+        COALESCE(MAX(NULLIF(dm.server_nickname, '')), MAX(NULLIF(h.server_nickname, ''))) AS server_nickname,
+        COUNT(*) AS event_count,
+        MAX(h.event_datetime) AS last_event_datetime
+      FROM discord_member_history h
+      LEFT JOIN discord_members dm
+        ON dm.discord_id = h.discord_id
+      WHERE h.discord_id LIKE ?
+        OR h.username LIKE ?
+        OR h.global_name LIKE ?
+        OR h.server_nickname LIKE ?
+        OR dm.username LIKE ?
+        OR dm.global_name LIKE ?
+        OR dm.server_nickname LIKE ?
+      GROUP BY h.discord_id
+      ORDER BY
+        LOWER(COALESCE(
+          MAX(NULLIF(dm.server_nickname, '')),
+          MAX(NULLIF(h.server_nickname, '')),
+          MAX(NULLIF(dm.global_name, '')),
+          MAX(NULLIF(h.global_name, '')),
+          MAX(NULLIF(dm.username, '')),
+          MAX(NULLIF(h.username, '')),
+          h.discord_id
+        )) ASC,
+        h.discord_id ASC
+      LIMIT 50
+    `,
+    [like, like, like, like, like, like, like]
+  );
+
+  return rows;
+}
+
+export async function getDiscordMemberHistoryForMember(applicationDB, discordID) {
+  const memberID = String(discordID || '').trim();
+
+  if (!memberID) {
+    return [];
+  }
+
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        history_id,
+        discord_id,
+        username,
+        global_name,
+        server_nickname,
+        event_type,
+        field_name,
+        old_value,
+        new_value,
+        event_timestamp,
+        event_datetime,
+        source
+      FROM discord_member_history
+      WHERE discord_id = ?
+      ORDER BY event_datetime DESC, history_id DESC
+      LIMIT 300
+    `,
+    [memberID]
+  );
+
+  return rows;
+}
 
 export async function getBankingDataDate(applicationDB) {
   const [rows] = await applicationDB.execute(`
@@ -1823,15 +2056,20 @@ export async function getDiscordRankAuditReport(applicationDB) {
 export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) {
   const accountName = normalizeRosterAccountName(payload.account_name || payload.accountName);
   const note = String(payload.note || payload.reason || '').trim().slice(0, 160);
+  const ticketTypeInput = String(payload.ticket_type || payload.ticketType || payload.raffle_type || payload.raffleType || '').trim().toLowerCase();
+  const transactionType = ticketTypeInput === 'monthly' || ticketTypeInput === '50/50' || ticketTypeInput === '5050'
+    ? 'monthly'
+    : 'biweekly';
   const tickets = Math.floor(Number(payload.tickets || payload.ticket_quantity || payload.ticketAmount || 0));
+  const goldValue = Math.floor(Number(payload.gold_value || payload.goldValue || payload.deposit_amount || payload.depositAmount || 0));
   const addedBy = String(payload.addedBy || payload.auditUser || '').trim().slice(0, 64);
 
   if (!accountName) {
     throw new Error('Missing guild member account name.');
   }
 
-  if (!note) {
-    throw new Error('Missing manual ticket note.');
+  if (!Number.isFinite(goldValue) || goldValue < 0) {
+    throw new Error('Manual ticket gold value must be zero or greater.');
   }
 
   if (!Number.isFinite(tickets) || tickets <= 0) {
@@ -1841,7 +2079,9 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
   const timestamp = Math.floor(Date.now() / 1000);
   const random = Math.floor(Math.random() * 900000) + 100000;
   const event_id = `Manual${timestamp}${random}`.slice(0, 32);
-  const auditedNote = `${note} - added by ${addedBy || 'Unknown'}`.slice(0, 255);
+  const defaultNote = transactionType === 'monthly' ? 'Manual 50/50 ticket entry' : 'Manual bi-weekly ticket entry';
+  const auditedNote = `${note || defaultNote} - added by ${addedBy || 'Unknown'}`.slice(0, 255);
+  const dataSource = transactionType === 'monthly' ? 'ManualMonthlyTicket' : 'ManualBiweeklyTicket';
 
   const [result] = await applicationDB.execute(
     `
@@ -1859,18 +2099,18 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
       )
       VALUES (
         ?,
-        'biweekly',
+        ?,
         ?,
         ?,
         FROM_UNIXTIME(?),
-        0,
         ?,
-        'ManualBiweeklyTicket',
+        ?,
+        ?,
         ?,
         0
       )
     `,
-    [event_id, accountName, String(timestamp), timestamp, tickets, auditedNote]
+    [event_id, transactionType, accountName, String(timestamp), timestamp, goldValue, tickets, dataSource, auditedNote]
   );
 
   await setSetting(applicationDB, 'banking_refresh', new Date().toISOString());
@@ -1879,13 +2119,13 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
     eventId: event_id,
     inserted: result.affectedRows || 0,
     entry: {
-      type: 'biweekly',
+      type: transactionType,
       eventId: event_id,
       time: timestamp,
       displayName: accountName,
-      amount: 0,
+      amount: goldValue,
       ticketAmount: tickets,
-      dataSource: 'ManualBiweeklyTicket',
+      dataSource,
       note: auditedNote
     }
   };
@@ -2141,6 +2381,165 @@ function parseRosterLuaTable(parser) {
     object[String(entry.key)] = entry.value;
   }
   return object;
+}
+
+
+function normalizeDiscordMemberPayload(member = {}) {
+  return {
+    discord_id: String(member.discord_id || member.id || '').trim(),
+    avatar: member.avatar || null,
+    username: String(member.username || '').trim(),
+    global_name: String(member.global_name || member.globalName || '').trim(),
+    server_nickname: String(member.server_nickname || member.serverNickname || member.nickname || '').trim(),
+    joined_at: String(member.joined_at || member.joinedAt || '').trim(),
+    source: String(member.source || '').trim(),
+    roles: Array.isArray(member.roles) ? member.roles : []
+  };
+}
+
+async function getDiscordMemberSnapshot(connection, discordID) {
+  const [rows] = await connection.execute(
+    `
+      SELECT
+        discord_id,
+        username,
+        global_name,
+        server_nickname,
+        avatar
+      FROM discord_members
+      WHERE discord_id = ?
+      LIMIT 1
+    `,
+    [discordID]
+  );
+
+  return rows[0] || null;
+}
+
+async function getDiscordMemberRoleIDs(connection, discordID) {
+  const [rows] = await connection.execute(
+    `
+      SELECT role_id
+      FROM discord_member_roles
+      WHERE discord_id = ?
+      ORDER BY role_id
+    `,
+    [discordID]
+  );
+
+  return new Set(rows.map((row) => String(row.role_id || '').trim()).filter(Boolean));
+}
+
+async function recordDiscordMemberSnapshotHistory(connection, existing, existingRoleIDs, member, newRoleIDs, source) {
+  let recorded = 0;
+
+  if (!existing) {
+    recorded += await insertDiscordMemberHistory(connection, {
+      member,
+      event_type: 'joined_server',
+      field_name: null,
+      old_value: null,
+      new_value: summarizeDiscordMember(member),
+      source
+    });
+    return recorded;
+  }
+
+  const fields = [
+    ['username', 'username'],
+    ['global_name', 'global_name'],
+    ['server_nickname', 'server_nickname'],
+    ['avatar', 'avatar']
+  ];
+
+  for (const [fieldName, memberKey] of fields) {
+    const oldValue = normalizeHistoryValue(existing[fieldName]);
+    const newValue = normalizeHistoryValue(member[memberKey]);
+
+    if (oldValue !== newValue) {
+      recorded += await insertDiscordMemberHistory(connection, {
+        member,
+        event_type: `${fieldName}_changed`,
+        field_name: fieldName,
+        old_value: oldValue,
+        new_value: newValue,
+        source
+      });
+    }
+  }
+
+  const oldRoles = [...existingRoleIDs].sort();
+  const newRoles = [...newRoleIDs].sort();
+
+  if (oldRoles.join('|') !== newRoles.join('|')) {
+    recorded += await insertDiscordMemberHistory(connection, {
+      member,
+      event_type: 'roles_changed',
+      field_name: 'roles',
+      old_value: oldRoles.join(', '),
+      new_value: newRoles.join(', '),
+      source
+    });
+  }
+
+  return recorded;
+}
+
+async function insertDiscordMemberHistory(connection, event = {}) {
+  const member = event.member || {};
+  const now = new Date();
+  const eventTimestamp = String(Math.floor(now.getTime() / 1000));
+
+  await connection.execute(
+    `
+      INSERT INTO discord_member_history (
+        discord_id,
+        username,
+        global_name,
+        server_nickname,
+        event_type,
+        field_name,
+        old_value,
+        new_value,
+        event_timestamp,
+        event_datetime,
+        source
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      String(member.discord_id || member.id || '').trim(),
+      normalizeHistoryValue(member.username),
+      normalizeHistoryValue(member.global_name || member.globalName),
+      normalizeHistoryValue(member.server_nickname || member.serverNickname || member.nickname),
+      String(event.event_type || 'unknown').trim().slice(0, 64) || 'unknown',
+      event.field_name ? String(event.field_name).trim().slice(0, 64) : null,
+      event.old_value == null ? null : String(event.old_value),
+      event.new_value == null ? null : String(event.new_value),
+      eventTimestamp,
+      now,
+      String(event.source || 'unknown').trim().slice(0, 64) || 'unknown'
+    ]
+  );
+
+  return 1;
+}
+
+function normalizeHistoryValue(value) {
+  return String(value ?? '').trim();
+}
+
+function summarizeDiscordMember(member = {}) {
+  const parts = [];
+  const username = normalizeHistoryValue(member.username);
+  const globalName = normalizeHistoryValue(member.global_name || member.globalName);
+  const serverNickname = normalizeHistoryValue(member.server_nickname || member.serverNickname || member.nickname);
+
+  if (username) parts.push(`username=${username}`);
+  if (globalName) parts.push(`global_name=${globalName}`);
+  if (serverNickname) parts.push(`server_nickname=${serverNickname}`);
+
+  return parts.join('; ');
 }
 
 async function safeRollback(connection) {

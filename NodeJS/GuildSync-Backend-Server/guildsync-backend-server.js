@@ -21,6 +21,8 @@ import {
   deleteDiscordRole,
   updateDiscordMemberLastSeen,
   getDiscordHistoricalScanStatus,
+  getDiscordMemberHistoryMatches,
+  getDiscordMemberHistoryForMember,
   markDiscordHistoricalScanComplete,
   getDiscordDataDate,
   getDiscordMemberDataJSON,
@@ -557,7 +559,10 @@ io.on('connection', (socket) => {
     }
 
     try {
-      const result = await upsertDiscordMembers(applicationDB, payload);
+      const result = await upsertDiscordMembers(applicationDB, {
+        ...payload,
+        source: payload.source || 'bulk_sync'
+      });
 
       Log(
         `Received Discord members: ${result.members_processed} member(s) processed. ${result.members_removed} member(s) removed.`
@@ -601,7 +606,10 @@ io.on('connection', (socket) => {
     }
 
     try {
-      const result = await upsertDiscordMember(applicationDB, payload.member || payload);
+      const result = await upsertDiscordMember(applicationDB, {
+        ...(payload.member || payload),
+        source: payload.source || 'live_event'
+      });
 
       Log(
         `Discord member upsert received: ${result.members_processed} member(s) processed.`
@@ -772,7 +780,10 @@ io.on('connection', (socket) => {
     }
 
     try {
-      const result = await deleteDiscordMember(applicationDB, payload.discord_id || payload.id);
+      const result = await deleteDiscordMember(applicationDB, {
+        discord_id: payload.discord_id || payload.id,
+        source: payload.source || 'live_event'
+      });
 
       Log(
         `Discord member delete received: ${result.members_removed} member(s) removed.`
@@ -1245,7 +1256,7 @@ io.on('connection', (socket) => {
 
       const response = {
         ok: true,
-        message: 'Manual bi-weekly ticket entry added.',
+        message: 'Manual ticket entry added.',
         ...result,
         at: new Date().toLocaleString()
       };
@@ -1460,6 +1471,87 @@ io.on('connection', (socket) => {
     }
   });
 
+
+
+  socket.on('guildsync:request-discord-member-history', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to search Discord member history.',
+        matches: [],
+        matches_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-history-result', callback, response);
+      return;
+    }
+
+    try {
+      const matches = await getDiscordMemberHistoryMatches(applicationDB, payload?.query || '');
+      const response = {
+        ok: true,
+        message: 'Discord member history search complete.',
+        matches,
+        matches_returned: matches.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-history-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-discord-member-history:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to search Discord member history.',
+        matches: [],
+        matches_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-history-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:request-discord-member-history-events', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to retrieve Discord member history.',
+        events: [],
+        events_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-history-events-result', callback, response);
+      return;
+    }
+
+    try {
+      const events = await getDiscordMemberHistoryForMember(applicationDB, payload?.discord_id || payload?.discordID || '');
+      const response = {
+        ok: true,
+        message: 'Discord member history retrieved.',
+        events,
+        events_returned: events.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-history-events-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-discord-member-history-events:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to retrieve Discord member history.',
+        events: [],
+        events_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:discord-member-history-events-result', callback, response);
+    }
+  });
 
 
   socket.on('guildsync:request-member-links', async (payload = {}, callback) => {

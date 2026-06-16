@@ -447,8 +447,8 @@ async function runHistoricalScanOnceIfEnabled(guild) {
       throw new Error(status?.message || 'GuildSync could not provide historical scan status.');
     }
 
-    if (status.completed) {
-      Log(`Discord historical scan skipped: already completed at ${status.completed_at || 'unknown time'}.`);
+    if (!status.should_run) {
+      Log(`Discord historical scan skipped: last scan completed at ${status.completed_at || 'unknown time'}. Next allowed at ${status.next_allowed_at || 'unknown time'}.`);
       return;
     }
 
@@ -544,6 +544,7 @@ async function scanHistoricalGuildMessages(guild) {
             username: message.author.username,
             timestamp: getUnixTimestampSeconds(message.createdTimestamp),
             action: 'historical_message_scan',
+            source: 'historical_scan',
             createdTimestamp: message.createdTimestamp
           });
         }

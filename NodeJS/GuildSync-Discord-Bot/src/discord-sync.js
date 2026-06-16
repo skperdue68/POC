@@ -122,6 +122,7 @@ export async function syncDiscordRolesAndMembers(guild, guildSyncSocket) {
         username: member.user.username,
         global_name: member.user.globalName ?? '',
         server_nickname: member.nickname ?? '',
+        joined_at: member.joinedAt?.toISOString?.() ?? '',
         roles
       };
     });
@@ -130,6 +131,7 @@ export async function syncDiscordRolesAndMembers(guild, guildSyncSocket) {
     guild_id: guild.id,
     guild_name: guild.name,
     member_count: memberRows.length,
+    source: 'bulk_sync',
     members: memberRows
   };
 
@@ -183,6 +185,7 @@ export function discordMemberToPayload(member) {
     username: member.user.username,
     global_name: member.user.globalName ?? '',
     server_nickname: member.nickname ?? '',
+    joined_at: member.joinedAt?.toISOString?.() ?? '',
     roles
   };
 }
@@ -230,6 +233,7 @@ export async function sendDiscordMemberUpsert(member, guildSyncSocket) {
     {
       guild_id: member.guild.id,
       guild_name: member.guild.name,
+      source: 'live_event',
       member: discordMemberToPayload(member)
     }
   );
@@ -246,7 +250,8 @@ export async function sendDiscordMemberDelete(member, guildSyncSocket) {
     {
       guild_id: member.guild.id,
       guild_name: member.guild.name,
-      discord_id: member.user.id
+      discord_id: member.user.id,
+      source: 'live_event'
     }
   );
 }

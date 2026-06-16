@@ -119,6 +119,18 @@ let rosterHistoryLoading = false;
 let rosterHistoryError = '';
 let rosterHistorySearchTimer = null;
 let rosterHistoryActiveMatchIndex = -1;
+let discordHistoryDialogOpen = false;
+let discordHistorySearchText = '';
+let discordHistoryMatches = [];
+let discordHistorySelectedID = '';
+let discordHistorySelectedName = '';
+let discordHistoryEvents = [];
+let discordHistoryLoading = false;
+let discordHistoryError = '';
+let discordHistorySearchTimer = null;
+let discordHistorySearchGeneration = 0;
+const DISCORD_HISTORY_SEARCH_DEBOUNCE_MS = 650;
+let discordHistoryActiveMatchIndex = -1;
 let associateTicketReportDialogOpen = false;
 let associateTicketReportRows = [];
 let associateTicketReportLoading = false;
@@ -167,7 +179,7 @@ let bankingExportSection = 'biweekly';
 let manualBiweeklyTicketDialogOpen = false;
 let manualBiweeklyTicketSubmitting = false;
 let manualBiweeklyTicketError = '';
-let manualBiweeklyTicketForm = { accountName: '', note: '', tickets: '' };
+let manualBiweeklyTicketForm = { accountName: '', note: '', ticketType: 'biweekly', goldValue: '', tickets: '' };
 let manualBiweeklyTicketAccountSearchText = '';
 let manualBiweeklyTicketActiveMatchIndex = -1;
 let bankingRafflePeriodOffsets = {
@@ -306,6 +318,7 @@ function showMainWindow() {
   wireDiscordRankAuditReportDialog();
   wireDiscordLastSeenReportDialog();
   wireMemberLinksReportDialog();
+  wireDiscordHistoryDialog();
   wireGuildSyncConfirmDialog();
   updateStatusDot();
   requestSystemMessageDisplayUpdate();
@@ -453,6 +466,7 @@ function renderGuildSyncTabContent() {
 function isBlockingModalOpen() {
   return guildSyncConfirmDialogOpen
     || rosterHistoryDialogOpen
+    || discordHistoryDialogOpen
     || manualBiweeklyTicketDialogOpen
     || memberLinkDialogOpen
     || associateTicketReportDialogOpen
@@ -495,6 +509,11 @@ function closeTopOpenModal() {
   }
   if (rosterHistoryDialogOpen) {
     rosterHistoryDialogOpen = false;
+    renderGuildSyncTabLayout();
+    return true;
+  }
+  if (discordHistoryDialogOpen) {
+    discordHistoryDialogOpen = false;
     renderGuildSyncTabLayout();
     return true;
   }
@@ -678,6 +697,7 @@ function renderGuildSyncTabLayout(options = {}) {
   wireDiscordRankAuditReportDialog();
   wireDiscordLastSeenReportDialog();
   wireMemberLinksReportDialog();
+  wireDiscordHistoryDialog();
 
   if (options.restoreDiscordSearchFocus) {
     restoreDiscordSearchFocus();
@@ -728,6 +748,9 @@ function renderDiscordMemberDataPanel() {
         <div>
           <h2 class="discord-data-title">Discord Member Data</h2>
           <p class="discord-data-subtitle">Manage and view Discord member information.</p>
+        </div>
+        <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
+          <button id="openDiscordHistoryButton" class="refresh-discord-button" type="button">Lookup Member History</button>
         </div>
         <div class="discord-data-actions">
           <span id="discordLastRefreshText" class="discord-last-refresh">Last Refresh: ${escapeHtml(formatDiscordRefreshDate(discordLastRefreshValue))}</span>
@@ -807,6 +830,7 @@ function renderDiscordMemberDataPanel() {
           </table>
         </div>
       </div>
+      ${discordHistoryDialogOpen ? renderDiscordHistoryDialog() : ''}
     </div>
   `;
 }
@@ -826,9 +850,11 @@ function renderEsoRosterPanel() {
           <h2 class="discord-data-title">Guild Roster</h2>
           <p class="discord-data-subtitle">Current ESO roster imported from GuildSyncRoster.</p>
         </div>
+        <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
+          <button id="openRosterHistoryButton" class="refresh-discord-button" type="button">Lookup Roster History</button>
+        </div>
         <div class="discord-data-actions">
           <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatRosterRefreshDate(rosterLastRefreshValue))}</span>
-          <button id="openRosterHistoryButton" class="clear-discord-filters-button" type="button">Lookup Rank Historical Data</button>
           <button id="refreshRosterDataButton" class="refresh-discord-button" type="button" ${rosterDataLoading ? 'disabled' : ''}>
             <span class="refresh-discord-icon" aria-hidden="true">↻</span>
             <span>${rosterDataLoading ? 'Refreshing...' : 'Refresh Roster Data'}</span>
@@ -1205,6 +1231,112 @@ function memberLinkFilterSetMatches(filterSet, currentStatus) {
   if (!filterSet || filterSet.size === 0) return true;
   if (filterSet.has(currentStatus)) return true;
   return currentStatus === 'manual' && filterSet.has('linked');
+}
+
+function renderDiscordHistoryDialog() {
+  return `
+    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="discordHistoryTitle">
+      <div class="roster-history-dialog roster-rank-history-dialog discord-member-history-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="discordHistoryTitle">Discord Member Historical Data</h3>
+            <p>Search Discord member changes, including joins, leaves, name changes, nickname changes, and role changes.</p>
+          </div>
+          <button id="closeDiscordHistoryButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
+        </div>
+
+        <div class="roster-history-search-row">
+          <input id="discordHistorySearchInput" class="discord-search-input roster-history-search-input" type="search" placeholder="Start typing a Discord username, display name, nickname, or ID..." value="${escapeAttribute(discordHistorySearchText)}" />
+        </div>
+
+        ${discordHistoryError ? `<div class="discord-data-error">${escapeHtml(discordHistoryError)}</div>` : ''}
+
+        <div class="roster-history-content">
+          <div class="roster-history-matches">
+            <div class="roster-history-section-title">Matches</div>
+            ${renderDiscordHistoryMatches()}
+          </div>
+          <div class="roster-history-events">
+            <div class="roster-history-section-title">Discord Member History${discordHistorySelectedName ? `: ${escapeHtml(discordHistorySelectedName)}` : ''}</div>
+            ${renderDiscordHistoryEvents()}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDiscordHistoryMatches() {
+  if (discordHistoryLoading && discordHistoryMatches.length === 0) {
+    return '<div class="roster-history-muted">Searching...</div>';
+  }
+
+  if (discordHistoryMatches.length === 0) {
+    return '<div class="roster-history-muted">No matches yet.</div>';
+  }
+
+  return `
+    <div class="roster-history-match-list">
+      ${discordHistoryMatches.map((match, index) => `
+        <button class="roster-history-match${index === discordHistoryActiveMatchIndex || match.discord_id === discordHistorySelectedID ? ' is-selected' : ''}" type="button" data-discord-history-id="${escapeAttribute(match.discord_id)}" data-discord-history-name="${escapeAttribute(getDiscordHistoryDisplayName(match))}">
+          <span>${escapeHtml(getDiscordHistoryDisplayName(match))}</span>
+          <strong>${escapeHtml(String(match.event_count || 0))} event${Number(match.event_count || 0) === 1 ? '' : 's'}</strong>
+          ${index === discordHistoryActiveMatchIndex ? '<small>Enter</small>' : ''}
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderDiscordHistoryEvents() {
+  if (!discordHistorySelectedID) {
+    return '<div class="roster-history-muted">Choose a matching Discord member to see history.</div>';
+  }
+
+  if (discordHistoryLoading && discordHistoryEvents.length === 0) {
+    return '<div class="roster-history-muted">Loading history...</div>';
+  }
+
+  if (discordHistoryEvents.length === 0) {
+    return '<div class="roster-history-muted">No Discord member history found for this member.</div>';
+  }
+
+  return `
+    <div class="roster-history-event-table-shell">
+      <table class="discord-member-table roster-history-event-table roster-rank-history-event-table discord-member-history-event-table">
+        <thead>
+          <tr>
+            <th class="roster-history-when-column">When</th>
+            <th>Event</th>
+            <th>Old</th>
+            <th>New</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${discordHistoryEvents.map((event) => `
+            <tr>
+              <td class="roster-history-when-cell">${escapeHtml(formatRosterHistoryTimestamp(event.event_timestamp || event.event_datetime || event.timestamp))}</td>
+              <td>${escapeHtml(formatDiscordHistoryEventType(event.event_type))}</td>
+              <td>${escapeHtml(event.old_value || '')}</td>
+              <td>${escapeHtml(event.new_value || '')}</td>
+              <td>${escapeHtml(event.source || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function getDiscordHistoryDisplayName(match = {}) {
+  return String(match.server_nickname || match.global_name || match.username || match.discord_id || '').trim();
+}
+
+function formatDiscordHistoryEventType(value) {
+  return String(value || '')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function renderRosterHistoryDialog() {
@@ -3378,7 +3510,7 @@ function renderManualBiweeklyTicketDialog() {
       <div class="roster-history-dialog manual-ticket-dialog">
         <div class="roster-history-header">
           <div>
-            <h3 id="manualBiweeklyTicketTitle">Add Manual Bi-Weekly Tickets</h3>
+            <h3 id="manualBiweeklyTicketTitle">Add Manual Tickets</h3>
             <p>Add free/manual raffle tickets such as FFTG. These do not count as purchased tickets.</p>
           </div>
           <button id="closeManualBiweeklyTicketButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
@@ -3406,18 +3538,32 @@ function renderManualBiweeklyTicketDialog() {
           </div>
 
           <div class="manual-ticket-entry-row">
+            <div class="manual-ticket-type-field" role="group" aria-label="Ticket type">
+              <button class="manual-ticket-type-label${manualBiweeklyTicketForm.ticketType !== 'monthly' ? ' is-selected' : ''}" type="button" data-manual-ticket-type="biweekly" aria-pressed="${manualBiweeklyTicketForm.ticketType !== 'monthly' ? 'true' : 'false'}">Bi-Weekly</button>
+              <button class="manual-ticket-type-switch" type="button" data-manual-ticket-toggle="true" data-selected-type="${manualBiweeklyTicketForm.ticketType === 'monthly' ? 'monthly' : 'biweekly'}" aria-label="Toggle ticket type. Current selection is ${manualBiweeklyTicketForm.ticketType === 'monthly' ? '50/50' : 'Bi-Weekly'}">
+                <span class="manual-ticket-type-track" aria-hidden="true"></span>
+                <span class="manual-ticket-type-thumb" aria-hidden="true"></span>
+              </button>
+              <button class="manual-ticket-type-label${manualBiweeklyTicketForm.ticketType === 'monthly' ? ' is-selected' : ''}" type="button" data-manual-ticket-type="monthly" aria-pressed="${manualBiweeklyTicketForm.ticketType === 'monthly' ? 'true' : 'false'}">50/50</button>
+            </div>
             <label class="manual-ticket-note-field">
               <textarea id="manualTicketNoteInput" class="discord-search-input manual-ticket-note-input" rows="4" placeholder="Enter a reason such as FFTG">${escapeHtml(manualBiweeklyTicketForm.note)}</textarea>
             </label>
-            <label class="manual-ticket-count-field">
-              <div class="manual-ticket-number-wrap">
-                <input id="manualTicketCountInput" class="discord-search-input manual-ticket-count-input" type="number" min="1" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(manualBiweeklyTicketForm.tickets)}" />
-                <div class="manual-ticket-number-buttons" aria-hidden="true">
-                  <button id="manualTicketCountUpButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌃</button>
-                  <button id="manualTicketCountDownButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌄</button>
+            <div class="manual-ticket-side-fields">
+              <label class="manual-ticket-gold-field">
+                <input id="manualTicketGoldInput" class="discord-search-input manual-ticket-gold-input" type="number" min="0" step="1" inputmode="numeric" placeholder="Gold Value" value="${escapeAttribute(manualBiweeklyTicketForm.goldValue)}" />
+                <span class="manual-ticket-gold-coin" aria-hidden="true"></span>
+              </label>
+              <label class="manual-ticket-count-field">
+                <div class="manual-ticket-number-wrap">
+                  <input id="manualTicketCountInput" class="discord-search-input manual-ticket-count-input" type="number" min="1" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(manualBiweeklyTicketForm.tickets)}" />
+                  <div class="manual-ticket-number-buttons" aria-hidden="true">
+                    <button id="manualTicketCountUpButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌃</button>
+                    <button id="manualTicketCountDownButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌄</button>
+                  </div>
                 </div>
-              </div>
-            </label>
+              </label>
+            </div>
           </div>
           <div class="manual-ticket-actions">
             <button id="saveManualBiweeklyTicketButton" class="refresh-discord-button" type="button" ${manualBiweeklyTicketSubmitting ? 'disabled' : ''}>${manualBiweeklyTicketSubmitting ? 'Saving...' : 'Add Manual Tickets'}</button>
@@ -3487,6 +3633,28 @@ function wireManualBiweeklyTicketDialog() {
     manualBiweeklyTicketForm.note = event.target.value || '';
   });
 
+  document.querySelectorAll('[data-manual-ticket-type]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const value = String(button.dataset.manualTicketType || '').trim().toLowerCase();
+      manualBiweeklyTicketForm.ticketType = value === 'monthly' ? 'monthly' : 'biweekly';
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  document.querySelector('[data-manual-ticket-toggle]')?.addEventListener('click', () => {
+    manualBiweeklyTicketForm.ticketType = manualBiweeklyTicketForm.ticketType === 'monthly' ? 'biweekly' : 'monthly';
+    renderGuildSyncTabLayout();
+  });
+
+  const goldInput = document.querySelector('#manualTicketGoldInput');
+  goldInput?.addEventListener('input', (event) => {
+    const numericValue = String(event.target.value || '').replace(/\D/g, '');
+    if (event.target.value !== numericValue) {
+      event.target.value = numericValue;
+    }
+    manualBiweeklyTicketForm.goldValue = numericValue;
+  });
+
   const ticketCountInput = document.querySelector('#manualTicketCountInput');
   ticketCountInput?.addEventListener('input', (event) => {
     const numericValue = String(event.target.value || '').replace(/\D/g, '');
@@ -3525,6 +3693,8 @@ function wireManualBiweeklyTicketDialog() {
 async function submitManualBiweeklyTicket() {
   const accountName = String(manualBiweeklyTicketForm.accountName || '').trim();
   const note = String(manualBiweeklyTicketForm.note || '').trim();
+  const ticketType = String(manualBiweeklyTicketForm.ticketType || 'biweekly').trim().toLowerCase() === 'monthly' ? 'monthly' : 'biweekly';
+  const goldValue = Number(String(manualBiweeklyTicketForm.goldValue || '').trim() || 0);
   const tickets = Number(manualBiweeklyTicketForm.tickets);
 
   if (!accountName) {
@@ -3533,8 +3703,8 @@ async function submitManualBiweeklyTicket() {
     return;
   }
 
-  if (!note) {
-    manualBiweeklyTicketError = 'Enter a reason or note.';
+  if (!Number.isFinite(goldValue) || goldValue < 0) {
+    manualBiweeklyTicketError = 'Gold value must be zero or greater.';
     renderGuildSyncTabLayout();
     return;
   }
@@ -3553,6 +3723,8 @@ async function submitManualBiweeklyTicket() {
     const response = await emitSocketWithAck('guildsync:add-manual-biweekly-ticket-entry', {
       account_name: accountName,
       note,
+      ticket_type: ticketType,
+      gold_value: Math.floor(goldValue),
       tickets: Math.floor(tickets)
     }, 30000);
 
@@ -3561,7 +3733,7 @@ async function submitManualBiweeklyTicket() {
     }
 
     manualBiweeklyTicketDialogOpen = false;
-    manualBiweeklyTicketForm = { accountName: '', note: '', tickets: '' };
+    manualBiweeklyTicketForm = { accountName: '', note: '', ticketType: 'biweekly', goldValue: '', tickets: '' };
     manualBiweeklyTicketAccountSearchText = '';
     manualBiweeklyTicketActiveMatchIndex = -1;
     await refreshBankingDataFromBackend({ silent: true });
@@ -3775,6 +3947,207 @@ function wireRosterHistoryDialog() {
       loadRosterStreamHistory(button.dataset.rosterHistoryAccount || '');
     });
   });
+}
+
+function wireDiscordHistoryDialog() {
+  const closeButton = document.querySelector('#closeDiscordHistoryButton');
+  if (closeButton) {
+    closeButton.addEventListener('click', () => {
+      discordHistoryDialogOpen = false;
+      renderGuildSyncTabLayout();
+    });
+  }
+
+  const searchInput = document.querySelector('#discordHistorySearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', (event) => {
+      discordHistorySearchText = event.target.value || '';
+      discordHistoryActiveMatchIndex = -1;
+      discordHistorySearchGeneration += 1;
+      const searchGeneration = discordHistorySearchGeneration;
+
+      clearTimeout(discordHistorySearchTimer);
+
+      if (!discordHistorySearchText.trim()) {
+        discordHistoryError = '';
+        discordHistoryMatches = [];
+        discordHistorySelectedID = '';
+        discordHistorySelectedName = '';
+        discordHistoryEvents = [];
+        discordHistoryLoading = false;
+        renderGuildSyncTabLayout();
+        focusInputById('discordHistorySearchInput');
+        return;
+      }
+
+      discordHistorySearchTimer = setTimeout(() => {
+        searchDiscordMemberHistory({ auto: true, keepFocus: true, generation: searchGeneration });
+      }, DISCORD_HISTORY_SEARCH_DEBOUNCE_MS);
+    });
+
+    searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (discordHistoryMatches.length === 0) {
+          return;
+        }
+
+        event.preventDefault();
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        const currentIndex = discordHistoryActiveMatchIndex < 0 ? 0 : discordHistoryActiveMatchIndex;
+        discordHistoryActiveMatchIndex = (currentIndex + direction + discordHistoryMatches.length) % discordHistoryMatches.length;
+        renderGuildSyncTabLayout();
+        focusInputById('discordHistorySearchInput');
+        return;
+      }
+
+      if (event.key !== 'Enter') {
+        return;
+      }
+
+      event.preventDefault();
+      const selectedMatch = discordHistoryMatches[discordHistoryActiveMatchIndex >= 0 ? discordHistoryActiveMatchIndex : 0];
+      if (selectedMatch?.discord_id) {
+        loadDiscordMemberHistory(selectedMatch.discord_id, getDiscordHistoryDisplayName(selectedMatch));
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-discord-history-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      loadDiscordMemberHistory(button.dataset.discordHistoryId || '', button.dataset.discordHistoryName || '');
+    });
+  });
+}
+
+async function searchDiscordMemberHistory(options = {}) {
+  const requestGeneration = Number.isInteger(options.generation)
+    ? options.generation
+    : ++discordHistorySearchGeneration;
+  const query = discordHistorySearchText.trim();
+
+  if (requestGeneration !== discordHistorySearchGeneration) {
+    return;
+  }
+
+  if (!query) {
+    discordHistoryError = '';
+    discordHistoryMatches = [];
+    discordHistoryActiveMatchIndex = -1;
+    discordHistorySelectedID = '';
+    discordHistorySelectedName = '';
+    discordHistoryEvents = [];
+    discordHistoryLoading = false;
+    renderGuildSyncTabLayout();
+    if (options.keepFocus) {
+      focusInputById('discordHistorySearchInput');
+    }
+    return;
+  }
+
+  discordHistoryLoading = true;
+  discordHistoryError = '';
+  discordHistoryMatches = [];
+  discordHistoryActiveMatchIndex = -1;
+  discordHistorySelectedID = '';
+  discordHistorySelectedName = '';
+  discordHistoryEvents = [];
+  renderGuildSyncTabLayout();
+  if (options.keepFocus) {
+    focusInputById('discordHistorySearchInput');
+  }
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-discord-member-history', { query }, 30000);
+
+    if (requestGeneration !== discordHistorySearchGeneration || query !== discordHistorySearchText.trim()) {
+      return;
+    }
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to search Discord member history.');
+    }
+
+    discordHistoryMatches = normalizeDiscordHistoryMatches(response.matches);
+    discordHistoryActiveMatchIndex = discordHistoryMatches.length > 0 ? 0 : -1;
+  } catch (error) {
+    if (requestGeneration !== discordHistorySearchGeneration || query !== discordHistorySearchText.trim()) {
+      return;
+    }
+    discordHistoryError = formatError(error);
+  } finally {
+    if (requestGeneration !== discordHistorySearchGeneration || query !== discordHistorySearchText.trim()) {
+      return;
+    }
+    discordHistoryLoading = false;
+    renderGuildSyncTabLayout();
+    if (options.keepFocus) {
+      focusInputById('discordHistorySearchInput');
+    }
+  }
+}
+
+async function loadDiscordMemberHistory(discordID, displayName = '', options = {}) {
+  const cleanDiscordID = String(discordID || '').trim();
+
+  if (!cleanDiscordID) {
+    return;
+  }
+
+  discordHistorySelectedID = cleanDiscordID;
+  discordHistorySelectedName = String(displayName || cleanDiscordID).trim();
+  discordHistorySearchText = discordHistorySelectedName;
+  discordHistoryEvents = [];
+  discordHistoryLoading = true;
+  discordHistoryError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-discord-member-history-events', { discord_id: cleanDiscordID }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to load Discord member history.');
+    }
+
+    discordHistoryEvents = normalizeDiscordHistoryEvents(response.events);
+  } catch (error) {
+    discordHistoryError = formatError(error);
+  } finally {
+    discordHistoryLoading = false;
+    if (!options.keepLoading) {
+      renderGuildSyncTabLayout();
+    }
+  }
+}
+
+function normalizeDiscordHistoryMatches(matches) {
+  return Array.isArray(matches)
+    ? matches
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        discord_id: String(item.discord_id || item.discordID || '').trim(),
+        username: String(item.username || '').trim(),
+        global_name: String(item.global_name || item.globalName || '').trim(),
+        server_nickname: String(item.server_nickname || item.serverNickname || '').trim(),
+        event_count: Number(item.event_count || item.eventCount || 0)
+      }))
+      .filter((item) => item.discord_id)
+    : [];
+}
+
+function normalizeDiscordHistoryEvents(events) {
+  return Array.isArray(events)
+    ? events
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        event_type: String(item.event_type || item.eventType || '').trim(),
+        field_name: String(item.field_name || item.fieldName || '').trim(),
+        old_value: String(item.old_value ?? item.oldValue ?? '').trim(),
+        new_value: String(item.new_value ?? item.newValue ?? '').trim(),
+        event_timestamp: item.event_timestamp ?? item.eventTimestamp ?? item.timestamp ?? '',
+        event_datetime: item.event_datetime ?? item.eventDatetime ?? '',
+        source: String(item.source || '').trim()
+      }))
+    : [];
 }
 
 async function searchRosterRankHistory(options = {}) {
@@ -4135,19 +4508,19 @@ function renderBankDepositsPanel() {
           <p class="discord-data-subtitle">View guild bank deposits and raffle ticket allocations by raffle period.</p>
         </div>
         <div class="discord-data-actions">
-          <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatDiscordRefreshDate(bankingLastRefreshValue))}</span>
-          <button class="bank-export-button" type="button" data-bank-export-section="biweekly">
-            <span aria-hidden="true">▦</span>
-            <span>Export Bi-Weekly</span>
-          </button>
           <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button" ${isAuthenticatedSession() ? '' : 'disabled title="Login required to add manual tickets."'}>
             <span aria-hidden="true">＋</span>
             <span>Add Manual Tickets</span>
+          </button>
+          <button class="bank-export-button" type="button" data-bank-export-section="biweekly">
+            <span aria-hidden="true">▦</span>
+            <span>Export Bi-Weekly</span>
           </button>
           <button class="bank-export-button" type="button" data-bank-export-section="monthly">
             <span aria-hidden="true">▦</span>
             <span>Export 50/50</span>
           </button>
+          <span class="discord-last-refresh">Last Refresh: ${escapeHtml(formatDiscordRefreshDate(bankingLastRefreshValue))}</span>
           <button id="refreshBankingDataButton" class="refresh-discord-button" type="button" ${bankingDataLoading || !isAuthenticatedSession() ? 'disabled' : ''} ${isAuthenticatedSession() ? '' : 'title="Login required to send banking file updates. Existing banking data still loads automatically."'}>
             <span class="refresh-discord-icon" aria-hidden="true">↻</span>
             <span>${bankingDataLoading ? 'Refreshing...' : 'Refresh Deposits'}</span>
@@ -4855,6 +5228,16 @@ function wireDiscordMemberDataPanel() {
   const refreshButton = document.querySelector('#refreshDiscordDataButton');
   if (refreshButton) {
     refreshButton.addEventListener('click', () => requestDiscordDataRefresh());
+  }
+
+  const historyButton = document.querySelector('#openDiscordHistoryButton');
+  if (historyButton) {
+    historyButton.addEventListener('click', () => {
+      discordHistoryDialogOpen = true;
+      discordHistoryError = '';
+      renderGuildSyncTabLayout();
+      focusInputById('discordHistorySearchInput');
+    });
   }
 
   const searchInput = document.querySelector('#discordMemberSearch');
