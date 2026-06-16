@@ -152,6 +152,7 @@ let memberLinksError = '';
 let memberLinksReportDialogOpen = false;
 let memberLinksReportSearchTerm = '';
 let memberLinksReportSelectedRowIndex = -1;
+let memberLinksReportScrollTop = 0;
 let memberLinkDialogOpen = false;
 let memberLinkDialogContext = null;
 let memberLinkDialogOptions = [];
@@ -674,7 +675,31 @@ function wireGuildSyncTabs() {
   });
 }
 
+function captureMemberLinksReportScrollPosition() {
+  const shell = document.querySelector('.member-links-table-shell');
+  if (shell) {
+    memberLinksReportScrollTop = shell.scrollTop;
+  }
+}
+
+function restoreMemberLinksReportScrollPosition() {
+  if (!memberLinksReportDialogOpen) {
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    const shell = document.querySelector('.member-links-table-shell');
+    if (shell) {
+      shell.scrollTop = memberLinksReportScrollTop || 0;
+    }
+  });
+}
+
 function renderGuildSyncTabLayout(options = {}) {
+  if (memberLinksReportDialogOpen) {
+    captureMemberLinksReportScrollPosition();
+  }
+
   const tabBar = document.querySelector('.guildsync-tabs');
   const content = document.querySelector('#guildSyncTabContent');
 
@@ -2301,9 +2326,8 @@ function wireMemberLinksReportDialog() {
 
 function getMemberLinksReportGroupOrder(link) {
   const status = String(link?.link_status || '').trim().toLowerCase();
-  const method = String(link?.link_method || '').trim().toLowerCase();
 
-  if (status === 'candidate' || method === 'fuzzy') return 0;
+  if (status === 'candidate') return 0;
   if (status === 'linked') return 2;
   return 1;
 }
@@ -2858,13 +2882,24 @@ function formatMemberLinkMethodForDisplay(value) {
   return method || 'none';
 }
 
+function renderMemberLinkCurrentStatus(link) {
+  const status = String(link?.link_status || '').trim().toLowerCase();
+  const displayStatus = formatMemberLinkStatusForDisplay(link?.link_status);
+  const statusClass = status === 'linked'
+    ? 'member-link-status-word member-link-status-word-linked'
+    : status === 'candidate'
+      ? 'member-link-status-word member-link-status-word-candidate'
+      : 'member-link-status-word';
+
+  return `<span class="${statusClass}">${escapeHtml(displayStatus)}</span>`;
+}
+
 function renderMemberLinkCurrentCard(link) {
   const discordName = link.discord_server_nickname || link.discord_display_name || link.discord_username || link.discord_user_id || '';
   const lockedText = Number(link.locked || 0) === 1 ? 'Auto-link blocked' : 'Auto-managed';
   const status = String(link.link_status || '').trim().toLowerCase();
   const isLinked = status === 'linked';
   const isCandidate = status === 'candidate';
-  const headingLabel = isLinked ? 'Current Link' : isCandidate ? 'Suggested Link' : 'Blocked Link';
   const actionButton = isLinked
     ? `<button
         class="member-link-trash-button"
@@ -2889,10 +2924,9 @@ function renderMemberLinkCurrentCard(link) {
   return `
     <div class="member-link-current-card">
       <div class="member-link-current-details">
-        <div class="member-link-current-kind">${escapeHtml(headingLabel)}</div>
         <div><span>ESO:</span> ${escapeHtml(link.eso_account_name || '')}</div>
         <div><span>Discord:</span> ${escapeHtml(discordName)}</div>
-        <div><span>Status:</span> ${escapeHtml(formatMemberLinkStatusForDisplay(link.link_status))} · ${escapeHtml(formatMemberLinkMethodForDisplay(link.link_method))} · ${escapeHtml(String(link.match_confidence ?? ''))}% · ${escapeHtml(lockedText)}</div>
+        <div><span>Status:</span> ${renderMemberLinkCurrentStatus(link)} · ${escapeHtml(formatMemberLinkMethodForDisplay(link.link_method))} · ${escapeHtml(String(link.match_confidence ?? ''))}% · ${escapeHtml(lockedText)}</div>
         ${getMemberLinkMatchedField(link) ? `<div><span>Matched:</span> Matched on ${escapeHtml(getMemberLinkMatchedField(link))}</div>` : ''}
       </div>
       ${actionButton}
@@ -3010,8 +3044,7 @@ function renderMemberLinkDialog() {
         </div>
 
         <div class="member-link-dialog-body">
-          <section class="member-link-dialog-section">
-            <h4>Current Link</h4>
+          <section class="member-link-dialog-section member-link-current-section">
             ${renderMemberLinkDialogCurrentLink()}
           </section>
 

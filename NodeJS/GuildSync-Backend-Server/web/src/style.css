@@ -1439,7 +1439,7 @@ body {
 }
 
 .bank-export-dialog {
-  width: min(1120px, 98%);
+  width: min(1240px, calc(100% - 34px));
   max-height: min(640px, 92%);
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 14px;
@@ -1534,13 +1534,17 @@ body {
   border-radius: 10px;
   background: rgba(8, 18, 42, 0.54);
   overflow: auto;
+  flex: 1 1 auto;
+  min-height: 180px;
+  max-height: min(440px, calc(92vh - 172px));
+  scrollbar-gutter: stable;
 }
 
 .bank-export-grid {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: fixed;
   color: #D9E2F4;
   font-size: 14px;
   user-select: text;
@@ -1569,22 +1573,27 @@ body {
 
 .bank-export-grid th:nth-child(1),
 .bank-export-grid td:nth-child(1) {
-  min-width: 260px;
+  width: 25%;
 }
 
 .bank-export-grid th:nth-child(2),
 .bank-export-grid td:nth-child(2) {
-  min-width: 180px;
+  width: 16%;
+  text-align: right;
 }
 
 .bank-export-grid th:nth-child(3),
 .bank-export-grid td:nth-child(3) {
-  min-width: 160px;
+  width: 16%;
+  text-align: right;
 }
 
 .bank-export-grid th:nth-child(4),
 .bank-export-grid td:nth-child(4) {
-  min-width: 360px;
+  width: 43%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bank-export-tsv {
@@ -4220,3 +4229,39 @@ body {
   border-radius: 50%;
   border-bottom: 2px solid rgba(120, 72, 8, .55);
 }
+
+/* Member Link current-card readability fixes */
+.member-link-current-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.member-link-current-card {
+  overflow: visible;
+}
+
+.member-link-current-card:not(:last-child) {
+  margin-bottom: 0;
+}
+
+.member-link-current-details,
+.member-link-current-details div {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.member-link-status-word {
+  font-weight: 800;
+}
+
+.member-link-status-word-linked {
+  color: #4ade80 !important;
+  text-shadow: 0 0 10px rgba(74, 222, 128, 0.28);
+}
+
+.member-link-status-word-candidate {
+  color: #facc15 !important;
+  text-shadow: 0 0 10px rgba(250, 204, 21, 0.25);
+}
+
