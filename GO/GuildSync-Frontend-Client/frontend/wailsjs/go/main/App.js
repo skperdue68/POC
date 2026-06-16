@@ -6,12 +6,20 @@ export function CloseWindow() {
   return window['go']['main']['App']['CloseWindow']();
 }
 
+export function CollectGuildSyncApplicationsData(arg1) {
+  return window['go']['main']['App']['CollectGuildSyncApplicationsData'](arg1);
+}
+
 export function CollectGuildSyncBankingData(arg1) {
   return window['go']['main']['App']['CollectGuildSyncBankingData'](arg1);
 }
 
 export function CollectGuildSyncRosterData(arg1) {
   return window['go']['main']['App']['CollectGuildSyncRosterData'](arg1);
+}
+
+export function CommitGuildSyncApplicationsData(arg1, arg2) {
+  return window['go']['main']['App']['CommitGuildSyncApplicationsData'](arg1, arg2);
 }
 
 export function CommitGuildSyncBankingData(arg1, arg2) {

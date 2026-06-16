@@ -153,6 +153,11 @@ func getSavedVarsWatchFiles() []GuildSyncSavedVarsWatchFile {
 			Label:    "Roster",
 			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_ROSTER_FILE_NAME", "GuildSyncRoster.lua"),
 		},
+		{
+			Key:      "applications",
+			Label:    "Applications",
+			FileName: getSavedVarsFileNameFromEnv("SAVED_VARS_APPLICATIONS_FILE_NAME", "GuildSyncApplications.lua"),
+		},
 	}
 
 	settings := loadFileWatchSettings()

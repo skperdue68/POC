@@ -41,6 +41,9 @@ import {
   manualUnlinkMember,
   runMemberAutoLinking,
   processRosterData,
+  recordGuildSyncApplications,
+  getPendingGuildSyncApplicationBroadcasts,
+  markGuildSyncApplicationBroadcasted,
   parseGuildSyncBankingSavedVarsLua,
   parseGuildSyncRosterSavedVarsLua
 } from './guildsync-database-actions.js';
@@ -63,6 +66,7 @@ const __dirname = path.dirname(__filename);
 const WEB_DIST_DIR = process.env.GUILDSYNC_WEB_DIST_DIR || path.join(__dirname, 'public');
 
 const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
+const GUILDSYNC_APPLICATIONS_GUILD_ID = String(process.env.GUILDSYNC_APPLICATIONS_GUILD_ID || '761817').trim();
 
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
 const GUILDSYNC_CLIENT_DOWNLOAD_FILES = {
@@ -425,6 +429,80 @@ io.on('connection', (socket) => {
   } else {
     Log(`Connection: ${socket.id} => Unauthenticated`);
   }
+
+  socket.on('guildsync:eso-guild-application-message', async (payload = {}, callback) => {
+    try {
+      const source = String(payload?.source || 'unknown source').trim() || 'unknown source';
+      const fileName = String(payload?.file_name || payload?.fileName || '').trim();
+      const recordKey = String(payload?.recordKey || payload?.record_key || '').trim();
+      const incomingRecords = collectGuildSyncApplicationRecords(payload);
+
+      Log(
+        `ESO guild application payload received from ${source}${fileName ? ` for ${fileName}` : ''}${recordKey ? ` record ${recordKey}` : ''}. Records: ${incomingRecords.length}.`
+      );
+
+      const recordsForGuild = incomingRecords.filter(record => {
+        const guildID = String(record.guildId || record.guild_id || '').trim();
+        return guildID === GUILDSYNC_APPLICATIONS_GUILD_ID;
+      });
+
+      Log(
+        `ESO guild application records matched guild ${GUILDSYNC_APPLICATIONS_GUILD_ID}: ${recordsForGuild.length}/${incomingRecords.length}.`
+      );
+
+      if (!recordsForGuild.length) {
+        const skipped = incomingRecords.length;
+        const response = {
+          ok: false,
+          message: `No application records matched guild ID ${GUILDSYNC_APPLICATIONS_GUILD_ID}.`,
+          records_received: incomingRecords.length,
+          records_skipped: skipped,
+          at: new Date().toLocaleString()
+        };
+
+        Log(
+          `ESO guild application payload rejected. No records matched guild ${GUILDSYNC_APPLICATIONS_GUILD_ID}. Skipped: ${skipped}.`
+        );
+
+        sendSocketResponse(socket, 'guildsync:eso-guild-application-message-result', callback, response);
+        return;
+      }
+
+      const result = await recordGuildSyncApplications(applicationDB, recordsForGuild);
+
+      Log(
+        `ESO guild application database write complete. Inserted/updated: ${result.inserted}. Skipped: ${result.skipped}.`
+      );
+
+      const broadcastResult = await broadcastPendingGuildSyncApplications();
+
+      Log(
+        `ESO guild application Discord broadcast pass complete. Broadcasted: ${broadcastResult.sent}. Failed: ${broadcastResult.failed}.`
+      );
+
+      const response = {
+        ok: true,
+        message: 'ESO guild application records processed.',
+        records_received: incomingRecords.length,
+        records_matched_guild: recordsForGuild.length,
+        records_recorded: result.inserted,
+        records_skipped: result.skipped + (incomingRecords.length - recordsForGuild.length),
+        discord_broadcasted: broadcastResult.sent,
+        discord_failed: broadcastResult.failed,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:eso-guild-application-message-result', callback, response);
+    } catch (error) {
+      Log(`ESO guild application processing failed: ${error.message}`);
+
+      sendSocketResponse(socket, 'guildsync:eso-guild-application-message-result', callback, {
+        ok: false,
+        message: error.message || 'ESO guild application processing failed.',
+        at: new Date().toLocaleString()
+      });
+    }
+  });
 
   socket.on('guildsync:sending-discord-roles', async (payload = {}, callback) => {
     if (socket.guildSyncAuthType !== 'discord-bot') {
@@ -1642,6 +1720,100 @@ function emitDiscordRefreshStatus(message) {
 }
 
 
+
+function collectGuildSyncApplicationRecords(payload = {}) {
+  const rawRecords = [];
+
+  if (Array.isArray(payload.records)) {
+    rawRecords.push(...payload.records);
+  } else if (Array.isArray(payload.applications)) {
+    rawRecords.push(...payload.applications);
+  } else if (payload.record && typeof payload.record === 'object') {
+    rawRecords.push(payload.record);
+  } else if (payload && typeof payload === 'object') {
+    rawRecords.push(payload);
+  }
+
+  return rawRecords.filter(record => record && typeof record === 'object');
+}
+
+function buildGuildSyncApplicationDiscordMessage(record = {}) {
+  const timestamp = Number(record.application_timestamp || record.capturedAt || Math.floor(Date.now() / 1000));
+  const officer = String(record.officer_processing || record.officerAccount || 'Unknown officer').trim() || 'Unknown officer';
+  const action = String(record.application_action || record.action || 'processed').trim() || 'processed';
+  const applicant = String(record.applicant_account || record.applicantAccount || 'Unknown applicant').trim() || 'Unknown applicant';
+  const applicationText = String(record.application_text || record.applicationText || '_No application text captured._').trim() || '_No application text captured._';
+  const declineMessage = String(record.decline_message || record.declineMessage || '').trim();
+  const blacklistMessage = String(record.blacklist_message || record.blacklistMessage || '').trim();
+
+  const lines = [
+    `📝 <t:${timestamp}:F>`,
+    `**${officer}** ${action} an application from **${applicant}**.`,
+    '',
+    '**Application text:**',
+    '```',
+    applicationText.slice(0, 1500),
+    '```'
+  ];
+
+  if (declineMessage) {
+    lines.push('', '**Decline message:**', '```', declineMessage.slice(0, 1000), '```');
+  }
+
+  if (blacklistMessage) {
+    lines.push('', '**Blacklist message:**', '```', blacklistMessage.slice(0, 1000), '```');
+  }
+
+  return lines.join('\n');
+}
+
+async function broadcastPendingGuildSyncApplications() {
+  const pending = await getPendingGuildSyncApplicationBroadcasts(applicationDB);
+
+  if (!pending.length) {
+    return { sent: 0, failed: 0 };
+  }
+
+  const botSocket = discordBotSocketId ? io.sockets.sockets.get(discordBotSocketId) : null;
+
+  if (!botSocket?.connected) {
+    discordBotConnected = false;
+    discordBotSocketId = null;
+    throw new Error('The GuildSync Discord bot is not connected. Applications were recorded but not broadcast.');
+  }
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const record of pending) {
+    const botResponse = await emitToSocketWithAck(
+      botSocket,
+      'guildsync:eso-guild-application-message',
+      {
+        source: 'guildsync-backend-server',
+        applicantAccount: record.applicant_account,
+        capturedAt: record.application_timestamp,
+        officerAccount: record.officer_processing,
+        action: record.application_action,
+        applicationText: record.application_text,
+        declineMessage: record.decline_message,
+        blacklistMessage: record.blacklist_message,
+        message: buildGuildSyncApplicationDiscordMessage(record)
+      },
+      30000
+    );
+
+    if (botResponse?.ok) {
+      await markGuildSyncApplicationBroadcasted(applicationDB, record.applicant_account);
+      sent += 1;
+    } else {
+      failed += 1;
+      Log(`ESO guild application Discord broadcast failed for ${record.applicant_account}: ${botResponse?.message || 'Unknown error'}`);
+    }
+  }
+
+  return { sent, failed };
+}
 
 async function broadcastMemberLinksUpdate(existingLinks = null) {
   try {

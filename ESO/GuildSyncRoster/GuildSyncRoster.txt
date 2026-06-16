@@ -5,6 +5,7 @@
 ## SavedVariables: GuildSyncRoster GuildSyncRosterState
 ## DependsOn: LibHistoire
 
-GuildSyncRoster.lua
 GSRData.lua
+GuildSyncRoster.lua
+
 

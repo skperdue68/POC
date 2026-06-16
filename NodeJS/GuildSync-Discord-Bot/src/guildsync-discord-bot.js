@@ -39,7 +39,8 @@ const {
   GUILDSYNC_SOCKET_URL,
   GUILDSYNC_BOT_KEY,
   GUILDSYNC_HISTORICAL_SCAN_ON_STARTUP,
-  GUILDSYNC_HISTORICAL_SCAN_MESSAGE_LIMIT_PER_CHANNEL
+  GUILDSYNC_HISTORICAL_SCAN_MESSAGE_LIMIT_PER_CHANNEL,
+  ESO_GUILD_APPLICATIONS
 } = process.env;
 
 if (!DISCORD_TOKEN) {
@@ -174,6 +175,36 @@ guildSyncSocket.on('guildsync:request-discord-sync', async (payload = {}, callba
     });
   } finally {
     requestedSyncRunning = false;
+  }
+});
+
+guildSyncSocket.on('guildsync:eso-guild-application-message', async (payload = {}, callback) => {
+  const respond = typeof callback === 'function' ? callback : () => { };
+
+  try {
+    if (!client.isReady()) {
+      throw new Error('Discord client is not ready yet.');
+    }
+
+    const message = String(payload.message || '').trim();
+
+    if (!message) {
+      throw new Error('No message was provided.');
+    }
+
+    await sendEsoGuildApplicationMessage(message);
+
+    respond({
+      ok: true,
+      message: 'ESO guild application message posted to Discord.'
+    });
+  } catch (error) {
+    Log(`ESO guild application Discord post failed: ${error.message}`);
+
+    respond({
+      ok: false,
+      message: error.message
+    });
   }
 });
 
@@ -605,6 +636,27 @@ async function runStartupSyncIfReady(reason) {
   } finally {
     startupSyncRunning = false;
   }
+}
+
+function getEsoGuildApplicationsDestination() {
+  const [guildId, threadId] = ESO_GUILD_APPLICATIONS
+    .split(':')
+    .map(value => value.trim());
+
+  return { guildId, threadId };
+}
+
+async function sendEsoGuildApplicationMessage(message) {
+  const { guildId, threadId } = getEsoGuildApplicationsDestination();
+
+  const guild = await client.guilds.fetch(guildId);
+  const thread = await guild.channels.fetch(threadId);
+
+  if (!thread || !thread.isThread()) {
+    throw new Error(`ESO_GUILD_APPLICATIONS target ${threadId} is not a thread.`);
+  }
+
+  return await thread.send(message);
 }
 
 async function getStartupGuild(discordClient) {

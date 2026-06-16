@@ -4,9 +4,13 @@ import {main} from '../models';
 
 export function CloseWindow():Promise<void>;
 
+export function CollectGuildSyncApplicationsData(arg1:main.GuildSyncSavedVarsFileModifiedEvent):Promise<main.GuildSyncApplicationsDataResult>;
+
 export function CollectGuildSyncBankingData(arg1:main.GuildSyncSavedVarsFileModifiedEvent):Promise<main.GuildSyncBankingDataResult>;
 
 export function CollectGuildSyncRosterData(arg1:main.GuildSyncSavedVarsFileModifiedEvent):Promise<main.GuildSyncRosterDataResult>;
+
+export function CommitGuildSyncApplicationsData(arg1:string,arg2:string):Promise<main.GuildSyncApplicationsDataResult>;
 
 export function CommitGuildSyncBankingData(arg1:string,arg2:string):Promise<main.GuildSyncBankingDataResult>;
 

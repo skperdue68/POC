@@ -5639,13 +5639,6 @@ function renderOpenProfileMenuContents() {
         <span class="profile-label">Client Version</span>
         <span class="profile-value">${escapeHtml(GUILDSYNC_APP_VERSION)}</span>
       </div>
-      <div class="profile-section profile-filewatch-section">
-        <div class="profile-section-header">
-          <span>File Watch</span>
-          <span class="profile-section-subtitle">${guildSyncFileWatcherStatus?.watching ? 'Active' : 'Stopped'}</span>
-        </div>
-        ${renderProfileFileWatcherSection()}
-      </div>
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
   `;
@@ -5661,11 +5654,6 @@ function renderOpenProfileMenuContents() {
       openAssociatePromotionReportDialog();
     });
 
-  document
-    .querySelectorAll('.profile-filewatch-toggle')
-    .forEach((toggle) => {
-      toggle.addEventListener('change', handleProfileFileWatchToggleChange);
-    });
 }
 
 async function refreshProfileFileWatcherStatus() {
@@ -5724,7 +5712,6 @@ function openProfileMenu() {
   menu.setAttribute('aria-hidden', 'false');
   profileMenuOpen = true;
 
-  refreshProfileFileWatcherStatus();
 
   setTimeout(() => {
     window.addEventListener('click', closeProfileMenuOnOutsideClick);

@@ -5,5 +5,6 @@
 ## SavedVariables: GuildSyncBanking GuildSyncBankingState
 ## DependsOn: LibHistoire
 
-GuildSyncBanking.lua
 GSBData.lua
+GuildSyncBanking.lua
+

@@ -84,6 +84,25 @@ async function initializeSchema(db) {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS guildsync_applications (
+      applicant_account VARCHAR(50) NOT NULL PRIMARY KEY,
+      application_text TEXT DEFAULT NULL,
+      application_timestamp VARCHAR(25) NOT NULL,
+      officer_processing VARCHAR(50) NOT NULL,
+      application_action VARCHAR(50) NOT NULL,
+      decline_message TEXT DEFAULT NULL,
+      blacklist_message TEXT DEFAULT NULL,
+      discord_broadcast TINYINT(1) NOT NULL DEFAULT 0
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
+
+
+  await addColumnIfMissing(db, 'guildsync_applications', 'discord_broadcast', 'TINYINT(1) NOT NULL DEFAULT 0');
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS discord_roles (
       role_id VARCHAR(32) PRIMARY KEY,
       role_name VARCHAR(255) NOT NULL,
@@ -223,6 +242,125 @@ async function initializeSchema(db) {
 
 }
 
+
+async function addColumnIfMissing(db, tableName, columnName, columnDefinition) {
+  const [rows] = await db.query(
+    `
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = ?
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+      LIMIT 1
+    `,
+    [GUILDSYNC_DB_NAME, tableName, columnName]
+  );
+
+  if (Array.isArray(rows) && rows.length > 0) {
+    return;
+  }
+
+  await db.query(
+    `ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`
+  );
+}
+
+function normalizeApplicationRecord(record = {}) {
+  const applicantAccount = String(record.applicantAccount || record.applicant_account || '').trim();
+  const applicationTimestamp = String(record.capturedAt || record.applicationTimestamp || record.application_timestamp || '').trim();
+
+  if (!applicantAccount || !applicationTimestamp) {
+    return null;
+  }
+
+  return {
+    applicant_account: applicantAccount,
+    application_text: String(record.applicationText || record.application_text || ''),
+    application_timestamp: applicationTimestamp,
+    officer_processing: String(record.officerAccount || record.officer_processing || record.officerProcessing || '').trim(),
+    application_action: String(record.action || record.application_action || record.applicationAction || '').trim() || 'processed',
+    decline_message: String(record.declineMessage || record.decline_message || ''),
+    blacklist_message: String(record.blacklistMessage || record.blacklist_message || '')
+  };
+}
+
+export async function recordGuildSyncApplications(applicationDB, records = []) {
+  const normalizedRecords = (Array.isArray(records) ? records : [records])
+    .map(normalizeApplicationRecord)
+    .filter(Boolean);
+
+  if (!normalizedRecords.length) {
+    return { inserted: 0, skipped: Array.isArray(records) ? records.length : 1 };
+  }
+
+  for (const record of normalizedRecords) {
+    await applicationDB.execute(
+      `
+        INSERT INTO guildsync_applications (
+          applicant_account,
+          application_text,
+          application_timestamp,
+          officer_processing,
+          application_action,
+          decline_message,
+          blacklist_message,
+          discord_broadcast
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+        ON DUPLICATE KEY UPDATE
+          application_text = VALUES(application_text),
+          application_timestamp = VALUES(application_timestamp),
+          officer_processing = VALUES(officer_processing),
+          application_action = VALUES(application_action),
+          decline_message = VALUES(decline_message),
+          blacklist_message = VALUES(blacklist_message),
+          discord_broadcast = 0
+      `,
+      [
+        record.applicant_account,
+        record.application_text,
+        record.application_timestamp,
+        record.officer_processing,
+        record.application_action,
+        record.decline_message,
+        record.blacklist_message
+      ]
+    );
+  }
+
+  return { inserted: normalizedRecords.length, skipped: (Array.isArray(records) ? records.length : 1) - normalizedRecords.length };
+}
+
+export async function getPendingGuildSyncApplicationBroadcasts(applicationDB) {
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        applicant_account,
+        application_text,
+        application_timestamp,
+        officer_processing,
+        application_action,
+        decline_message,
+        blacklist_message
+      FROM guildsync_applications
+      WHERE discord_broadcast = 0
+      ORDER BY CAST(application_timestamp AS UNSIGNED), applicant_account
+    `
+  );
+
+  return rows;
+}
+
+export async function markGuildSyncApplicationBroadcasted(applicationDB, applicantAccount) {
+  await applicationDB.execute(
+    `
+      UPDATE guildsync_applications
+      SET discord_broadcast = 1
+      WHERE applicant_account = ?
+    `,
+    [applicantAccount]
+  );
+}
 
 export async function upsertLoginUser(loginDB, discordUser) {
   const now = new Date().toISOString();

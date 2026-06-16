@@ -20,7 +20,9 @@ import {
   CollectGuildSyncBankingData,
   CommitGuildSyncBankingData,
   CollectGuildSyncRosterData,
-  CommitGuildSyncRosterData
+  CommitGuildSyncRosterData,
+  CollectGuildSyncApplicationsData,
+  CommitGuildSyncApplicationsData
 } from '../wailsjs/go/main/App';
 
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime';
@@ -29,6 +31,7 @@ const GUILDSYNC_APP_VERSION = '1.0.3';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
 const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
+const PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY = 'guildsync-pending-applications-uploads';
 
 const TRANSIENT_MESSAGE_TTL_MS = 60 * 1000;
 const MESSAGE_VISIBLE_MS = 7000;
@@ -46,6 +49,7 @@ let profileMenuOpen = false;
 let versionCheckTimer = null;
 let bankingUploadQueueProcessing = false;
 let rosterUploadQueueProcessing = false;
+let applicationsUploadQueueProcessing = false;
 let guildSyncFileWatcherStatus = null;
 
 let systemMessages = new Map();
@@ -3976,6 +3980,213 @@ async function sendQueuedGuildSyncRosterUpload(rosterPayload) {
   return response;
 }
 
+
+async function collectAndSendGuildSyncApplicationsData(payload = {}) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('applications-data-pending', 'Applications SavedVariables changed, but GuildSync websocket is not connected yet. The file was not cleared.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  try {
+    const result = await CollectGuildSyncApplicationsData(payload);
+
+    if (!result?.ok) {
+      addSystemMessage('applications-data-pending', result?.message || 'Applications SavedVariables changed, but no application data was sent yet.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const applicationsPayload = {
+      local_upload_id: createLocalApplicationsUploadId(),
+      authenticated_username: getDisplayName(),
+      authenticated_discord_user_id: guildSyncSession?.user?.discord_user_id || '',
+      source: 'guildsync-frontend-client',
+      file_name: result.fileName || payload.fileName || '',
+      file_path: result.filePath || payload.filePath || '',
+      collected_at: new Date().toISOString(),
+      data: result.data || {}
+    };
+
+    try {
+      await sendQueuedGuildSyncApplicationsUpload(applicationsPayload);
+    } catch (sendError) {
+      enqueuePendingGuildSyncApplicationsUpload(applicationsPayload);
+      throw sendError;
+    }
+  } catch (error) {
+    addSystemMessage('applications-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+function createLocalApplicationsUploadId() {
+  return `applications-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function loadPendingGuildSyncApplicationsUploads() {
+  try {
+    const raw = window.localStorage.getItem(PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingGuildSyncApplicationsUploads(queue) {
+  window.localStorage.setItem(PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY, JSON.stringify(Array.isArray(queue) ? queue : []));
+}
+
+function enqueuePendingGuildSyncApplicationsUpload(payload) {
+  const uploadId = String(payload?.local_upload_id || createLocalApplicationsUploadId());
+  const queue = loadPendingGuildSyncApplicationsUploads().filter((item) => item?.local_upload_id !== uploadId);
+
+  queue.push({
+    ...payload,
+    local_upload_id: uploadId,
+    pending_saved_at: new Date().toISOString()
+  });
+
+  savePendingGuildSyncApplicationsUploads(queue);
+
+  addSystemMessage('applications-data-pending', 'Application data is queued and will retry after GuildSync reconnects.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
+function removePendingGuildSyncApplicationsUpload(uploadId) {
+  const queue = loadPendingGuildSyncApplicationsUploads().filter((item) => item?.local_upload_id !== uploadId);
+  savePendingGuildSyncApplicationsUploads(queue);
+}
+
+async function processPendingGuildSyncApplicationsUploads() {
+  if (applicationsUploadQueueProcessing || !socket?.connected || !isAuthenticatedSession()) {
+    return;
+  }
+
+  const queue = loadPendingGuildSyncApplicationsUploads();
+  if (queue.length === 0) {
+    return;
+  }
+
+  applicationsUploadQueueProcessing = true;
+
+  try {
+    for (const pendingPayload of queue) {
+      if (!socket?.connected || !isAuthenticatedSession()) {
+        return;
+      }
+
+      await sendQueuedGuildSyncApplicationsUpload(pendingPayload);
+      removePendingGuildSyncApplicationsUpload(pendingPayload.local_upload_id);
+    }
+  } catch (error) {
+    addSystemMessage('applications-data-pending-error', `Pending application upload retry failed: ${formatError(error)}`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    applicationsUploadQueueProcessing = false;
+  }
+}
+
+async function sendQueuedGuildSyncApplicationsUpload(applicationsPayload) {
+  if (!socket?.connected) {
+    throw new Error('GuildSync websocket is not connected. Application data was not cleared.');
+  }
+
+  const records = Array.isArray(applicationsPayload?.data?.records)
+    ? applicationsPayload.data.records
+    : [];
+
+  if (records.length === 0) {
+    throw new Error('No application records were available to send. Application data was not cleared.');
+  }
+
+  let sentCount = 0;
+
+  for (const record of records) {
+    const response = await emitSocketWithAck('guildsync:eso-guild-application-message', {
+      ...applicationsPayload,
+      record,
+      recordKey: record?.recordKey || '',
+      message: formatGuildSyncApplicationDiscordMessage(record)
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Backend rejected the application data payload. Application data was not cleared.');
+    }
+
+    sentCount += 1;
+  }
+
+  const commitResult = await CommitGuildSyncApplicationsData(
+    applicationsPayload.file_path || '',
+    applicationsPayload.file_name || ''
+  );
+
+  if (!commitResult?.ok) {
+    throw new Error(commitResult?.message || 'Backend confirmed application data, but the SavedVariables file could not be cleared.');
+  }
+
+  addSystemMessage('applications-data-sent', `Sent ${sentCount} application record${sentCount === 1 ? '' : 's'} to GuildSync backend.`, {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+
+  return { ok: true, sent_count: sentCount };
+}
+
+function formatGuildSyncApplicationDiscordMessage(record = {}) {
+  const timestamp = Number(record.capturedAt || Math.floor(Date.now() / 1000));
+  const officer = String(record.officerAccount || 'Unknown officer').trim() || 'Unknown officer';
+  const action = String(record.action || 'processed').trim() || 'processed';
+  const applicant = String(record.applicantAccount || record.recordKey || 'Unknown applicant').trim() || 'Unknown applicant';
+  const applicationText = String(record.applicationText || '_No application text captured._');
+  const extraFields = Object.entries(record)
+    .filter(([key]) => !['recordKey', 'capturedAt', 'officerAccount', 'applicantAccount', 'action', 'applicationText'].includes(key))
+    .map(([key, value]) => `**${key}:** ${formatApplicationRecordValue(value)}`);
+
+  return [
+    `📝 <t:${timestamp}:F>`,
+    `**${officer}** ${action} an application from **${applicant}**.`,
+    '',
+    '**Application text:**',
+    '```',
+    applicationText.slice(0, 1500),
+    '```',
+    extraFields.length > 0 ? '' : null,
+    extraFields.length > 0 ? '**Full captured record fields:**' : null,
+    ...extraFields
+  ].filter((line) => line !== null).join('\n');
+}
+
+function formatApplicationRecordValue(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'object') {
+    try {
+      return `\`${JSON.stringify(value).slice(0, 900)}\``;
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value).slice(0, 900);
+}
+
+async function handleGuildSyncApplicationsSavedVarsModified(payload = {}) {
+  await collectAndSendGuildSyncApplicationsData(payload);
+}
+
 function renderBankDepositsPanel() {
   const rows = getBankingRowsForSection(bankingActiveSection);
   const totals = getBankingTotals(rows);
@@ -5697,6 +5908,7 @@ function connectSocket() {
 
     processPendingGuildSyncBankingUploads();
     processPendingGuildSyncRosterUploads();
+    processPendingGuildSyncApplicationsUploads();
     startVersionCheckTimer();
   });
 
@@ -6304,26 +6516,49 @@ async function syncGuildSyncFileWatcherWithAuthState(options = {}) {
   }
 }
 
+function logGuildSyncFileWatcher(message, payload = null) {
+  const prefix = '[GuildSync File Watcher]';
+
+  if (payload) {
+    console.log(`${prefix} ${message}`, payload);
+    return;
+  }
+
+  console.log(`${prefix} ${message}`);
+}
+
 function handleGuildSyncSavedVarsFileModified(payload = {}) {
   if (!isAuthenticatedSession()) {
+    logGuildSyncFileWatcher('SavedVariables change ignored because the user is not authenticated.', payload);
     return;
   }
 
   const key = String(payload.key || payload.fileName || 'saved-vars-file').trim() || 'saved-vars-file';
+  const normalizedKey = key.toLowerCase();
   const label = String(payload.label || '').trim();
   const fileName = String(payload.fileName || 'SavedVariables file').trim() || 'SavedVariables file';
+  const filePath = String(payload.filePath || '').trim();
   const displayName = label ? `${label} saved variables (${fileName})` : fileName;
+
+  logGuildSyncFileWatcher(`SavedVariables change detected: ${fileName}${filePath ? ` (${filePath})` : ''}. Key: ${normalizedKey}.`, payload);
 
   addSystemMessage(`saved-vars-file-updated-${key}`, `${displayName} has been updated.`, {
     ttlMs: TRANSIENT_MESSAGE_TTL_MS
   });
 
-  if (key.toLowerCase() === 'banking') {
+  if (normalizedKey === 'banking') {
+    logGuildSyncFileWatcher(`Processing banking SavedVariables update from ${fileName}.`);
     handleGuildSyncBankingSavedVarsModified(payload);
   }
 
-  if (key.toLowerCase() === 'roster') {
+  if (normalizedKey === 'roster') {
+    logGuildSyncFileWatcher(`Processing roster SavedVariables update from ${fileName}.`);
     handleGuildSyncRosterSavedVarsModified(payload);
+  }
+
+  if (normalizedKey === 'applications') {
+    logGuildSyncFileWatcher(`Processing applications SavedVariables update from ${fileName}.`);
+    handleGuildSyncApplicationsSavedVarsModified(payload);
   }
 }
 
