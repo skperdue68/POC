@@ -2,17 +2,41 @@ GuildSyncApplications = {}
 local GSA = GuildSyncApplications
 
 GSA.name = "GuildSyncApplications"
-GSA.version = "1.0.7"
+GSA.version = "1.0.8"
 
 local WELCOME_GUILD_NAME = "Alphabet Mafia"
 
+GSA.pendingRestoreState = nil
+GSA.restoreWatcherEventName = GSA.name .. "_RestoreWatcher"
+GSA.restoreWatcherTimeoutName = GSA.name .. "_RestoreWatcherTimeout"
+GSA.hookRetryName = GSA.name .. "_HookRetry"
+GSA.hookAttempts = 0
+GSA.maxHookAttempts = 20
+
 local function Chat(message)
-  CHAT_ROUTER:AddSystemMessage(message)
+  if CHAT_ROUTER and CHAT_ROUTER.AddSystemMessage then
+    CHAT_ROUTER:AddSystemMessage(message)
+  elseif d then
+    d(message)
+  end
 end
 
 local function SafeText(value)
   if value == nil then return "" end
   return tostring(value)
+end
+
+local function Trim(value)
+  value = SafeText(value)
+  return value:match("^%s*(.-)%s*$") or ""
+end
+
+local function Lower(value)
+  if zo_strlower then
+    return zo_strlower(SafeText(value))
+  end
+
+  return string.lower(SafeText(value))
 end
 
 local function Now()
@@ -66,62 +90,256 @@ local function GetOfficerChannelForGuildIndex(guildIndex)
 end
 
 local function PlayGuildSyncAlertSound()
-  if PlaySound and SOUNDS and SOUNDS.NEW_NOTIFICATION then
-    PlaySound(SOUNDS.NEW_NOTIFICATION)
-  elseif PlaySound and SOUNDS and SOUNDS.CHAT_ALERT then
-    PlaySound(SOUNDS.CHAT_ALERT)
-  elseif PlaySound and SOUNDS and SOUNDS.POSITIVE_CLICK then
-    PlaySound(SOUNDS.POSITIVE_CLICK)
+  if PlaySound and SOUNDS then
+    if SOUNDS.NEW_NOTIFICATION then
+      PlaySound(SOUNDS.NEW_NOTIFICATION)
+    elseif SOUNDS.CHAT_ALERT then
+      PlaySound(SOUNDS.CHAT_ALERT)
+    elseif SOUNDS.POSITIVE_CLICK then
+      PlaySound(SOUNDS.POSITIVE_CLICK)
+    elseif SOUNDS.DEFAULT_CLICK then
+      PlaySound(SOUNDS.DEFAULT_CLICK)
+    end
   end
 end
 
-local function GetCurrentChatChannelTarget()
+function GSA:GetPreciseChatChannelInfo()
+  if not CHAT_SYSTEM or not CHAT_SYSTEM.GetCurrentChannelData then
+    return nil
+  end
+
+  local channelData, target = CHAT_SYSTEM:GetCurrentChannelData()
+  if not channelData then
+    return nil
+  end
+
+  local channelId = channelData.id
+  local info = {
+    id = channelId,
+    target = target,
+    kind = "unknown",
+    index = nil,
+    short = "unknown",
+  }
+
+  if channelId == CHAT_CHANNEL_ZONE then
+    info.kind = "zone"
+    info.short = "zone"
+  elseif channelId == CHAT_CHANNEL_PARTY then
+    info.kind = "group"
+    info.short = "group"
+  elseif channelId == CHAT_CHANNEL_SAY then
+    info.kind = "say"
+    info.short = "say"
+  elseif channelId == CHAT_CHANNEL_YELL then
+    info.kind = "yell"
+    info.short = "yell"
+  elseif channelId == CHAT_CHANNEL_EMOTE then
+    info.kind = "emote"
+    info.short = "emote"
+  elseif channelId == CHAT_CHANNEL_WHISPER or channelId == CHAT_CHANNEL_WHISPER_SENT then
+    info.kind = "tell"
+    info.short = "tell"
+  elseif channelId >= CHAT_CHANNEL_GUILD_1 and channelId <= CHAT_CHANNEL_GUILD_5 then
+    local index = channelId - CHAT_CHANNEL_GUILD_1 + 1
+    info.kind = "guild"
+    info.index = index
+    info.short = "g" .. index
+  elseif channelId >= CHAT_CHANNEL_OFFICER_1 and channelId <= CHAT_CHANNEL_OFFICER_5 then
+    local index = channelId - CHAT_CHANNEL_OFFICER_1 + 1
+    info.kind = "officer"
+    info.index = index
+    info.short = "o" .. index
+  end
+
+  return info
+end
+
+function GSA:RestoreChatChannel(channelInfo)
+  if not channelInfo or not CHAT_SYSTEM or not channelInfo.id then
+    return false
+  end
+
+  if CHAT_SYSTEM.SetChannel then
+    CHAT_SYSTEM:SetChannel(channelInfo.id, channelInfo.target)
+    return true
+  end
+
+  return false
+end
+
+function GSA:ClearPendingChatBuffer()
+  local cleared = false
+
+  if CHAT_SYSTEM and CHAT_SYSTEM.textEntry and CHAT_SYSTEM.textEntry.EditControl then
+    local editControl = CHAT_SYSTEM.textEntry.EditControl
+
+    if editControl.SetText then
+      editControl:SetText("")
+      cleared = true
+    end
+
+    if editControl.LoseFocus then
+      editControl:LoseFocus()
+    end
+  end
+
   if CHAT_SYSTEM and CHAT_SYSTEM.textEntry then
-    return CHAT_SYSTEM.textEntry.channelTarget
+    if CHAT_SYSTEM.textEntry.SetText then
+      CHAT_SYSTEM.textEntry:SetText("")
+      cleared = true
+    end
+
+    if CHAT_SYSTEM.textEntry.LoseFocus then
+      CHAT_SYSTEM.textEntry:LoseFocus()
+    end
   end
 
-  return nil
-end
+  if ZO_ChatWindowTextEntryEditBox then
+    if ZO_ChatWindowTextEntryEditBox.SetText then
+      ZO_ChatWindowTextEntryEditBox:SetText("")
+      cleared = true
+    end
 
-local function SetChatChannelTarget(channelTarget)
-  if not channelTarget then return end
-
-  if CHAT_SYSTEM and CHAT_SYSTEM.textEntry and CHAT_SYSTEM.textEntry.SetChannelTarget then
-    CHAT_SYSTEM.textEntry:SetChannelTarget(channelTarget)
-  elseif CHAT_SYSTEM and CHAT_SYSTEM.SetChannelTarget then
-    CHAT_SYSTEM:SetChannelTarget(channelTarget)
+    if ZO_ChatWindowTextEntryEditBox.LoseFocus then
+      ZO_ChatWindowTextEntryEditBox:LoseFocus()
+    end
   end
+
+  if CHAT_SYSTEM and CHAT_SYSTEM.Maximize then
+    CHAT_SYSTEM:Maximize()
+  end
+
+  if CHAT_SYSTEM and CHAT_SYSTEM.Minimize then
+    CHAT_SYSTEM:Minimize()
+  end
+
+  return cleared
 end
 
-function GSA:RestorePreviousChatChannel()
-  if not self.pendingPreviousChatChannel then
+function GSA:NormalizeChatText(text)
+  local value = Trim(text or "")
+  value = Lower(value)
+  value = value:gsub("|c%x%x%x%x%x%x", "")
+  value = value:gsub("|r", "")
+  value = value:gsub("[%c]", " ")
+  value = value:gsub("[%p]", " ")
+  value = value:gsub("%s+", " ")
+  return Trim(value)
+end
+
+function GSA:IsOutgoingChatMessageType(messageType)
+  if type(messageType) ~= "number" then
+    return false
+  end
+
+  if messageType == CHAT_CHANNEL_SAY
+      or messageType == CHAT_CHANNEL_YELL
+      or messageType == CHAT_CHANNEL_EMOTE
+      or messageType == CHAT_CHANNEL_PARTY
+      or messageType == CHAT_CHANNEL_ZONE
+      or messageType == CHAT_CHANNEL_WHISPER
+      or messageType == CHAT_CHANNEL_WHISPER_SENT
+      or (messageType >= CHAT_CHANNEL_GUILD_1 and messageType <= CHAT_CHANNEL_GUILD_5)
+      or (messageType >= CHAT_CHANNEL_OFFICER_1 and messageType <= CHAT_CHANNEL_OFFICER_5) then
+    return true
+  end
+
+  if messageType == CHAT_CATEGORY_SAY
+      or messageType == CHAT_CATEGORY_YELL
+      or messageType == CHAT_CATEGORY_EMOTE
+      or messageType == CHAT_CATEGORY_PARTY
+      or messageType == CHAT_CATEGORY_ZONE
+      or messageType == CHAT_CATEGORY_WHISPER_SENT
+      or messageType == CHAT_CATEGORY_WHISPER
+      or messageType == CHAT_CATEGORY_GUILD_1
+      or messageType == CHAT_CATEGORY_GUILD_2
+      or messageType == CHAT_CATEGORY_GUILD_3
+      or messageType == CHAT_CATEGORY_GUILD_4
+      or messageType == CHAT_CATEGORY_GUILD_5
+      or messageType == CHAT_CATEGORY_OFFICER_1
+      or messageType == CHAT_CATEGORY_OFFICER_2
+      or messageType == CHAT_CATEGORY_OFFICER_3
+      or messageType == CHAT_CATEGORY_OFFICER_4
+      or messageType == CHAT_CATEGORY_OFFICER_5 then
+    return true
+  end
+
+  return false
+end
+
+function GSA:ClearPendingRestoreState(reason)
+  self.pendingRestoreState = nil
+  EVENT_MANAGER:UnregisterForEvent(self.restoreWatcherEventName, EVENT_CHAT_MESSAGE_CHANNEL)
+  EVENT_MANAGER:UnregisterForUpdate(self.restoreWatcherTimeoutName)
+end
+
+function GSA:HandleRestoreWatcherChatMessage(eventCode, messageType, fromName, text, isCustomerService)
+  local state = self.pendingRestoreState
+  if not state then
     return
   end
 
-  local previousChannel = self.pendingPreviousChatChannel
-  self.pendingPreviousChatChannel = nil
-
-  zo_callLater(function()
-    SetChatChannelTarget(previousChannel)
-  end, 250)
-end
-
-function GSA:HookChatRestore()
-  if self.chatRestoreHooked then
+  if not self:IsOutgoingChatMessageType(messageType) then
     return
   end
 
-  self.chatRestoreHooked = true
+  local expected = SafeText(state.expectedText)
+  local actual = self:NormalizeChatText(text or "")
 
-  if type(SendChatMessage) == "function" then
-    ZO_PreHook("SendChatMessage", function()
-      if GSA.pendingPreviousChatChannel then
-        GSA:RestorePreviousChatChannel()
-      end
-
-      return false
-    end)
+  if expected == "" or actual == "" then
+    return
   end
+
+  if expected ~= actual then
+    return
+  end
+
+  self:RestoreChatChannel(state.previousChannel)
+  self:ClearPendingRestoreState("watcher matched outgoing message")
+end
+
+function GSA:ArmPendingRestoreState(previousChannelInfo, expectedText, timeoutSeconds)
+  self:ClearPendingRestoreState("arming new restore state")
+
+  if not previousChannelInfo or not previousChannelInfo.id then
+    return false
+  end
+
+  local normalizedExpected = self:NormalizeChatText(expectedText)
+  if normalizedExpected == "" then
+    return false
+  end
+
+  timeoutSeconds = tonumber(timeoutSeconds) or 60
+
+  self.pendingRestoreState = {
+    previousChannel = previousChannelInfo,
+    expectedText = normalizedExpected,
+    timeoutSeconds = timeoutSeconds,
+    armedAt = GetFrameTimeMilliseconds and GetFrameTimeMilliseconds() or nil,
+  }
+
+  EVENT_MANAGER:RegisterForEvent(
+    self.restoreWatcherEventName,
+    EVENT_CHAT_MESSAGE_CHANNEL,
+    function(...)
+      GSA:HandleRestoreWatcherChatMessage(...)
+    end
+  )
+
+  EVENT_MANAGER:RegisterForUpdate(self.restoreWatcherTimeoutName, timeoutSeconds * 1000, function()
+    local pendingState = GSA.pendingRestoreState
+
+    if pendingState and pendingState.previousChannel then
+      GSA:RestoreChatChannel(pendingState.previousChannel)
+    end
+
+    GSA:ClearPendingChatBuffer()
+    GSA:ClearPendingRestoreState("restore timeout")
+  end)
+
+  return true
 end
 
 local function IsAccountOnlineInGuild(guildId, accountName)
@@ -146,41 +364,47 @@ local function IsAccountOnlineInGuild(guildId, accountName)
   return false
 end
 
+function GSA:PopulateOfficerWelcomeMessage(applicantAccount)
+  local guildIndex, guildId = GetGuildIndexByName(WELCOME_GUILD_NAME)
+
+  if not guildIndex or not guildId then
+    Chat("|cffff66GuildSyncApplications:|r could not find guild " ..
+      WELCOME_GUILD_NAME .. " for officer welcome message.")
+    return false
+  end
+
+  if not IsAccountOnlineInGuild(guildId, applicantAccount) then
+    Chat("|cffff66GuildSyncApplications:|r " ..
+      SafeText(applicantAccount) ..
+      " is not showing online in " .. WELCOME_GUILD_NAME .. ". Officer message was not queued.")
+    return false
+  end
+
+  local officerChannel = GetOfficerChannelForGuildIndex(guildIndex)
+
+  if not officerChannel then
+    Chat("|cffff66GuildSyncApplications:|r could not determine officer chat channel for guild slot " ..
+      SafeText(guildIndex) .. ".")
+    return false
+  end
+
+  local message = "Mafia Family, join me in welcoming " ..
+      SafeText(applicantAccount) ..
+      " to the Mafia. Make yourself at home! You can learn more about the guild and our events on our discord linked on the 'G' tab by default. We look forward to getting to know you!"
+
+  local previousChannelInfo = self:GetPreciseChatChannelInfo()
+  self:ArmPendingRestoreState(previousChannelInfo, message, 60)
+
+  StartChatInput(message, officerChannel)
+  PlayGuildSyncAlertSound()
+
+  Chat("|c66ff66GuildSyncApplications:|r officer welcome message populated in chat buffer. Press Enter to send it.")
+  return true
+end
+
 local function QueueOfficerWelcomeMessage(applicantAccount)
   zo_callLater(function()
-    local guildIndex, guildId = GetGuildIndexByName(WELCOME_GUILD_NAME)
-
-    if not guildIndex or not guildId then
-      Chat("|cffff66GuildSyncApplications:|r could not find guild " ..
-        WELCOME_GUILD_NAME .. " for officer welcome message.")
-      return
-    end
-
-    if not IsAccountOnlineInGuild(guildId, applicantAccount) then
-      Chat("|cffff66GuildSyncApplications:|r " ..
-        SafeText(applicantAccount) ..
-        " is not showing online in " .. WELCOME_GUILD_NAME .. ". Officer message was not queued.")
-      return
-    end
-
-    local officerChannel = GetOfficerChannelForGuildIndex(guildIndex)
-
-    if not officerChannel then
-      Chat("|cffff66GuildSyncApplications:|r could not determine officer chat channel for guild slot " ..
-        SafeText(guildIndex) .. ".")
-      return
-    end
-
-    local message = "Mafia Family, join me in welcoming " ..
-        SafeText(applicantAccount) ..
-        " to the Mafia. Make yourself at home! You can learn more about the guild and our events on our discord linked on the 'G' tab by default. We look forward to getting to know you!"
-
-    GSA.pendingPreviousChatChannel = GetCurrentChatChannelTarget()
-
-    StartChatInput(message, officerChannel)
-    PlayGuildSyncAlertSound()
-
-    Chat("|c66ff66GuildSyncApplications:|r officer welcome message populated in chat buffer.")
+    GSA:PopulateOfficerWelcomeMessage(applicantAccount)
   end, 1000)
 end
 
@@ -302,13 +526,49 @@ function GSA:HookGlobalFunction(functionName, action)
     return false
   end
 
+  if self.hookedFunctions and self.hookedFunctions[functionName] then
+    return true
+  end
+
+  self.hookedFunctions = self.hookedFunctions or {}
+
   ZO_PreHook(functionName, function(guildId, index, declineMessage, blacklistApplicant, blacklistMessage)
     GSA:SaveApplicationDecision(action, guildId, index, declineMessage, blacklistApplicant, blacklistMessage)
     return false
   end)
 
+  self.hookedFunctions[functionName] = true
   Chat("|c66ff66GuildSyncApplications:|r hooked " .. functionName)
   return true
+end
+
+function GSA:TryHookApplicationFunctions()
+  local hooked = false
+
+  hooked = self:HookGlobalFunction("AcceptGuildApplication", "accepted") or hooked
+  hooked = self:HookGlobalFunction("DeclineGuildApplication", "rejected") or hooked
+  hooked = self:HookGlobalFunction("RejectGuildApplication", "rejected") or hooked
+
+  return hooked
+end
+
+function GSA:StartHookRetry()
+  EVENT_MANAGER:UnregisterForUpdate(self.hookRetryName)
+
+  EVENT_MANAGER:RegisterForUpdate(self.hookRetryName, 1000, function()
+    GSA.hookAttempts = GSA.hookAttempts + 1
+
+    if GSA:TryHookApplicationFunctions() then
+      EVENT_MANAGER:UnregisterForUpdate(GSA.hookRetryName)
+      Chat("|c66ff66GuildSyncApplications:|r application hook ready.")
+      return
+    end
+
+    if GSA.hookAttempts >= GSA.maxHookAttempts then
+      EVENT_MANAGER:UnregisterForUpdate(GSA.hookRetryName)
+      Chat("|cffff66GuildSyncApplications:|r loaded, but no accept/reject functions were found after retrying.")
+    end
+  end)
 end
 
 function GSA:Initialize()
@@ -321,18 +581,14 @@ function GSA:Initialize()
     }
   )
 
-  self:HookChatRestore()
+  self.hookedFunctions = self.hookedFunctions or {}
+  self.hookAttempts = 0
 
-  local hooked = false
-
-  hooked = self:HookGlobalFunction("AcceptGuildApplication", "accepted") or hooked
-  hooked = self:HookGlobalFunction("DeclineGuildApplication", "rejected") or hooked
-  hooked = self:HookGlobalFunction("RejectGuildApplication", "rejected") or hooked
-
-  if hooked then
+  if self:TryHookApplicationFunctions() then
     Chat("|c66ff66GuildSyncApplications:|r loaded.")
   else
-    Chat("|cffff66GuildSyncApplications:|r loaded, but no accept/reject functions were found.")
+    Chat("|cffff66GuildSyncApplications:|r loaded. Waiting for ESO application functions to become available...")
+    self:StartHookRetry()
   end
 end
 
@@ -346,7 +602,7 @@ end
 EVENT_MANAGER:RegisterForEvent(GSA.name, EVENT_ADD_ON_LOADED, OnAddonLoaded)
 
 SLASH_COMMANDS["/gsa"] = function(args)
-  args = SafeText(args):lower()
+  args = Lower(SafeText(args))
 
   if args ~= "list" then
     Chat("GuildSyncApplications commands:")

@@ -458,9 +458,103 @@ body {
   white-space: nowrap;
 }
 
+
+#webSavedVarsUploadBannerHost {
+  position: absolute;
+  top: 194px;
+  left: 22px;
+  right: 22px;
+  z-index: 2;
+  box-sizing: border-box;
+  --wails-draggable: no-drag;
+}
+
+.web-savedvars-upload-banner {
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 18px;
+  box-sizing: border-box;
+  border: 1px solid rgba(59, 130, 246, 0.66);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(25, 55, 111, 0.84) 0%, rgba(11, 26, 60, 0.84) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 14px 34px rgba(0, 0, 0, 0.18),
+    0 0 28px rgba(37, 99, 235, 0.12);
+  color: #f8fbff;
+}
+
+.web-savedvars-upload-banner-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #d9ecff;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.96), rgba(37, 99, 235, 0.96));
+  border: 1px solid rgba(147, 197, 253, 0.52);
+  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.24);
+}
+
+.web-savedvars-upload-banner-icon svg {
+  width: 30px;
+  height: 30px;
+  display: block;
+}
+
+.web-savedvars-upload-banner-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.web-savedvars-upload-banner-title {
+  margin-bottom: 3px;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+}
+
+.web-savedvars-upload-banner-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.web-savedvars-upload-banner-text strong {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.web-savedvars-upload-banner-dismiss {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.28);
+  color: rgba(226, 232, 240, 0.84);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.web-savedvars-upload-banner-dismiss:hover {
+  background: rgba(37, 99, 235, 0.34);
+  color: #ffffff;
+  border-color: rgba(147, 197, 253, 0.58);
+}
+
 .guildsync-tab-content {
   position: absolute;
-  top: 202px;
+  top: 284px;
   left: 22px;
   right: 22px;
   bottom: 74px;
@@ -475,6 +569,10 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 18px 45px rgba(0, 0, 0, 0.10);
   overflow: hidden;
+}
+
+.guildsync-tab-content.web-upload-banner-dismissed {
+  top: 202px;
 }
 
 .guildsync-tab-panel {
@@ -513,7 +611,34 @@ body {
     border-right: none;
   }
 
+  #webSavedVarsUploadBannerHost {
+    top: 226px;
+    left: 16px;
+    right: 16px;
+  }
+
+  .web-savedvars-upload-banner {
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+
+  .web-savedvars-upload-banner-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+  }
+
+  .web-savedvars-upload-banner-icon svg {
+    width: 26px;
+    height: 26px;
+  }
+
   .guildsync-tab-content {
+    top: 388px;
+  }
+
+  .guildsync-tab-content.web-upload-banner-dismissed {
     top: 310px;
   }
 }
@@ -1808,11 +1933,14 @@ body {
   box-sizing: border-box;
   background: rgba(2, 6, 23, 0.62);
   backdrop-filter: blur(8px);
+  overflow: hidden;
 }
 
 .roster-history-dialog {
-  width: min(980px, 96%);
-  max-height: 92%;
+  width: min(980px, calc(100% - 96px));
+  max-width: calc(100% - 96px);
+  height: calc(100% - 96px);
+  max-height: calc(100% - 96px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1824,7 +1952,7 @@ body {
 
 
 .roster-rank-history-dialog {
-  width: min(1160px, 97%);
+  width: min(1280px, calc(100% - 96px));
 }
 
 .roster-rank-history-dialog .roster-history-content {
@@ -1900,6 +2028,7 @@ body {
   grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
   gap: 16px;
   padding: 16px 22px 22px;
+  overflow: hidden;
 }
 
 .roster-history-matches,
@@ -1924,7 +2053,9 @@ body {
 .roster-history-match-list,
 .roster-history-event-table-shell {
   min-height: 0;
-  overflow: auto;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .roster-history-match {
@@ -3166,6 +3297,34 @@ body {
   outline-offset: -1px;
 }
 
+.web-upload-card {
+  margin-bottom: 1rem;
+}
+
+.web-upload-controls {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.web-upload-field {
+  display: grid;
+  gap: 0.35rem;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.9rem;
+}
+
+.web-upload-field input[type="file"] {
+  width: 100%;
+  padding: 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.88);
+}
+
+
+/* Discord Last Seen report */
 .discord-last-seen-report-dialog {
   width: min(1180px, 98%);
 }
@@ -3389,106 +3548,548 @@ body {
   overflow-y: visible;
 }
 
-/* Desktop client update prompt (Wails only) */
-.desktop-update-area {
-  min-height: 42px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex: 1 1 auto;
+/* GuildSync desktop responsive layout pass
+   Keeps resized desktop/Wails windows usable by allowing panels, filters,
+   tables, and dialogs to scroll/wrap instead of overlapping. */
+.main-window,
+.main-surface,
+.guildsync-tab-content,
+.guildsync-tab-panel,
+.discord-member-panel,
+.bank-deposits-panel,
+.eso-roster-panel,
+.reports-panel {
   min-width: 0;
-  margin-left: auto;
-  margin-right: 18px;
+  min-height: 0;
 }
 
-.desktop-update-download-button {
-  min-width: 236px;
-  max-width: 300px;
+.guildsync-tab-content {
+  overflow: hidden;
+}
+
+.discord-data-header,
+.reports-card-header,
+.report-result-section-header,
+.bank-deposits-summary-row,
+.bank-raffle-period-strip,
+.bank-raffle-period-content {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.discord-data-actions,
+.reports-card-header .refresh-discord-button,
+.report-run-button,
+.bank-export-button {
+  flex-shrink: 0;
+}
+
+.discord-filter-row,
+.discord-link-filter-row,
+.eso-roster-filter-row {
+  min-width: 0;
+}
+
+.discord-role-filter-wrap,
+.member-link-filter-wrap,
+.discord-selected-roles,
+.discord-search-wrap {
+  min-width: 0;
+}
+
+.discord-member-table-shell,
+.bank-deposit-table-shell,
+.eso-roster-table-shell,
+.report-result-table-shell,
+.member-links-table-shell {
+  overflow: auto;
+  min-width: 0;
+}
+
+.discord-member-table,
+.eso-roster-table,
+.member-links-table {
+  min-width: 860px;
+}
+
+.bank-deposit-table {
+  min-width: 820px;
+}
+
+.report-result-table {
+  min-width: 920px;
+}
+
+.roster-history-overlay,
+.bank-export-overlay {
+  padding: 14px;
+  align-items: center;
+}
+
+.roster-history-dialog,
+.bank-export-dialog,
+.report-results-dialog,
+.manual-ticket-dialog,
+.member-link-dialog {
+  max-width: calc(100vw - 28px);
+  max-height: calc(100vh - 28px);
+  min-height: 0;
+}
+
+.roster-history-content,
+.report-results-content,
+.bank-export-grid-shell,
+.member-link-dialog .roster-history-content,
+.manual-ticket-dialog .roster-history-content {
+  min-height: 0;
+  overflow: auto;
+}
+
+@media (max-width: 1180px) {
+  .compact-app-header {
+    left: 18px;
+    right: 18px;
+    gap: 14px;
+  }
+
+  .compact-brand-title {
+    font-size: 24px;
+  }
+
+  .guildsync-tabs {
+    left: 12px;
+    right: 12px;
+  }
+
+  .guildsync-tab {
+    padding: 0 12px;
+    gap: 9px;
+    font-size: 13px;
+  }
+
+  .guildsync-tab-icon,
+  .guildsync-tab-svg {
+    width: 20px;
+    height: 20px;
+    font-size: 20px;
+  }
+
+  .guildsync-tab-content {
+    left: 14px;
+    right: 14px;
+  }
+
+  .discord-filter-row,
+  .discord-link-filter-row,
+  .eso-roster-filter-row {
+    grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.3fr);
+    align-items: start;
+  }
+
+  .discord-link-filter-row .member-link-filter-wrap {
+    grid-column: 2 / 3;
+  }
+
+  .discord-results-count {
+    justify-content: flex-start;
+  }
+
+  .discord-role-filter-wrap,
+  .member-link-filter-wrap {
+    max-width: none;
+    grid-template-columns: 96px minmax(160px, 180px) minmax(180px, 1fr);
+  }
+
+  .bank-section-cards {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .compact-app-header {
+    top: 10px;
+    height: auto;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .compact-brand-logo {
+    width: 54px;
+    height: 54px;
+  }
+
+  .compact-brand-title {
+    font-size: 21px;
+  }
+
+  .discord-area {
+    margin-left: auto;
+  }
+
+  .guildsync-tabs {
+    top: 94px;
+    height: auto;
+    min-height: 92px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .guildsync-tab {
+    height: 46px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.20);
+  }
+
+  .guildsync-tab:nth-child(2n) {
+    border-right: none;
+  }
+
+  .guildsync-tab-content {
+    top: 200px;
+    left: 10px;
+    right: 10px;
+    bottom: 58px;
+  }
+
+  .discord-data-body,
+  .bank-deposits-body {
+    padding: 14px;
+  }
+
+  .discord-filter-row,
+  .discord-link-filter-row,
+  .eso-roster-filter-row {
+    grid-template-columns: 1fr;
+  }
+
+  .discord-link-filter-row .member-link-filter-wrap {
+    grid-column: 1 / -1;
+  }
+
+  .discord-role-filter-wrap,
+  .member-link-filter-wrap {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+
+  .discord-filter-label {
+    text-align: left;
+    justify-self: start;
+  }
+
+  .discord-role-select,
+  .clear-discord-filters-button,
+  .refresh-discord-button,
+  .bank-export-button {
+    width: 100%;
+  }
+
+  .bank-deposits-summary-row {
+    align-items: flex-start;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .report-option-card,
+  .reports-card-header,
+  .report-result-section-header {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-height: 760px) {
+  .compact-app-header {
+    top: 8px;
+    height: 62px;
+  }
+
+  .compact-brand-logo {
+    width: 50px;
+    height: 50px;
+  }
+
+  .compact-brand-title {
+    font-size: 22px;
+  }
+
+  .compact-brand-version {
+    font-size: 12px;
+  }
+
+  .guildsync-tabs {
+    top: 82px;
+    height: 54px;
+  }
+
+  .guildsync-tab {
+    font-size: 13px;
+  }
+
+  .guildsync-tab-content {
+    top: 150px;
+    bottom: 56px;
+  }
+
+  .discord-data-header {
+    min-height: 0;
+    padding: 12px 18px;
+  }
+
+  .discord-data-body,
+  .bank-deposits-body {
+    padding-top: 12px;
+  }
+
+  .bank-section-cards {
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .bank-section-card {
+    min-height: 56px;
+    padding: 10px 14px;
+  }
+
+  .status-bar {
+    height: 42px;
+  }
+
+  .version-footer-text {
+    bottom: 48px;
+  }
+}
+
+@media (max-height: 620px) {
+  .compact-brand-version,
+  .version-footer-text {
+    display: none;
+  }
+
+  .compact-app-header {
+    top: 6px;
+    height: 48px;
+  }
+
+  .compact-brand-logo {
+    width: 42px;
+    height: 42px;
+  }
+
+  .compact-brand-title {
+    font-size: 20px;
+  }
+
+  .guildsync-tabs {
+    top: 60px;
+    height: 48px;
+  }
+
+  .guildsync-tab-content {
+    top: 118px;
+    bottom: 48px;
+  }
+
+  .discord-search-wrap {
+    height: 54px;
+  }
+
+  .discord-search-input {
+    height: 46px;
+  }
+
+  .discord-search-icon {
+    bottom: 14px;
+  }
+
+  .bank-raffle-period-strip {
+    margin-bottom: 10px;
+  }
+}
+
+/* Web-only desktop client download button */
+.compact-header-actions {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-left: auto;
+}
+
+.desktop-client-download-button {
+  min-width: 300px;
   height: 42px;
-  padding: 0 14px;
-  border: 1px solid rgba(147, 197, 253, 0.72);
+  padding: 0 14px 0 16px;
+  border: 1px solid rgba(93, 148, 255, 0.82);
   border-radius: 12px;
-  background: linear-gradient(180deg, rgba(51, 117, 245, 0.96) 0%, rgba(37, 99, 235, 0.96) 100%);
+  background:
+    linear-gradient(180deg, rgba(59, 130, 246, 0.96) 0%, rgba(37, 99, 235, 0.96) 100%);
   color: #FFFFFF;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
-  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.34);
-  cursor: pointer;
+  text-decoration: none;
   box-sizing: border-box;
-  text-align: left;
-  --wails-draggable: no-drag;
+  box-shadow:
+    0 14px 28px rgba(37, 99, 235, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  user-select: none;
+  flex: 0 1 auto;
 }
 
-.desktop-update-download-button:hover {
-  background: linear-gradient(180deg, rgba(64, 131, 255, 0.98) 0%, rgba(45, 112, 245, 0.98) 100%);
-  border-color: rgba(191, 219, 254, 0.94);
+.desktop-client-download-button:hover {
+  background:
+    linear-gradient(180deg, rgba(78, 145, 255, 0.98) 0%, rgba(42, 112, 245, 0.98) 100%);
+  border-color: rgba(147, 197, 253, 0.95);
+  color: #FFFFFF;
+  text-decoration: none;
 }
 
-.desktop-update-download-icon {
+.desktop-client-download-icon {
   width: 18px;
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
+  flex: 0 0 18px;
+  color: #FFFFFF;
   font-size: 15px;
   line-height: 1;
+  text-align: center;
 }
 
-.desktop-update-download-copy {
+.desktop-client-download-copy {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  line-height: 1.05;
+  line-height: 1.1;
 }
 
-.desktop-update-download-title {
+.desktop-client-download-title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 900;
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 800;
   letter-spacing: 0.1px;
-}
-
-.desktop-update-download-subtitle {
-  min-width: 0;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.desktop-client-download-subtitle {
+  min-width: 0;
+  color: rgba(226, 232, 240, 0.92);
   font-size: 10px;
-  font-weight: 700;
-  color: rgba(226, 232, 240, 0.94);
+  font-weight: 650;
+  letter-spacing: 0.05px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.desktop-client-download-caret {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: rgba(239, 246, 255, 0.94);
+  font-size: 13px;
+  line-height: 1;
+}
+
+@media (max-width: 1180px) {
+  .compact-header-actions {
+    gap: 12px;
+  }
+
+  .desktop-client-download-button {
+    min-width: 254px;
+  }
 }
 
 @media (max-width: 980px) {
-  .desktop-update-area {
-    flex: 0 1 auto;
-    margin-right: 10px;
+  .desktop-client-download-button {
+    min-width: 210px;
+    width: 210px;
   }
 
-  .desktop-update-download-button {
-    min-width: 178px;
-    max-width: 208px;
-    padding: 0 10px;
-  }
-
-  .desktop-update-download-title {
-    font-size: 12px;
-  }
-
-  .desktop-update-download-subtitle {
-    font-size: 9px;
+  .desktop-client-download-title {
+    font-size: 13px;
   }
 }
 
-@media (max-width: 760px) {
-  .desktop-update-area {
+@media (max-width: 860px) {
+  .compact-header-actions {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+
+  .desktop-client-download-button {
+    width: min(100%, 300px);
+    min-width: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .desktop-client-download-button {
+    height: 38px;
+    padding: 0 12px;
+  }
+
+  .desktop-client-download-subtitle,
+  .desktop-client-download-caret {
     display: none;
+  }
+}
+
+
+/* Bounded roster/Discord history modal scrolling. */
+.roster-rank-history-dialog .roster-history-event-table-shell,
+.discord-member-history-dialog .roster-history-event-table-shell {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.roster-rank-history-event-table,
+.discord-member-history-event-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.roster-rank-history-event-table th,
+.roster-rank-history-event-table td,
+.discord-member-history-event-table th,
+.discord-member-history-event-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  vertical-align: top;
+  line-height: 1.35;
+}
+
+.roster-rank-history-event-table .roster-history-when-column,
+.roster-rank-history-event-table .roster-history-when-cell {
+  width: 170px;
+  min-width: 0;
+  white-space: normal;
+}
+
+.roster-rank-history-event-table th:nth-child(2),
+.roster-rank-history-event-table td:nth-child(2) {
+  width: 140px;
+  min-width: 0;
+}
+
+.roster-rank-history-event-table th:nth-child(3),
+.roster-rank-history-event-table td:nth-child(3),
+.roster-rank-history-event-table th:nth-child(4),
+.roster-rank-history-event-table td:nth-child(4) {
+  width: 24%;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .roster-rank-history-dialog .roster-history-content,
+  .discord-member-history-dialog .roster-history-content {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -3848,3 +4449,660 @@ body {
   text-shadow: 0 0 10px rgba(250, 204, 21, 0.25);
 }
 
+
+
+.web-savedvars-fullscreen-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(3, 10, 28, 0.78);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.web-savedvars-fullscreen-drop-overlay.is-visible {
+  display: flex;
+}
+
+.web-savedvars-fullscreen-drop-card {
+  width: min(720px, calc(100vw - 64px));
+  min-height: 260px;
+  border: 2px dashed rgba(93, 165, 255, 0.95);
+  border-radius: 28px;
+  background: linear-gradient(145deg, rgba(17, 35, 64, 0.94), rgba(9, 20, 42, 0.98));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), 0 0 38px rgba(49, 125, 255, 0.18);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+  color: #f3f7ff;
+}
+
+.web-savedvars-drop-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 46px;
+  line-height: 1;
+  color: #d7e8ff;
+  background: linear-gradient(180deg, rgba(57, 110, 203, 0.9), rgba(28, 65, 126, 0.95));
+  border: 1px solid rgba(119, 176, 255, 0.8);
+  box-shadow: inset 0 0 20px rgba(180, 210, 255, 0.12), 0 14px 30px rgba(25, 84, 170, 0.28);
+}
+
+.web-savedvars-fullscreen-drop-card h2 {
+  margin: 6px 0 0;
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.web-savedvars-fullscreen-drop-card p {
+  margin: 0;
+  color: #aebbd0;
+  font-size: 14px;
+}
+
+.web-savedvars-allowed-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.web-savedvars-allowed-file-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(117, 164, 232, 0.45);
+  background: rgba(5, 15, 35, 0.62);
+  color: #eef5ff;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+/* Keep roster/Discord history modals visually bounded inside the app pane. */
+.roster-history-overlay {
+  padding: 64px 54px 44px;
+}
+
+.roster-rank-history-dialog,
+.discord-member-history-dialog {
+  max-height: min(720px, calc(100vh - 160px), calc(100% - 108px));
+  min-height: 0;
+}
+
+.roster-rank-history-dialog .roster-history-content,
+.discord-member-history-dialog .roster-history-content {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.roster-rank-history-dialog .roster-history-match-list,
+.roster-rank-history-dialog .roster-history-event-table-shell,
+.discord-member-history-dialog .roster-history-match-list,
+.discord-member-history-dialog .roster-history-event-table-shell {
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+@media (max-height: 720px) {
+  .roster-history-overlay {
+    padding-top: 48px;
+    padding-bottom: 36px;
+  }
+
+  .roster-rank-history-dialog,
+  .discord-member-history-dialog {
+    max-height: calc(100vh - 116px);
+  }
+}
+
+/* Start custom modals at their intended maximum size instead of resizing with content. */
+.roster-history-dialog,
+.manual-ticket-dialog,
+.member-link-dialog,
+.report-results-dialog,
+.discord-last-seen-report-dialog {
+  height: min(760px, calc(100% - 48px));
+  min-height: 0;
+}
+
+.roster-rank-history-dialog,
+.discord-member-history-dialog {
+  height: min(720px, calc(100vh - 160px), calc(100% - 108px));
+  min-height: 0;
+}
+
+.guildsync-confirm-dialog {
+  min-height: min(260px, calc(100% - 48px));
+}
+
+@media (max-height: 720px) {
+  .roster-rank-history-dialog,
+  .discord-member-history-dialog {
+    height: calc(100vh - 116px);
+  }
+}
+
+/* Force history modals to open at their bounded maximum height and keep both panes scrollable. */
+.roster-rank-history-dialog,
+.discord-member-history-dialog {
+  height: min(720px, calc(100vh - 160px), calc(100% - 108px));
+  max-height: min(720px, calc(100vh - 160px), calc(100% - 108px));
+  min-height: min(520px, calc(100vh - 160px), calc(100% - 108px));
+}
+
+.roster-rank-history-dialog .roster-history-content,
+.discord-member-history-dialog .roster-history-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.roster-rank-history-dialog .roster-history-matches,
+.roster-rank-history-dialog .roster-history-events,
+.discord-member-history-dialog .roster-history-matches,
+.discord-member-history-dialog .roster-history-events {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.roster-rank-history-dialog .roster-history-match-list,
+.roster-rank-history-dialog .roster-history-event-table-shell,
+.discord-member-history-dialog .roster-history-match-list,
+.discord-member-history-dialog .roster-history-event-table-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+@media (max-height: 720px) {
+  .roster-rank-history-dialog,
+  .discord-member-history-dialog {
+    height: calc(100vh - 116px);
+    max-height: calc(100vh - 116px);
+    min-height: 0;
+  }
+}
+
+/* Final modal sizing/scrolling fix: keep history modals at full usable size, make both result panes scroll, and widen Discord history tables. */
+.roster-history-overlay {
+  padding: 32px;
+  overflow: hidden;
+}
+
+.roster-history-dialog {
+  width: min(1320px, calc(100vw - 64px));
+  max-width: calc(100vw - 64px);
+  height: min(780px, calc(100vh - 64px));
+  max-height: calc(100vh - 64px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.roster-rank-history-dialog,
+.discord-member-history-dialog {
+  width: min(1440px, calc(100vw - 64px));
+  max-width: calc(100vw - 64px);
+  height: min(780px, calc(100vh - 64px));
+  max-height: calc(100vh - 64px);
+  min-height: 0;
+}
+
+.roster-history-header,
+.roster-history-search-row {
+  flex: 0 0 auto;
+}
+
+.roster-history-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+}
+
+.discord-member-history-dialog .roster-history-content {
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.roster-rank-history-dialog .roster-history-content {
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.roster-history-matches,
+.roster-history-events {
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.roster-history-match-list,
+.roster-history-event-table-shell,
+.discord-member-history-dialog .roster-history-match-list,
+.discord-member-history-dialog .roster-history-event-table-shell,
+.roster-rank-history-dialog .roster-history-match-list,
+.roster-rank-history-dialog .roster-history-event-table-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.roster-history-match {
+  flex: 0 0 auto;
+}
+
+.discord-member-history-event-table,
+.roster-rank-history-event-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.discord-member-history-event-table .roster-history-when-column,
+.discord-member-history-event-table .roster-history-when-cell {
+  width: 165px;
+}
+
+.discord-member-history-event-table th:nth-child(2),
+.discord-member-history-event-table td:nth-child(2) {
+  width: 150px;
+}
+
+.discord-member-history-event-table th:nth-child(3),
+.discord-member-history-event-table td:nth-child(3),
+.discord-member-history-event-table th:nth-child(4),
+.discord-member-history-event-table td:nth-child(4) {
+  width: 28%;
+}
+
+.discord-member-history-event-table th:nth-child(5),
+.discord-member-history-event-table td:nth-child(5) {
+  width: 120px;
+}
+
+@media (max-width: 900px) {
+  .discord-member-history-dialog .roster-history-content,
+  .roster-rank-history-dialog .roster-history-content {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .roster-history-matches,
+  .roster-history-events {
+    min-height: 220px;
+  }
+}
+
+/* Universal modal sizing pass: open modals at their full usable size, keep them inside the app, and only scroll content when needed. */
+.roster-history-overlay {
+  padding: 24px 32px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+.roster-history-dialog,
+.report-results-dialog,
+.manual-ticket-dialog,
+.member-link-dialog,
+.guildsync-confirm-dialog {
+  width: min(1680px, calc(100vw - 64px)) !important;
+  max-width: calc(100vw - 64px) !important;
+  height: min(860px, calc(100vh - 96px), calc(100% - 48px)) !important;
+  max-height: min(860px, calc(100vh - 96px), calc(100% - 48px)) !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* History lookup modals need extra width so all history columns fit without horizontal scrolling. */
+.roster-rank-history-dialog,
+.discord-member-history-dialog {
+  width: min(1720px, calc(100vw - 64px)) !important;
+  max-width: calc(100vw - 64px) !important;
+}
+
+.roster-history-header,
+.roster-history-search-row,
+.report-results-toolbar,
+.report-results-summary,
+.report-results-footer,
+.manual-ticket-actions,
+.member-link-actions {
+  flex: 0 0 auto !important;
+}
+
+.roster-history-content,
+.report-results-body,
+.manual-ticket-body,
+.member-link-body,
+.guildsync-confirm-body {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
+  scrollbar-gutter: auto !important;
+}
+
+/* Two-pane history lookup content should fill the dialog and let each pane scroll independently. */
+.roster-rank-history-dialog .roster-history-content,
+.discord-member-history-dialog .roster-history-content {
+  overflow: hidden !important;
+  height: auto !important;
+}
+
+.discord-member-history-dialog .roster-history-content {
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr) !important;
+}
+
+.roster-rank-history-dialog .roster-history-content {
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr) !important;
+}
+
+.roster-history-matches,
+.roster-history-events,
+.report-results-table-shell,
+.manual-ticket-form,
+.member-link-current,
+.member-link-suggestions {
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+.roster-history-match-list,
+.roster-history-event-table-shell,
+.report-results-table-shell > .table-scroll,
+.member-link-suggestions-list {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-gutter: auto !important;
+}
+
+.roster-history-event-table,
+.discord-member-history-event-table,
+.roster-rank-history-event-table {
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+.discord-member-history-event-table th,
+.discord-member-history-event-table td,
+.roster-rank-history-event-table th,
+.roster-rank-history-event-table td {
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
+@media (max-width: 900px), (max-height: 650px) {
+  .roster-history-overlay {
+    padding: 24px !important;
+  }
+
+  .roster-history-dialog,
+  .report-results-dialog,
+  .manual-ticket-dialog,
+  .member-link-dialog,
+  .guildsync-confirm-dialog {
+    width: calc(100vw - 48px) !important;
+    max-width: calc(100vw - 48px) !important;
+    height: calc(100vh - 48px) !important;
+    max-height: calc(100vh - 48px) !important;
+  }
+
+  .roster-rank-history-dialog .roster-history-content,
+  .discord-member-history-dialog .roster-history-content {
+    grid-template-columns: 1fr !important;
+    overflow-y: auto !important;
+  }
+
+  .roster-history-matches,
+  .roster-history-events {
+    min-height: 220px !important;
+  }
+}
+
+/* Banking export and report modal bounds pass.
+   Apply the larger modal sizing rules to bi-weekly/50-50 export dialogs and
+   bring report search boxes in evenly from both sides. */
+.bank-export-overlay {
+  padding: 24px 32px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+.bank-export-dialog {
+  width: min(1680px, calc(100vw - 64px)) !important;
+  max-width: calc(100vw - 64px) !important;
+  height: min(860px, calc(100vh - 96px), calc(100% - 48px)) !important;
+  max-height: min(860px, calc(100vh - 96px), calc(100% - 48px)) !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+.bank-export-dialog-header,
+.bank-export-toolbar {
+  flex: 0 0 auto !important;
+}
+
+.bank-export-grid-shell {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: auto !important;
+  scrollbar-gutter: auto !important;
+}
+
+.discord-last-seen-report-dialog .member-links-report-search-input,
+.discord-last-seen-report-dialog .discord-search-input,
+.discord-last-seen-report-dialog input[type="search"],
+.discord-last-seen-report-dialog input[type="text"],
+.member-link-report-dialog .member-links-report-search-input,
+.member-links-report-dialog .member-links-report-search-input,
+.member-links-report-search-input {
+  width: calc(100% - 48px) !important;
+  max-width: calc(100% - 48px) !important;
+  margin-left: 24px !important;
+  margin-right: 24px !important;
+  box-sizing: border-box !important;
+}
+
+@media (max-width: 900px), (max-height: 650px) {
+  .bank-export-overlay {
+    padding: 24px !important;
+  }
+
+  .bank-export-dialog {
+    width: calc(100vw - 48px) !important;
+    max-width: calc(100vw - 48px) !important;
+    height: calc(100vh - 48px) !important;
+    max-height: calc(100vh - 48px) !important;
+  }
+
+  .discord-last-seen-report-dialog .member-links-report-search-input,
+  .discord-last-seen-report-dialog .discord-search-input,
+  .discord-last-seen-report-dialog input[type="search"],
+  .discord-last-seen-report-dialog input[type="text"],
+  .member-link-report-dialog .member-links-report-search-input,
+  .member-links-report-dialog .member-links-report-search-input,
+  .member-links-report-search-input {
+    width: calc(100% - 32px) !important;
+    max-width: calc(100% - 32px) !important;
+    margin-left: 16px !important;
+    margin-right: 16px !important;
+  }
+}
+
+
+/* Discord Last Seen: search + Link Status filter and centered linked ESO account column. */
+.discord-last-seen-filter-row {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto minmax(180px, 240px) !important;
+  align-items: center !important;
+  gap: 12px !important;
+  width: calc(100% - 48px) !important;
+  max-width: calc(100% - 48px) !important;
+  margin: 0.75rem 24px !important;
+  box-sizing: border-box !important;
+}
+
+.discord-last-seen-filter-row .member-links-report-search-input,
+.discord-last-seen-report-dialog .discord-last-seen-filter-row .member-links-report-search-input,
+.discord-last-seen-report-dialog .discord-last-seen-filter-row input[type="search"] {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.discord-last-seen-link-filter-label {
+  color: rgba(226, 232, 240, 0.92) !important;
+  font-weight: 800 !important;
+  white-space: nowrap !important;
+}
+
+.discord-last-seen-link-status-filter {
+  width: 100% !important;
+  min-height: 2.35rem !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid rgba(96, 165, 250, 0.35) !important;
+  background: rgba(15, 23, 42, 0.78) !important;
+  color: #E5E7EB !important;
+  padding: 0.55rem 0.85rem !important;
+  font-size: 0.95rem !important;
+  outline: none !important;
+}
+
+.discord-last-seen-link-status-filter:focus {
+  border-color: rgba(96, 165, 250, 0.8) !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22) !important;
+}
+
+.discord-last-seen-table th:nth-child(2),
+.discord-last-seen-table td:nth-child(2),
+.discord-last-seen-eso-cell {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.discord-last-seen-eso-cell {
+  display: table-cell !important;
+}
+
+.discord-last-seen-eso-cell .member-link-status-dot,
+.discord-last-seen-eso-link-dot {
+  display: inline-block !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+@media (max-width: 900px), (max-height: 650px) {
+  .discord-last-seen-filter-row {
+    width: calc(100% - 32px) !important;
+    max-width: calc(100% - 32px) !important;
+    margin-left: 16px !important;
+    margin-right: 16px !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .discord-last-seen-link-filter-label {
+    margin-top: 0.25rem !important;
+  }
+}
+
+/* ESO / Discord Member Links report: shortened search with Action, Status, and Method filters. */
+.member-links-report-filter-row {
+  display: grid !important;
+  grid-template-columns: minmax(260px, 1fr) auto minmax(160px, 210px) auto minmax(145px, 190px) auto minmax(145px, 190px) !important;
+  align-items: center !important;
+  gap: 12px !important;
+  width: calc(100% - 48px) !important;
+  max-width: calc(100% - 48px) !important;
+  margin: 0.75rem 24px !important;
+  box-sizing: border-box !important;
+}
+
+.member-links-report-filter-row .member-links-report-search-input {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.member-links-report-filter-label {
+  color: rgba(226, 232, 240, 0.92) !important;
+  font-weight: 800 !important;
+  white-space: nowrap !important;
+}
+
+.member-links-report-filter-select {
+  width: 100% !important;
+  min-height: 2.35rem !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid rgba(96, 165, 250, 0.35) !important;
+  background: rgba(15, 23, 42, 0.78) !important;
+  color: #E5E7EB !important;
+  padding: 0.5rem 0.75rem !important;
+  box-sizing: border-box !important;
+  outline: none !important;
+}
+
+.member-links-report-filter-select:focus {
+  border-color: rgba(96, 165, 250, 0.8) !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22) !important;
+}
+
+@media (max-width: 1200px) {
+  .member-links-report-filter-row {
+    grid-template-columns: minmax(260px, 1fr) minmax(160px, 1fr) minmax(145px, 1fr) minmax(145px, 1fr) !important;
+  }
+
+  .member-links-report-filter-label {
+    display: none !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .member-links-report-filter-row {
+    grid-template-columns: 1fr !important;
+    width: calc(100% - 32px) !important;
+    max-width: calc(100% - 32px) !important;
+    margin-left: 16px !important;
+    margin-right: 16px !important;
+  }
+}

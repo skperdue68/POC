@@ -135,6 +135,7 @@ let discordLastSeenReportRows = [];
 let discordLastSeenReportLoading = false;
 let discordLastSeenReportError = '';
 let discordLastSeenReportSearchTerm = '';
+let discordLastSeenReportLinkStatusFilter = '';
 let discordLastSeenReportSortColumn = '';
 let discordLastSeenReportSortDirection = '';
 let memberLinks = [];
@@ -142,6 +143,9 @@ let memberLinksLoading = false;
 let memberLinksError = '';
 let memberLinksReportDialogOpen = false;
 let memberLinksReportSearchTerm = '';
+let memberLinksReportActionFilter = '';
+let memberLinksReportStatusFilter = '';
+let memberLinksReportMethodFilter = '';
 let memberLinksReportSelectedRowIndex = -1;
 let memberLinksReportScrollTop = 0;
 let memberLinkDialogOpen = false;
@@ -430,6 +434,10 @@ function closeTopOpenModal() {
   }
   if (memberLinksReportDialogOpen) {
     closeMemberLinksReportDialog();
+    return true;
+  }
+  if (discordLastSeenReportDialogOpen) {
+    closeDiscordLastSeenReportDialog();
     return true;
   }
   if (discordRankAuditReportDialogOpen) {
@@ -1759,6 +1767,7 @@ function closeDiscordLastSeenReportDialog() {
   discordLastSeenReportDialogOpen = false;
   discordLastSeenReportError = '';
   discordLastSeenReportSearchTerm = '';
+  discordLastSeenReportLinkStatusFilter = '';
   discordLastSeenReportSortColumn = '';
   discordLastSeenReportSortDirection = '';
   renderGuildSyncTabLayout();
@@ -1785,15 +1794,24 @@ function renderDiscordLastSeenReportDialog() {
           <span class="roster-history-muted">${escapeHtml(String(totalRows))} Discord member${totalRows === 1 ? '' : 's'}</span>
         </div>
 
-        <input
-          id="discordLastSeenReportSearchInput"
-          class="member-links-report-search-input discord-last-seen-search-input"
-          type="search"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Search Discord member, username, last seen action, or date..."
-          value="${escapeAttribute(discordLastSeenReportSearchTerm)}"
-        />
+        <div class="discord-last-seen-filter-row">
+          <input
+            id="discordLastSeenReportSearchInput"
+            class="member-links-report-search-input discord-last-seen-search-input"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search Discord member, username, last seen action, or date..."
+            value="${escapeAttribute(discordLastSeenReportSearchTerm)}"
+          />
+          <label class="discord-last-seen-link-filter-label" for="discordLastSeenLinkStatusFilter">Link Status</label>
+          <select id="discordLastSeenLinkStatusFilter" class="discord-last-seen-link-status-filter" aria-label="Filter Discord Last Seen by linked ESO account status">
+            <option value="" ${discordLastSeenReportLinkStatusFilter === '' ? 'selected' : ''}>All link statuses</option>
+            <option value="linked" ${discordLastSeenReportLinkStatusFilter === 'linked' ? 'selected' : ''}>Linked</option>
+            <option value="candidate" ${discordLastSeenReportLinkStatusFilter === 'candidate' ? 'selected' : ''}>Fuzzy / Candidate</option>
+            <option value="unlinked" ${discordLastSeenReportLinkStatusFilter === 'unlinked' ? 'selected' : ''}>Unlinked</option>
+          </select>
+        </div>
 
         ${discordLastSeenReportError ? `<div class="discord-data-error discord-last-seen-report-error">${escapeHtml(discordLastSeenReportError)}</div>` : ''}
 
@@ -1815,7 +1833,7 @@ function renderDiscordLastSeenReportRows(rows = []) {
         <thead>
           <tr>
             <th>${renderDiscordLastSeenSortButton('name', 'Discord Member')}</th>
-            <th>${renderDiscordLastSeenSortButton('eso', 'ESO')}</th>
+            <th>${renderDiscordLastSeenSortButton('eso', 'Linked ESO Account')}</th>
             <th>${renderDiscordLastSeenSortButton('date', 'Last Seen')}</th>
             <th>${renderDiscordLastSeenSortButton('days', 'Days Since')}</th>
             <th>${renderDiscordLastSeenSortButton('action', 'Action')}</th>
@@ -1823,7 +1841,7 @@ function renderDiscordLastSeenReportRows(rows = []) {
         </thead>
         <tbody>
           ${rows.map((row) => `
-            <tr class="discord-last-seen-row ${escapeAttribute(getDiscordLastSeenAgeClass(row.last_seen))}" data-discord-last-seen-row data-discord-last-seen-search="${escapeAttribute(getDiscordLastSeenSearchText(row))}">
+            <tr class="discord-last-seen-row ${escapeAttribute(getDiscordLastSeenAgeClass(row.last_seen))}" data-discord-last-seen-row data-discord-last-seen-link-status="${escapeAttribute(getDiscordLastSeenEsoLinkData(row).status)}" data-discord-last-seen-search="${escapeAttribute(getDiscordLastSeenSearchText(row))}">
               <td>
                 <div class="discord-member-cell discord-last-seen-member-cell">
                   ${renderDiscordLastSeenAvatar(row)}
@@ -2078,8 +2096,10 @@ function getDiscordLastSeenReportTsv(rows = getSortedDiscordLastSeenReportRows()
 async function copyDiscordLastSeenReportGrid() {
   const rows = getSortedDiscordLastSeenReportRows().filter((row) => {
     const searchValue = normalizeSimpleMemberName(discordLastSeenReportSearchTerm);
-    if (!searchValue) return true;
-    return normalizeSimpleMemberName(getDiscordLastSeenSearchText(row)).includes(searchValue);
+    const linkStatusValue = String(discordLastSeenReportLinkStatusFilter || '').trim().toLowerCase();
+    const matchesSearch = !searchValue || normalizeSimpleMemberName(getDiscordLastSeenSearchText(row)).includes(searchValue);
+    const matchesLinkStatus = !linkStatusValue || getDiscordLastSeenEsoLinkData(row).status === linkStatusValue;
+    return matchesSearch && matchesLinkStatus;
   });
   const tsv = getDiscordLastSeenReportTsv(rows);
 
@@ -2110,8 +2130,30 @@ function openMemberLinksReportDialog() {
 function closeMemberLinksReportDialog() {
   memberLinksReportDialogOpen = false;
   memberLinksReportSearchTerm = '';
+  memberLinksReportActionFilter = '';
+  memberLinksReportStatusFilter = '';
+  memberLinksReportMethodFilter = '';
   memberLinksReportSelectedRowIndex = -1;
   renderGuildSyncTabLayout();
+}
+
+function getMemberLinksReportUniqueValues(fieldName) {
+  return [...new Set((Array.isArray(memberLinks) ? memberLinks : [])
+    .map((link) => String(link?.[fieldName] || '').trim().toLowerCase())
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+}
+
+function renderMemberLinksReportSelectOptions(values, selectedValue) {
+  return values.map((value) => `<option value="${escapeAttribute(value)}" ${selectedValue === value ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('');
+}
+
+function getMemberLinksReportStatusOptions() {
+  return renderMemberLinksReportSelectOptions(getMemberLinksReportUniqueValues('link_status'), memberLinksReportStatusFilter);
+}
+
+function getMemberLinksReportMethodOptions() {
+  return renderMemberLinksReportSelectOptions(getMemberLinksReportUniqueValues('link_method'), memberLinksReportMethodFilter);
 }
 
 function renderMemberLinksReportDialog() {
@@ -2132,15 +2174,33 @@ function renderMemberLinksReportDialog() {
           <span class="roster-history-muted">${escapeHtml(String(memberLinks.length))} link/candidate row${memberLinks.length === 1 ? '' : 's'}</span>
         </div>
 
-        <input
-          id="memberLinksReportSearchInput"
-          class="member-links-report-search-input"
-          type="search"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Search ESO or Discord member links..."
-          value="${escapeAttribute(memberLinksReportSearchTerm)}"
-        />
+        <div class="member-links-report-filter-row">
+          <input
+            id="memberLinksReportSearchInput"
+            class="member-links-report-search-input"
+            type="search"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search Discord account or ESO member..."
+            value="${escapeAttribute(memberLinksReportSearchTerm)}"
+          />
+          <label class="member-links-report-filter-label" for="memberLinksReportStatusFilter">Status</label>
+          <select id="memberLinksReportStatusFilter" class="member-links-report-filter-select" aria-label="Filter ESO / Discord Member Links by status">
+            <option value="" ${memberLinksReportStatusFilter === '' ? 'selected' : ''}>All statuses</option>
+            ${getMemberLinksReportStatusOptions()}
+          </select>
+          <label class="member-links-report-filter-label" for="memberLinksReportMethodFilter">Method</label>
+          <select id="memberLinksReportMethodFilter" class="member-links-report-filter-select" aria-label="Filter ESO / Discord Member Links by method">
+            <option value="" ${memberLinksReportMethodFilter === '' ? 'selected' : ''}>All methods</option>
+            ${getMemberLinksReportMethodOptions()}
+          </select>
+          <label class="member-links-report-filter-label" for="memberLinksReportActionFilter">Action</label>
+          <select id="memberLinksReportActionFilter" class="member-links-report-filter-select" aria-label="Filter ESO / Discord Member Links by action">
+            <option value="" ${memberLinksReportActionFilter === '' ? 'selected' : ''}>All actions</option>
+            <option value="needs-link" ${memberLinksReportActionFilter === 'needs-link' ? 'selected' : ''}>Link Available</option>
+            <option value="can-unlink" ${memberLinksReportActionFilter === 'can-unlink' ? 'selected' : ''}>Unlink Available</option>
+          </select>
+        </div>
 
         ${memberLinksError ? `<div class="discord-data-error member-links-report-error">${escapeHtml(memberLinksError)}</div>` : ''}
 
@@ -2165,8 +2225,12 @@ function wireMemberLinksReportDialog() {
   if (memberLinksSearchInput) {
     memberLinksSearchInput.addEventListener('input', handleMemberLinksReportSearchInput);
     memberLinksSearchInput.addEventListener('keydown', handleMemberLinksReportSearchKeydown);
-    applyMemberLinksReportSearchFilter();
   }
+
+  document.querySelector('#memberLinksReportActionFilter')?.addEventListener('change', handleMemberLinksReportActionFilterChange);
+  document.querySelector('#memberLinksReportStatusFilter')?.addEventListener('change', handleMemberLinksReportStatusFilterChange);
+  document.querySelector('#memberLinksReportMethodFilter')?.addEventListener('change', handleMemberLinksReportMethodFilterChange);
+  applyMemberLinksReportSearchFilter();
   document.querySelectorAll('[data-accept-member-candidate]').forEach((button) => {
     button.addEventListener('click', () => acceptMemberLinkCandidate(button.dataset.acceptMemberCandidate || '', button.dataset.acceptMemberCandidateDiscordId || ''));
   });
@@ -2209,11 +2273,6 @@ function getMemberLinksReportSearchText(link) {
     link?.discord_display_name,
     link?.discord_server_nickname,
     link?.discord_user_id,
-    link?.link_status,
-    link?.link_method,
-    link?.match_reason,
-    link?.match_field,
-    getMemberLinkMatchedField(link),
   ].filter(Boolean).join(' ');
 }
 
@@ -2283,7 +2342,13 @@ function renderMemberLinksRows() {
     const method = String(link.link_method || '').trim().toLowerCase();
     const discordMatchLabel = getMemberLinkReportDiscordDisplay(link);
     return `
-              <tr data-member-links-report-row data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}">
+              <tr
+                data-member-links-report-row
+                data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}"
+                data-member-links-report-status="${escapeAttribute(status)}"
+                data-member-links-report-method="${escapeAttribute(method)}"
+                data-member-links-report-action="${escapeAttribute(status === 'linked' ? 'can-unlink' : (status === 'candidate' ? 'needs-link' : ''))}"
+              >
                 <td>${escapeHtml(link.eso_account_name || '')}</td>
                 <td>${discordMatchLabel}</td>
                 <td class="member-links-status-col">${escapeHtml(status || '')}</td>
@@ -2327,12 +2392,22 @@ function setActiveMemberLinksReportRowIndex(index) {
 
 function applyMemberLinksReportSearchFilter() {
   const searchValue = normalizeSimpleMemberName(memberLinksReportSearchTerm);
+  const actionValue = String(memberLinksReportActionFilter || '').trim().toLowerCase();
+  const statusValue = String(memberLinksReportStatusFilter || '').trim().toLowerCase();
+  const methodValue = String(memberLinksReportMethodFilter || '').trim().toLowerCase();
   const rows = [...document.querySelectorAll('[data-member-links-report-row]')];
   let visibleCount = 0;
 
   rows.forEach((row) => {
-    const searchText = normalizeSimpleMemberName(row.dataset.memberLinksReportSearch || row.textContent || '');
-    const visible = !searchValue || searchText.includes(searchValue);
+    const searchText = normalizeSimpleMemberName(row.dataset.memberLinksReportSearch || '');
+    const rowAction = String(row.dataset.memberLinksReportAction || '').trim().toLowerCase();
+    const rowStatus = String(row.dataset.memberLinksReportStatus || '').trim().toLowerCase();
+    const rowMethod = String(row.dataset.memberLinksReportMethod || '').trim().toLowerCase();
+    const matchesSearch = !searchValue || searchText.includes(searchValue);
+    const matchesAction = !actionValue || rowAction === actionValue;
+    const matchesStatus = !statusValue || rowStatus === statusValue;
+    const matchesMethod = !methodValue || rowMethod === methodValue;
+    const visible = matchesSearch && matchesAction && matchesStatus && matchesMethod;
     row.hidden = !visible;
     row.classList.remove('member-links-report-row-active');
     if (visible) visibleCount += 1;
@@ -2348,6 +2423,21 @@ function applyMemberLinksReportSearchFilter() {
 
 function handleMemberLinksReportSearchInput(event) {
   memberLinksReportSearchTerm = event.target.value || '';
+  applyMemberLinksReportSearchFilter();
+}
+
+function handleMemberLinksReportActionFilterChange(event) {
+  memberLinksReportActionFilter = event.target.value || '';
+  applyMemberLinksReportSearchFilter();
+}
+
+function handleMemberLinksReportStatusFilterChange(event) {
+  memberLinksReportStatusFilter = event.target.value || '';
+  applyMemberLinksReportSearchFilter();
+}
+
+function handleMemberLinksReportMethodFilterChange(event) {
+  memberLinksReportMethodFilter = event.target.value || '';
   applyMemberLinksReportSearchFilter();
 }
 
@@ -3223,8 +3313,14 @@ function wireDiscordLastSeenReportDialog() {
   const searchInput = document.querySelector('#discordLastSeenReportSearchInput');
   if (searchInput) {
     searchInput.addEventListener('input', handleDiscordLastSeenReportSearchInput);
-    applyDiscordLastSeenReportSearchFilter();
   }
+
+  const linkStatusFilter = document.querySelector('#discordLastSeenLinkStatusFilter');
+  if (linkStatusFilter) {
+    linkStatusFilter.addEventListener('change', handleDiscordLastSeenReportLinkStatusFilterChange);
+  }
+
+  applyDiscordLastSeenReportSearchFilter();
 
   const overlay = document.querySelector('.discord-last-seen-report-overlay');
   if (overlay) {
@@ -3241,14 +3337,23 @@ function handleDiscordLastSeenReportSearchInput(event) {
   applyDiscordLastSeenReportSearchFilter();
 }
 
+function handleDiscordLastSeenReportLinkStatusFilterChange(event) {
+  discordLastSeenReportLinkStatusFilter = event.target.value || '';
+  applyDiscordLastSeenReportSearchFilter();
+}
+
 function applyDiscordLastSeenReportSearchFilter() {
   const searchValue = normalizeSimpleMemberName(discordLastSeenReportSearchTerm);
+  const linkStatusValue = String(discordLastSeenReportLinkStatusFilter || '').trim().toLowerCase();
   const rows = [...document.querySelectorAll('[data-discord-last-seen-row]')];
   let visibleCount = 0;
 
   rows.forEach((row) => {
     const searchText = normalizeSimpleMemberName(row.dataset.discordLastSeenSearch || row.textContent || '');
-    const visible = !searchValue || searchText.includes(searchValue);
+    const linkStatus = String(row.dataset.discordLastSeenLinkStatus || '').trim().toLowerCase();
+    const matchesSearch = !searchValue || searchText.includes(searchValue);
+    const matchesLinkStatus = !linkStatusValue || linkStatus === linkStatusValue;
+    const visible = matchesSearch && matchesLinkStatus;
     row.hidden = !visible;
     if (visible) visibleCount += 1;
   });
