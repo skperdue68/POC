@@ -11,6 +11,8 @@ local BANKING_SAVED_VARS_NAME = "GuildSyncBanking"
 local BANKING_SAVED_VARS_VERSION = 4
 
 local DEBUG_BANKING = false
+local MAIL_SEND_DELAY_MS = 2000
+local MAILBOX_OPEN_DELAY_MS = 1000
 
 local BIWEEKLY_TICKET_COST = 500
 local BIWEEKLY_TICKET_ENDING_VALUE = 1
@@ -29,6 +31,7 @@ local gsbBankingSavedVars = nil
 local gsbLibHistoire = nil
 local gsbProcessor = nil
 local gsbInitialized = false
+local gsbMailQueueProcessing = false
 
 local function GSB_Print(message)
   CHAT_ROUTER:AddSystemMessage("|c88CCFF[GuildSyncBanking]|r " .. tostring(message))
@@ -122,7 +125,215 @@ local function GSB_EnsureBankingSavedVars()
   gsbBankingSavedVars.monthly = gsbBankingSavedVars.monthly or {}
   gsbBankingSavedVars.other = gsbBankingSavedVars.other or {}
 
+  -- Desktop-created outbound mail queue.
+  -- These tables are intentionally separate from ESO-controlled banking exports.
+  gsbBankingSavedVars.mailQueue = gsbBankingSavedVars.mailQueue or {}
+  gsbBankingSavedVars.mailAck = gsbBankingSavedVars.mailAck or {}
+  gsbBankingSavedVars.sentMailIds = gsbBankingSavedVars.sentMailIds or {}
+
   return gsbBankingSavedVars
+end
+
+local function GSB_TableCount(tbl)
+  local count = 0
+
+  if type(tbl) ~= "table" then
+    return count
+  end
+
+  for _ in pairs(tbl) do
+    count = count + 1
+  end
+
+  return count
+end
+
+local function GSB_MailRequestWasSent(sentMailIds, mailRequestId)
+  if type(sentMailIds) ~= "table" or not mailRequestId or mailRequestId == "" then
+    return false
+  end
+
+  return sentMailIds[mailRequestId] == true or sentMailIds[mailRequestId] ~= nil
+end
+
+local function GSB_MarkMailRequestSent(sentMailIds, mailRequestId)
+  if type(sentMailIds) ~= "table" or not mailRequestId or mailRequestId == "" then
+    return
+  end
+
+  sentMailIds[mailRequestId] = true
+end
+
+local function GSB_CopyMailQueueItem(item)
+  item = item or {}
+
+  return {
+    mail_request_id = tostring(item.mail_request_id or ""),
+    event_id = tostring(item.event_id or ""),
+    recipient = tostring(item.recipient or ""),
+    subject = tostring(item.subject or ""),
+    body = tostring(item.body or ""),
+    amount = tonumber(item.amount) or 0,
+    created_at = tostring(item.created_at or ""),
+    batch_id = tostring(item.batch_id or ""),
+    acknowledged_at = GSB_UtcTimeString(GetTimeStamp()),
+  }
+end
+
+local function GSB_ProcessMailQueue()
+  local bankingSv = GSB_EnsureBankingSavedVars()
+
+  if not bankingSv then
+    GSB_Print("Banking SavedVars not ready. Could not process mail queue.")
+    return
+  end
+
+  local mailQueue = bankingSv.mailQueue or {}
+  local mailAck = bankingSv.mailAck or {}
+  local sentMailIds = bankingSv.sentMailIds or {}
+
+  bankingSv.mailQueue = mailQueue
+  bankingSv.mailAck = mailAck
+  bankingSv.sentMailIds = sentMailIds
+
+  local queuedCount = GSB_TableCount(mailQueue)
+
+  if queuedCount == 0 then
+    GSB_Print("Deposit mail queue: 0 queued, 0 sent, 0 acknowledged.")
+    return
+  end
+
+  if gsbMailQueueProcessing then
+    GSB_Print("Deposit mail queue is already processing.")
+    return
+  end
+
+  gsbMailQueueProcessing = true
+
+  local queueKeys = {}
+
+  for queueKey in pairs(mailQueue) do
+    table.insert(queueKeys, queueKey)
+  end
+
+  table.sort(queueKeys, function(a, b)
+    return tostring(a) < tostring(b)
+  end)
+
+  local sentCount = 0
+  local acknowledgedCount = 0
+  local skippedAlreadySentCount = 0
+  local failedCount = 0
+  local mailboxWasOpenedForQueue = false
+
+  GSB_Print(
+    "Deposit mail queue: "
+    .. tostring(queuedCount)
+    .. " queued. Opening mailbox, waiting "
+    .. tostring(MAILBOX_OPEN_DELAY_MS / 1000)
+    .. " second, then sending one mail every "
+    .. tostring(MAIL_SEND_DELAY_MS / 1000)
+    .. " seconds."
+  )
+
+  local function finishProcessing()
+    if mailboxWasOpenedForQueue then
+      CloseMailbox()
+      mailboxWasOpenedForQueue = false
+      GSB_Print("Deposit mail queue: mailbox closed.")
+    end
+
+    gsbMailQueueProcessing = false
+
+    GSB_Print(
+      "Deposit mail queue: "
+      .. tostring(queuedCount) .. " queued, "
+      .. tostring(sentCount) .. " sent, "
+      .. tostring(acknowledgedCount) .. " acknowledged."
+    )
+
+    if skippedAlreadySentCount > 0 then
+      GSB_Print("Deposit mail duplicates skipped: " .. tostring(skippedAlreadySentCount))
+    end
+
+    if failedCount > 0 then
+      GSB_Print("Deposit mail items left for review/skipped: " .. tostring(failedCount))
+    end
+  end
+
+  local function processNextMail(index)
+    local queueKey = queueKeys[index]
+
+    if queueKey == nil then
+      finishProcessing()
+      return
+    end
+
+    local item = mailQueue[queueKey]
+    local shouldDelayBeforeNextSend = false
+
+    if type(item) ~= "table" then
+      mailQueue[queueKey] = nil
+    else
+      local mailRequestId = tostring(item.mail_request_id or queueKey or "")
+      local recipient = tostring(item.recipient or "")
+      local subject = tostring(item.subject or "")
+      local body = tostring(item.body or "")
+
+      if mailRequestId == "" then
+        failedCount = failedCount + 1
+        GSB_Print("Skipped deposit mail with missing mail_request_id.")
+      elseif GSB_MailRequestWasSent(sentMailIds, mailRequestId) then
+        skippedAlreadySentCount = skippedAlreadySentCount + 1
+        GSB_Print("Deposit mail already sent, acknowledging without resending: " ..
+        tostring(mailRequestId) .. " -> " .. tostring(recipient))
+        local ackItem = GSB_CopyMailQueueItem(item)
+        ackItem.mail_request_id = mailRequestId
+        ackItem.status = "already_sent"
+        mailAck[mailRequestId] = ackItem
+        mailQueue[queueKey] = nil
+        acknowledgedCount = acknowledgedCount + 1
+      elseif recipient == "" or subject == "" or body == "" then
+        failedCount = failedCount + 1
+        GSB_Print("Skipped deposit mail " .. tostring(mailRequestId) .. " because recipient, subject, or body was empty.")
+      else
+        GSB_Print("Sending deposit mail " ..
+        tostring(mailRequestId) .. " to " .. tostring(recipient) .. ": " .. tostring(subject))
+        SendMail(recipient, subject, body)
+        GSB_MarkMailRequestSent(sentMailIds, mailRequestId)
+
+        local ackItem = GSB_CopyMailQueueItem(item)
+        ackItem.mail_request_id = mailRequestId
+        ackItem.status = "sent"
+        ackItem.sent_at = GSB_UtcTimeString(GetTimeStamp())
+        mailAck[mailRequestId] = ackItem
+        mailQueue[queueKey] = nil
+
+        sentCount = sentCount + 1
+        acknowledgedCount = acknowledgedCount + 1
+        GSB_Print("Processed deposit mail " ..
+        tostring(mailRequestId) ..
+        " to " .. tostring(recipient) .. " (" .. tostring(sentCount) .. " of " .. tostring(queuedCount) .. ")")
+        shouldDelayBeforeNextSend = true
+      end
+    end
+
+    if shouldDelayBeforeNextSend then
+      zo_callLater(function()
+        processNextMail(index + 1)
+      end, MAIL_SEND_DELAY_MS)
+    else
+      processNextMail(index + 1)
+    end
+  end
+
+  RequestOpenMailbox()
+  mailboxWasOpenedForQueue = true
+  GSB_Print("Deposit mail queue: mailbox requested. Waiting before sending.")
+
+  zo_callLater(function()
+    processNextMail(1)
+  end, MAILBOX_OPEN_DELAY_MS)
 end
 
 local function GSB_BankingEventAlreadySavedAnywhere(eventId)
@@ -628,11 +839,15 @@ local function OnAddonLoaded(eventCode, addonName)
       biweekly = {},
       monthly = {},
       other = {},
+      mailQueue = {},
+      mailAck = {},
+      sentMailIds = {},
     }
   )
 
   GSB_EnsureSavedVars()
   GSB_EnsureBankingSavedVars()
+  GSB_ProcessMailQueue()
 
   SLASH_COMMANDS["/gsb"] = GSB_HandleCommand
 

@@ -28,6 +28,9 @@ import {
   getDiscordMemberDataJSON,
   getBankingDataDate,
   getBankingDataJSON,
+  checkoutDepositMail,
+  markDepositMailWrittenToESO,
+  markDepositMailSent,
   insertBankingEntries,
   addManualBiweeklyTicketEntry,
   getAssociateTicketReport,
@@ -1345,6 +1348,201 @@ io.on('connection', (socket) => {
       };
 
       sendSocketResponse(socket, 'guildsync:banking-data-request-result', callback, response);
+    }
+  });
+
+
+  socket.on('guildsync:checkout-deposit-mail', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser || socket.guildSyncAuthType === 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'You must be logged in from the GuildSync desktop client to check out deposit mail.',
+        records: [],
+        records_checked_out: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:checkout-deposit-mail-result', callback, response);
+      return;
+    }
+
+    try {
+      const checkedOutBy = String(
+        socket.guildSyncUser.discord_user_id ||
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.username ||
+        ''
+      ).trim();
+
+      const checkedOutByName = String(
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.username ||
+        socket.guildSyncUser.discord_user_id ||
+        ''
+      ).trim();
+
+      Log(`Deposit mail checkout requested by ${checkedOutByName || checkedOutBy || 'unknown user'}.`);
+
+      const result = await checkoutDepositMail(applicationDB, {
+        ...payload,
+        checked_out_by: checkedOutBy
+      });
+
+      const response = {
+        ok: true,
+        message: result.records_checked_out > 0
+          ? `Checked out ${result.records_checked_out} deposit mail record(s).`
+          : 'No unsent deposit mail records are available to check out.',
+        ...result,
+        checked_out_by_name: checkedOutByName || null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:checkout-deposit-mail-result', callback, response);
+      await broadcastBankingDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:checkout-deposit-mail:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to check out deposit mail.',
+        records: [],
+        records_checked_out: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:checkout-deposit-mail-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:mark-deposit-mail-written-to-eso', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser || socket.guildSyncAuthType === 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'You must be logged in from the GuildSync desktop client to mark deposit mail written to ESO.',
+        records: [],
+        records_written_to_eso: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:mark-deposit-mail-written-to-eso-result', callback, response);
+      return;
+    }
+
+    try {
+      const checkedOutBy = String(
+        socket.guildSyncUser.discord_user_id ||
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.username ||
+        ''
+      ).trim();
+
+      const checkedOutByName = String(
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.username ||
+        socket.guildSyncUser.discord_user_id ||
+        ''
+      ).trim();
+
+      Log(`Deposit mail written-to-ESO confirmation received from ${checkedOutByName || checkedOutBy || 'unknown user'}.`);
+
+      const result = await markDepositMailWrittenToESO(applicationDB, {
+        ...payload,
+        checked_out_by: checkedOutBy
+      });
+
+      const response = {
+        ok: true,
+        message: result.records_written_to_eso > 0
+          ? `Marked ${result.records_written_to_eso} deposit mail record(s) as written to ESO.`
+          : 'No checked out deposit mail records were updated.',
+        ...result,
+        checked_out_by_name: checkedOutByName || null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:mark-deposit-mail-written-to-eso-result', callback, response);
+      await broadcastBankingDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:mark-deposit-mail-written-to-eso:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to mark deposit mail written to ESO.',
+        records: [],
+        records_written_to_eso: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:mark-deposit-mail-written-to-eso-result', callback, response);
+    }
+  });
+
+
+  socket.on('guildsync:mark-deposit-mail-sent', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser || socket.guildSyncAuthType === 'discord-bot') {
+      const response = {
+        ok: false,
+        message: 'You must be logged in from the GuildSync desktop client to mark deposit mail sent.',
+        records: [],
+        records_marked_sent: 0,
+        records_confirmed_sent: 0,
+        mail_request_ids: [],
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:mark-deposit-mail-sent-result', callback, response);
+      return;
+    }
+
+    try {
+      const checkedOutBy = String(
+        socket.guildSyncUser.discord_user_id ||
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.username ||
+        ''
+      ).trim();
+
+      const checkedOutByName = String(
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.username ||
+        socket.guildSyncUser.discord_user_id ||
+        ''
+      ).trim();
+
+      Log(`Deposit mail sent acknowledgement received from ${checkedOutByName || checkedOutBy || 'unknown user'}.`);
+
+      const result = await markDepositMailSent(applicationDB, {
+        ...payload,
+        checked_out_by: checkedOutBy
+      });
+
+      const response = {
+        ok: true,
+        message: result.records_confirmed_sent > 0
+          ? `Confirmed ${result.records_confirmed_sent} deposit mail acknowledgement(s) as sent.`
+          : 'No matching checked_out, written_to_eso, or already sent deposit mail acknowledgements were confirmed.',
+        ...result,
+        checked_out_by_name: checkedOutByName || null,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:mark-deposit-mail-sent-result', callback, response);
+      await broadcastBankingDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:mark-deposit-mail-sent:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to mark deposit mail sent.',
+        records: [],
+        records_marked_sent: 0,
+        records_confirmed_sent: 0,
+        mail_request_ids: [],
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:mark-deposit-mail-sent-result', callback, response);
     }
   });
 

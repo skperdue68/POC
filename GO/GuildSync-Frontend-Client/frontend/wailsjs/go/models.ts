@@ -1,5 +1,147 @@
 export namespace main {
 	
+	export class DepositMailAckCleanupResult {
+	    ok: boolean;
+	    message: string;
+	    fileName: string;
+	    filePath: string;
+	    backupPath?: string;
+	    removedCount: number;
+	    pendingCleanupCount: number;
+	    pendingCleanupStored: boolean;
+	    mailRequestIds: string[];
+	    esoIsRunning: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new DepositMailAckCleanupResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.message = source["message"];
+	        this.fileName = source["fileName"];
+	        this.filePath = source["filePath"];
+	        this.backupPath = source["backupPath"];
+	        this.removedCount = source["removedCount"];
+	        this.pendingCleanupCount = source["pendingCleanupCount"];
+	        this.pendingCleanupStored = source["pendingCleanupStored"];
+	        this.mailRequestIds = source["mailRequestIds"];
+	        this.esoIsRunning = source["esoIsRunning"];
+	    }
+	}
+	export class DepositMailAckEntry {
+	    mail_request_id: string;
+	    event_id?: string;
+	    recipient?: string;
+	    subject?: string;
+	    body?: string;
+	    amount?: number;
+	    created_at?: string;
+	    batch_id?: string;
+	    sent_at?: string;
+	    raw?: Record<string, any>;
+	
+	    static createFrom(source: any = {}) {
+	        return new DepositMailAckEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mail_request_id = source["mail_request_id"];
+	        this.event_id = source["event_id"];
+	        this.recipient = source["recipient"];
+	        this.subject = source["subject"];
+	        this.body = source["body"];
+	        this.amount = source["amount"];
+	        this.created_at = source["created_at"];
+	        this.batch_id = source["batch_id"];
+	        this.sent_at = source["sent_at"];
+	        this.raw = source["raw"];
+	    }
+	}
+	export class DepositMailAckReadResult {
+	    ok: boolean;
+	    message: string;
+	    fileName: string;
+	    filePath: string;
+	    ackEntries: DepositMailAckEntry[];
+	    ackCount: number;
+	    esoIsRunning: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new DepositMailAckReadResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.message = source["message"];
+	        this.fileName = source["fileName"];
+	        this.filePath = source["filePath"];
+	        this.ackEntries = this.convertValues(source["ackEntries"], DepositMailAckEntry);
+	        this.ackCount = source["ackCount"];
+	        this.esoIsRunning = source["esoIsRunning"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class DepositMailWriteResult {
+	    ok: boolean;
+	    message: string;
+	    fileName: string;
+	    filePath: string;
+	    backupPath?: string;
+	    recordsWritten: number;
+	    eventIds: string[];
+	    esoIsRunning: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new DepositMailWriteResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.message = source["message"];
+	        this.fileName = source["fileName"];
+	        this.filePath = source["filePath"];
+	        this.backupPath = source["backupPath"];
+	        this.recordsWritten = source["recordsWritten"];
+	        this.eventIds = source["eventIds"];
+	        this.esoIsRunning = source["esoIsRunning"];
+	    }
+	}
+	export class ESORunningStatus {
+	    running: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ESORunningStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.message = source["message"];
+	    }
+	}
 	export class GuildSyncApplicationsDataResult {
 	    ok: boolean;
 	    message: string;

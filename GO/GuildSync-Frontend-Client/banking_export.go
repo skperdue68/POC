@@ -251,8 +251,15 @@ func (a *App) CommitGuildSyncBankingData(filePath string, fileName string) Guild
 		return baseResult
 	}
 
-	version := accountWide["version"]
-	newBankingText := renderCleanBankingSavedVarsTable(extracted.tableName, accountName, version)
+	// Clear only the ESO-exported banking entry sections after backend ACK.
+	// Preserve desktop/addon mail coordination tables such as mailQueue, mailAck,
+	// and sentMailIds so a banking upload cleanup cannot accidentally delete
+	// pending deposit mail or the ESO-side duplicate-send guard.
+	accountWide["other"] = []interface{}{}
+	accountWide["biweekly"] = []interface{}{}
+	accountWide["monthly"] = []interface{}{}
+
+	newBankingText := renderLuaAssignment(extracted.tableName, parsedMap)
 	newSavedVarsText := originalText[:extracted.assignmentStart] + newBankingText + originalText[extracted.tableEnd:]
 
 	if err := os.WriteFile(filePath, []byte(newSavedVarsText), info.Mode().Perm()); err != nil {
@@ -727,7 +734,12 @@ func renderEmptyBankingSection(sectionName string, indent int) string {
 }
 
 func luaString(value string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(value, `\`, `\\`), `"`, `\"`)
+	escaped := strings.ReplaceAll(value, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, "\r\n", `\n`)
+	escaped = strings.ReplaceAll(escaped, "\r", `\n`)
+	escaped = strings.ReplaceAll(escaped, "\n", `\n`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return escaped
 }
 
 func luaNumberForRender(value interface{}, fallback string) string {

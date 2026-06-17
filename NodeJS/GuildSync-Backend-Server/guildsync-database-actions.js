@@ -1,4 +1,207 @@
 import mysql from 'mysql2/promise';
+import { randomUUID } from 'node:crypto';
+
+
+const DEFAULT_DEPOSIT_MAIL_SUBJECT_TEMPLATE = 'Raffle ticket deposit received';
+const DEFAULT_DEPOSIT_MAIL_BODY_TEMPLATE = [
+  'Hi {recipient},',
+  '',
+  'Thank you for supporting Alphabet Mafia!',
+  '',
+  'We received your guild bank deposit of {amount} gold.',
+  'Ticket Credit Earned: {ticket_quantity}',
+  '',
+  'Transaction ID: {event_id}',
+  '',
+  '-- Alphabet Mafia'
+].join('\n');
+
+function getDepositMailSubjectTemplate() {
+  return String(process.env.GUILDSYNC_DEPOSIT_MAIL_SUBJECT_TEMPLATE || DEFAULT_DEPOSIT_MAIL_SUBJECT_TEMPLATE);
+}
+
+function getDepositMailBodyTemplate() {
+  return String(process.env.GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE || DEFAULT_DEPOSIT_MAIL_BODY_TEMPLATE);
+}
+
+
+function normalizeDepositMailRecipient(value) {
+  const recipient = String(value || '').trim();
+  if (!recipient) return '';
+  return recipient.startsWith('@') ? recipient : `@${recipient}`;
+}
+
+function getForcedDepositMailRecipient() {
+  return normalizeDepositMailRecipient(process.env.GUILDSYNC_DEPOSIT_MAIL_FORCE_RECIPIENT || '');
+}
+
+function formatDepositMailAmount(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return '0';
+  return Math.trunc(number).toLocaleString('en-US');
+}
+
+
+const BANKING_BIWEEKLY_SALES_END_ANCHOR_UTC = 1780786800;
+const BANKING_MONTHLY_SALES_END_ANCHOR_UTC = 1781996400;
+const BANKING_BIWEEKLY_INTERVAL_SECONDS = 14 * 24 * 60 * 60;
+const BANKING_MONTHLY_INTERVAL_SECONDS = 28 * 24 * 60 * 60;
+const BANKING_RAFFLE_AFTER_SALES_SECONDS = 60 * 60;
+
+function normalizeDepositMailTicketType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  if (type === 'monthly' || type === '50/50' || type === '5050') return 'monthly';
+  if (type === 'biweekly' || type === 'bi-weekly' || type === 'bi weekly') return 'biweekly';
+  return type || '';
+}
+
+function getDepositMailTicketTypeLabel(value) {
+  const type = normalizeDepositMailTicketType(value);
+  if (type === 'monthly') return '50/50';
+  if (type === 'biweekly') return 'Bi-Weekly';
+  return value ? String(value) : '';
+}
+
+function getDepositMailTicketGoldCost(row = {}) {
+  const amount = Number(row.deposit_amount ?? row.amount ?? 0);
+  if (!Number.isFinite(amount)) return 0;
+
+  const type = normalizeDepositMailTicketType(row.transaction_type || row.ticket_type || row.type);
+  const marker = type === 'monthly' ? 3 : type === 'biweekly' ? 1 : 0;
+  return Math.max(0, Math.trunc(amount) - marker);
+}
+
+function getDepositMailPurchaseDate(row = {}) {
+  const timestamp = Number(row.event_timestamp || row.time || 0);
+  const date = Number.isFinite(timestamp) && timestamp > 0
+    ? new Date(timestamp * 1000)
+    : row.event_datetime
+      ? new Date(row.event_datetime)
+      : null;
+
+  if (!date || Number.isNaN(date.getTime())) return '';
+
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  }).format(date);
+}
+
+function getDepositMailNoteBlock(row = {}) {
+  const note = String(row.note || '').trim();
+  return note ? `Note: ${note}` : '';
+}
+
+function getDepositMailRaffleTimestamp(row = {}) {
+  const type = normalizeDepositMailTicketType(row.transaction_type || row.ticket_type || row.type);
+  if (type !== 'monthly' && type !== 'biweekly') return null;
+
+  const eventTimestamp = Number(row.event_timestamp || row.time || 0);
+  const anchor = type === 'monthly' ? BANKING_MONTHLY_SALES_END_ANCHOR_UTC : BANKING_BIWEEKLY_SALES_END_ANCHOR_UTC;
+  const interval = type === 'monthly' ? BANKING_MONTHLY_INTERVAL_SECONDS : BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  const referenceTime = Number.isFinite(eventTimestamp) && eventTimestamp > 0
+    ? eventTimestamp
+    : Math.floor(Date.now() / 1000);
+
+  let salesEnd = anchor;
+  while (salesEnd - interval > referenceTime) {
+    salesEnd -= interval;
+  }
+  while (salesEnd < referenceTime) {
+    salesEnd += interval;
+  }
+
+  return salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS;
+}
+
+function getDepositMailRaffleDateTimeEastern(row = {}) {
+  const timestamp = getDepositMailRaffleTimestamp(row);
+  if (!timestamp) return '';
+
+  const date = new Date(timestamp * 1000);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  }).format(date);
+}
+
+function renderDepositMailTemplate(template, row = {}) {
+  const recipient = normalizeDepositMailRecipient(row.recipient || row.account_name || row.display_name || '');
+  const ticketTypeRaw = normalizeDepositMailTicketType(row.transaction_type || row.ticket_type || row.type);
+  const ticketTypeLabel = getDepositMailTicketTypeLabel(ticketTypeRaw);
+  const ticketGoldCost = getDepositMailTicketGoldCost(row);
+  const purchaseDate = getDepositMailPurchaseDate(row);
+  const noteBlock = getDepositMailNoteBlock(row);
+  const raffleDateTimeEastern = getDepositMailRaffleDateTimeEastern(row);
+
+  const values = {
+    event_id: row.event_id || '',
+    transaction_type: row.transaction_type || '',
+    ticket_type: ticketTypeLabel,
+    ticket_type_raw: ticketTypeRaw,
+    recipient,
+    account_name: recipient,
+    display_name: recipient,
+    amount: formatDepositMailAmount(row.deposit_amount),
+    deposit_amount: formatDepositMailAmount(row.deposit_amount),
+    raw_amount: row.deposit_amount == null ? '' : String(row.deposit_amount),
+    raw_deposit_amount: row.deposit_amount == null ? '' : String(row.deposit_amount),
+    ticket_quantity: row.ticket_quantity == null ? '0' : String(row.ticket_quantity),
+    tickets: row.ticket_quantity == null ? '0' : String(row.ticket_quantity),
+    ticket_gold_cost: formatDepositMailAmount(ticketGoldCost),
+    gold_cost: formatDepositMailAmount(ticketGoldCost),
+    raw_ticket_gold_cost: String(ticketGoldCost),
+    raw_gold_cost: String(ticketGoldCost),
+    purchase_date: purchaseDate,
+    data_source: row.data_source || '',
+    note: row.note || '',
+    note_block: noteBlock,
+    event_datetime: row.event_datetime || '',
+    event_timestamp: row.event_timestamp == null ? '' : String(row.event_timestamp),
+    raffle_datetime_eastern: raffleDateTimeEastern,
+    raffle_date_time_eastern: raffleDateTimeEastern,
+    raffle_datetime: raffleDateTimeEastern,
+    mail_request_id: row.mail_request_id || '',
+    mail_batch_id: row.mail_batch_id || ''
+  };
+
+  return String(template || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => {
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      return values[key] == null ? '' : String(values[key]);
+    }
+    return match;
+  }).trim();
+}
+
+function addRenderedDepositMailContent(row = {}) {
+  const normalized = normalizeDepositMailRow(row);
+  const recipient = getForcedDepositMailRecipient() || normalizeDepositMailRecipient(row.account_name || row.display_name || row.recipient || '');
+  const templateRow = {
+    ...row,
+    recipient,
+    account_name: recipient,
+    display_name: recipient
+  };
+  const subject = renderDepositMailTemplate(getDepositMailSubjectTemplate(), templateRow);
+  const body = renderDepositMailTemplate(getDepositMailBodyTemplate(), templateRow);
+  return {
+    ...normalized,
+    recipient,
+    subject,
+    body,
+    mailSubject: subject,
+    mailBody: body
+  };
+}
 
 export const MARIADB_HOST = process.env.MARIADB_HOST || '127.0.0.1';
 export const MARIADB_PORT = Number(process.env.MARIADB_PORT || 3306);
@@ -185,7 +388,7 @@ async function initializeSchema(db) {
   `);
 
   await db.query(`
-    CREATE TABLE IF NOT EXISTS  guildsync_banking_entries (
+    CREATE TABLE IF NOT EXISTS guildsync_banking_entries (
       event_id varchar(32) NOT NULL,
       transaction_type varchar(32) NOT NULL,
       account_name varchar(255) NOT NULL,
@@ -195,11 +398,54 @@ async function initializeSchema(db) {
       ticket_quantity int(10) unsigned DEFAULT NULL,
       data_source varchar(64) NOT NULL,
       note varchar(255) DEFAULT NULL,
-      email_requested tinyint(1) NOT NULL DEFAULT 0,
-      PRIMARY KEY (event_id)
+      mail_status varchar(32) NOT NULL DEFAULT 'unsent',
+      mail_request_id varchar(64) DEFAULT NULL,
+      mail_batch_id varchar(64) DEFAULT NULL,
+      checked_out_by varchar(255) DEFAULT NULL,
+      checked_out_at datetime DEFAULT NULL,
+      checkout_expires_at datetime DEFAULT NULL,
+      written_to_eso_at datetime DEFAULT NULL,
+      sent_at datetime DEFAULT NULL,
+      failed_reason text DEFAULT NULL,
+      PRIMARY KEY (event_id),
+      INDEX idx_guildsync_banking_mail_status (mail_status),
+      INDEX idx_guildsync_banking_mail_batch_id (mail_batch_id),
+      INDEX idx_guildsync_banking_checked_out_by (checked_out_by),
+      INDEX idx_guildsync_banking_checkout_expires_at (checkout_expires_at)
     )
     CHARSET=utf8mb4
     COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'mail_status', "varchar(32) NOT NULL DEFAULT 'unsent'");
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'mail_request_id', 'varchar(64) DEFAULT NULL');
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'mail_batch_id', 'varchar(64) DEFAULT NULL');
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'checked_out_by', 'varchar(255) DEFAULT NULL');
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'checked_out_at', 'datetime DEFAULT NULL');
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'checkout_expires_at', 'datetime DEFAULT NULL');
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'written_to_eso_at', 'datetime DEFAULT NULL');
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'sent_at', 'datetime DEFAULT NULL');
+  await addColumnIfMissing(db, 'guildsync_banking_entries', 'failed_reason', 'text DEFAULT NULL');
+  await dropColumnIfExists(db, 'guildsync_banking_entries', 'email_requested');
+
+  await addIndexIfMissing(db, 'guildsync_banking_entries', 'idx_guildsync_banking_mail_status', 'mail_status');
+  await addIndexIfMissing(db, 'guildsync_banking_entries', 'idx_guildsync_banking_mail_batch_id', 'mail_batch_id');
+  await addIndexIfMissing(db, 'guildsync_banking_entries', 'idx_guildsync_banking_checked_out_by', 'checked_out_by');
+  await addIndexIfMissing(db, 'guildsync_banking_entries', 'idx_guildsync_banking_checkout_expires_at', 'checkout_expires_at');
+
+  await db.query(`
+    UPDATE guildsync_banking_entries
+    SET mail_status = 'N/A',
+        mail_request_id = 'N/A',
+        mail_batch_id = 'N/A',
+        checked_out_by = '000000000000000000',
+        checked_out_at = COALESCE(checked_out_at, NOW()),
+        checkout_expires_at = NULL,
+        written_to_eso_at = COALESCE(written_to_eso_at, NOW()),
+        sent_at = COALESCE(sent_at, NOW()),
+        failed_reason = 'No deposit mail required for other category'
+    WHERE LOWER(transaction_type) = 'other'
+      AND mail_status <> 'N/A'
   `);
 
 
@@ -285,6 +531,50 @@ async function addColumnIfMissing(db, tableName, columnName, columnDefinition) {
 
   await db.query(
     `ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`
+  );
+}
+
+async function dropColumnIfExists(db, tableName, columnName) {
+  const [rows] = await db.query(
+    `
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = ?
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+      LIMIT 1
+    `,
+    [GUILDSYNC_DB_NAME, tableName, columnName]
+  );
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return;
+  }
+
+  await db.query(
+    `ALTER TABLE ${quoteIdentifier(tableName)} DROP COLUMN ${quoteIdentifier(columnName)}`
+  );
+}
+
+async function addIndexIfMissing(db, tableName, indexName, columnList) {
+  const [rows] = await db.query(
+    `
+      SELECT INDEX_NAME
+      FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = ?
+        AND TABLE_NAME = ?
+        AND INDEX_NAME = ?
+      LIMIT 1
+    `,
+    [GUILDSYNC_DB_NAME, tableName, indexName]
+  );
+
+  if (Array.isArray(rows) && rows.length > 0) {
+    return;
+  }
+
+  await db.query(
+    `CREATE INDEX ${quoteIdentifier(indexName)} ON ${quoteIdentifier(tableName)} (${columnList})`
   );
 }
 
@@ -1262,8 +1552,16 @@ export async function getBankingDataJSON(applicationDB) {
         'amount', banking_rows.deposit_amount,
         'ticketAmount', COALESCE(banking_rows.ticket_quantity, 0),
         'dataSource', banking_rows.data_source,
-        'emailRequested', banking_rows.email_requested,
-        'note', banking_rows.note
+        'note', banking_rows.note,
+        'mailStatus', banking_rows.mail_status,
+        'mailRequestId', banking_rows.mail_request_id,
+        'mailBatchId', banking_rows.mail_batch_id,
+        'checkedOutBy', banking_rows.checked_out_by,
+        'checkedOutAt', banking_rows.checked_out_at,
+        'checkoutExpiresAt', banking_rows.checkout_expires_at,
+        'writtenToEsoAt', banking_rows.written_to_eso_at,
+        'sentAt', banking_rows.sent_at,
+        'failedReason', banking_rows.failed_reason
       )
     ) AS banking_json
     FROM (
@@ -1275,8 +1573,16 @@ export async function getBankingDataJSON(applicationDB) {
         deposit_amount,
         ticket_quantity,
         data_source,
-        email_requested,
-        note
+        note,
+        mail_status,
+        mail_request_id,
+        mail_batch_id,
+        checked_out_by,
+        checked_out_at,
+        checkout_expires_at,
+        written_to_eso_at,
+        sent_at,
+        failed_reason
       FROM guildsync_banking_entries
       ORDER BY CAST(event_timestamp AS UNSIGNED) DESC, CAST(event_id AS UNSIGNED) DESC
     ) AS banking_rows
@@ -1293,6 +1599,373 @@ export async function getBankingDataJSON(applicationDB) {
   }
 
   return bankingJson;
+}
+
+
+function normalizeDepositMailRow(row = {}) {
+  return {
+    type: row.transaction_type,
+    eventId: row.event_id,
+    time: Number(row.event_timestamp || 0),
+    displayName: row.account_name,
+    amount: Number(row.deposit_amount || 0),
+    ticketAmount: Number(row.ticket_quantity || 0),
+    dataSource: row.data_source,
+    note: row.note || null,
+    mailStatus: row.mail_status,
+    mailRequestId: row.mail_request_id || null,
+    mailBatchId: row.mail_batch_id || null,
+    checkedOutBy: row.checked_out_by || null,
+    checkedOutAt: row.checked_out_at || null,
+    checkoutExpiresAt: row.checkout_expires_at || null,
+    writtenToEsoAt: row.written_to_eso_at || null,
+    sentAt: row.sent_at || null,
+    failedReason: row.failed_reason || null
+  };
+}
+
+function normalizePositiveInteger(value, defaultValue, minValue, maxValue) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return defaultValue;
+  const integer = Math.floor(number);
+  return Math.min(Math.max(integer, minValue), maxValue);
+}
+
+export async function checkoutDepositMail(applicationDB, payload = {}) {
+  const checkedOutBy = String(payload.checked_out_by || payload.checkedOutBy || '').trim();
+
+  if (!checkedOutBy) {
+    throw new Error('Authenticated user is required to check out deposit mail.');
+  }
+
+  const maxRecords = normalizePositiveInteger(payload.max_records ?? payload.maxRecords, 100, 1, 500);
+  const checkoutMinutes = normalizePositiveInteger(payload.checkout_minutes ?? payload.checkoutMinutes, 30, 1, 1440);
+  const mailBatchId = String(payload.mail_batch_id || payload.mailBatchId || randomUUID()).trim();
+
+  const connection = await applicationDB.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [candidateRows] = await connection.query(
+      `
+        SELECT event_id
+        FROM guildsync_banking_entries
+        WHERE mail_status = 'unsent'
+          AND LOWER(transaction_type) IN ('biweekly', 'monthly')
+        ORDER BY event_datetime ASC, CAST(event_id AS UNSIGNED) ASC
+        LIMIT ${maxRecords}
+        FOR UPDATE
+      `
+    );
+
+    const eventIds = candidateRows.map((row) => row.event_id).filter(Boolean);
+
+    if (eventIds.length === 0) {
+      await connection.commit();
+      return {
+        mail_batch_id: mailBatchId,
+        checked_out_by: checkedOutBy,
+        checkout_minutes: checkoutMinutes,
+        records: [],
+        records_checked_out: 0
+      };
+    }
+
+    const placeholders = eventIds.map(() => '?').join(', ');
+
+    await connection.query(
+      `
+        UPDATE guildsync_banking_entries
+        SET mail_status = 'checked_out',
+            mail_request_id = COALESCE(NULLIF(mail_request_id, ''), CONCAT('deposit_', event_id)),
+            mail_batch_id = ?,
+            checked_out_by = ?,
+            checked_out_at = NOW(),
+            checkout_expires_at = DATE_ADD(NOW(), INTERVAL ? MINUTE),
+            written_to_eso_at = NULL,
+            sent_at = NULL,
+            failed_reason = NULL
+        WHERE mail_status = 'unsent'
+          AND LOWER(transaction_type) IN ('biweekly', 'monthly')
+          AND event_id IN (${placeholders})
+      `,
+      [mailBatchId, checkedOutBy, checkoutMinutes, ...eventIds]
+    );
+
+    const [checkedOutRows] = await connection.query(
+      `
+        SELECT
+          event_id,
+          transaction_type,
+          account_name,
+          event_timestamp,
+          event_datetime,
+          deposit_amount,
+          ticket_quantity,
+          data_source,
+          note,
+          mail_status,
+          mail_request_id,
+          mail_batch_id,
+          checked_out_by,
+          checked_out_at,
+          checkout_expires_at,
+          written_to_eso_at,
+          sent_at,
+          failed_reason
+        FROM guildsync_banking_entries
+        WHERE mail_status = 'checked_out'
+          AND mail_batch_id = ?
+          AND checked_out_by = ?
+        ORDER BY event_datetime ASC, CAST(event_id AS UNSIGNED) ASC
+      `,
+      [mailBatchId, checkedOutBy]
+    );
+
+    await connection.commit();
+
+    return {
+      mail_batch_id: mailBatchId,
+      checked_out_by: checkedOutBy,
+      checkout_minutes: checkoutMinutes,
+      records: checkedOutRows.map(addRenderedDepositMailContent),
+      records_checked_out: checkedOutRows.length
+    };
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function markDepositMailWrittenToESO(applicationDB, payload = {}) {
+  const checkedOutBy = String(payload.checked_out_by || payload.checkedOutBy || '').trim();
+  const mailBatchId = String(payload.mail_batch_id || payload.mailBatchId || '').trim();
+  const eventIds = (Array.isArray(payload.event_ids) ? payload.event_ids : Array.isArray(payload.eventIds) ? payload.eventIds : [])
+    .map((eventId) => String(eventId || '').trim())
+    .filter(Boolean);
+
+  if (!checkedOutBy) {
+    throw new Error('Authenticated user is required to mark deposit mail written to ESO.');
+  }
+
+  if (!mailBatchId && eventIds.length === 0) {
+    throw new Error('A mail batch id or event id list is required.');
+  }
+
+  const connection = await applicationDB.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const conditions = [
+      "mail_status = 'checked_out'",
+      'checked_out_by = ?'
+    ];
+    const params = [checkedOutBy];
+
+    if (mailBatchId) {
+      conditions.push('mail_batch_id = ?');
+      params.push(mailBatchId);
+    }
+
+    if (eventIds.length > 0) {
+      conditions.push(`event_id IN (${eventIds.map(() => '?').join(', ')})`);
+      params.push(...eventIds);
+    }
+
+    const whereClause = conditions.join('\n          AND ');
+
+    const [updateResult] = await connection.query(
+      `
+        UPDATE guildsync_banking_entries
+        SET mail_status = 'written_to_eso',
+            written_to_eso_at = NOW()
+        WHERE ${whereClause}
+      `,
+      params
+    );
+
+    const [updatedRows] = await connection.query(
+      `
+        SELECT
+          event_id,
+          transaction_type,
+          account_name,
+          event_timestamp,
+          event_datetime,
+          deposit_amount,
+          ticket_quantity,
+          data_source,
+          note,
+          mail_status,
+          mail_request_id,
+          mail_batch_id,
+          checked_out_by,
+          checked_out_at,
+          checkout_expires_at,
+          written_to_eso_at,
+          sent_at,
+          failed_reason
+        FROM guildsync_banking_entries
+        WHERE mail_status = 'written_to_eso'
+          AND checked_out_by = ?
+          ${mailBatchId ? 'AND mail_batch_id = ?' : ''}
+          ${eventIds.length > 0 ? `AND event_id IN (${eventIds.map(() => '?').join(', ')})` : ''}
+        ORDER BY event_datetime ASC, CAST(event_id AS UNSIGNED) ASC
+      `,
+      [checkedOutBy, ...(mailBatchId ? [mailBatchId] : []), ...eventIds]
+    );
+
+    await connection.commit();
+
+    return {
+      mail_batch_id: mailBatchId || null,
+      checked_out_by: checkedOutBy,
+      records_written_to_eso: updateResult.affectedRows || 0,
+      records: updatedRows.map(normalizeDepositMailRow)
+    };
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+
+export async function markDepositMailSent(applicationDB, payload = {}) {
+  const checkedOutBy = String(payload.checked_out_by || payload.checkedOutBy || '').trim();
+  const ackEntries = Array.isArray(payload.mail_ack)
+    ? payload.mail_ack
+    : Array.isArray(payload.mailAck)
+      ? payload.mailAck
+      : [];
+  const explicitRequestIds = Array.isArray(payload.mail_request_ids)
+    ? payload.mail_request_ids
+    : Array.isArray(payload.mailRequestIds)
+      ? payload.mailRequestIds
+      : [];
+
+  const mailRequestIds = Array.from(new Set([
+    ...ackEntries.map((entry) => entry?.mail_request_id || entry?.mailRequestId),
+    ...explicitRequestIds
+  ]
+    .map((mailRequestId) => String(mailRequestId || '').trim())
+    .filter(Boolean)));
+
+  if (!checkedOutBy) {
+    throw new Error('Authenticated user is required to mark deposit mail sent.');
+  }
+
+  if (mailRequestIds.length === 0) {
+    throw new Error('At least one mail_request_id is required to mark deposit mail sent.');
+  }
+
+  const connection = await applicationDB.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const placeholders = mailRequestIds.map(() => '?').join(', ');
+    const [existingRows] = await connection.query(
+      `
+        SELECT
+          event_id,
+          transaction_type,
+          account_name,
+          event_timestamp,
+          event_datetime,
+          deposit_amount,
+          ticket_quantity,
+          data_source,
+          note,
+          mail_status,
+          mail_request_id,
+          mail_batch_id,
+          checked_out_by,
+          checked_out_at,
+          checkout_expires_at,
+          written_to_eso_at,
+          sent_at,
+          failed_reason
+        FROM guildsync_banking_entries
+        WHERE mail_request_id IN (${placeholders})
+          AND checked_out_by = ?
+          AND mail_status IN ('written_to_eso', 'checked_out', 'sent')
+      `,
+      [...mailRequestIds, checkedOutBy]
+    );
+
+    const confirmedRequestIds = Array.from(new Set(existingRows
+      .map((row) => String(row.mail_request_id || '').trim())
+      .filter(Boolean)));
+
+    let updatedCount = 0;
+    if (confirmedRequestIds.length > 0) {
+      const confirmedPlaceholders = confirmedRequestIds.map(() => '?').join(', ');
+      const [updateResult] = await connection.query(
+        `
+          UPDATE guildsync_banking_entries
+          SET mail_status = 'sent',
+              sent_at = COALESCE(sent_at, NOW())
+          WHERE mail_request_id IN (${confirmedPlaceholders})
+            AND checked_out_by = ?
+            AND mail_status IN ('written_to_eso', 'checked_out', 'sent')
+        `,
+        [...confirmedRequestIds, checkedOutBy]
+      );
+      updatedCount = updateResult.affectedRows || 0;
+    }
+
+    const [updatedRows] = confirmedRequestIds.length > 0
+      ? await connection.query(
+        `
+          SELECT
+            event_id,
+            transaction_type,
+            account_name,
+            event_timestamp,
+            event_datetime,
+            deposit_amount,
+            ticket_quantity,
+            data_source,
+            note,
+            mail_status,
+            mail_request_id,
+            mail_batch_id,
+            checked_out_by,
+            checked_out_at,
+            checkout_expires_at,
+            written_to_eso_at,
+            sent_at,
+            failed_reason
+          FROM guildsync_banking_entries
+          WHERE mail_request_id IN (${confirmedRequestIds.map(() => '?').join(', ')})
+            AND checked_out_by = ?
+          ORDER BY event_datetime ASC, CAST(event_id AS UNSIGNED) ASC
+        `,
+        [...confirmedRequestIds, checkedOutBy]
+      )
+      : [[]];
+
+    await connection.commit();
+
+    return {
+      mail_request_ids: confirmedRequestIds,
+      requested_mail_request_ids: mailRequestIds,
+      records_marked_sent: updatedCount,
+      records_confirmed_sent: confirmedRequestIds.length,
+      records: updatedRows.map(normalizeDepositMailRow)
+    };
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 export async function insertBankingEntries(applicationDB, payload) {
@@ -1317,6 +1990,16 @@ export async function insertBankingEntries(applicationDB, payload) {
     for (const entry of entries) {
       const event_id = Number(entry.eventId || entry.event_id);
       const transaction_type = String(entry.type || entry.transactionType || entry.transaction_type || '').trim();
+      const normalized_transaction_type = transaction_type.toLowerCase();
+      const is_other_transaction_type = normalized_transaction_type === 'other';
+      const initial_mail_status = is_other_transaction_type ? 'N/A' : 'unsent';
+      const initial_mail_request_id = is_other_transaction_type ? 'N/A' : null;
+      const initial_mail_batch_id = is_other_transaction_type ? 'N/A' : null;
+      const initial_checked_out_by = is_other_transaction_type ? '000000000000000000' : null;
+      const initial_checked_out_at_expression = is_other_transaction_type ? 'NOW()' : 'NULL';
+      const initial_written_to_eso_at_expression = is_other_transaction_type ? 'NOW()' : 'NULL';
+      const initial_sent_at_expression = is_other_transaction_type ? 'NOW()' : 'NULL';
+      const initial_failed_reason = is_other_transaction_type ? 'No deposit mail required for other category' : null;
       const account_name = String(entry.displayName || entry.receivedFrom || entry.accountName || entry.account_name || '').trim();
       const event_timestamp = Number(entry.time || entry.eventTimestamp || entry.event_timestamp);
       const deposit_amount = Number(entry.amount || entry.depositAmount || entry.deposit_amount);
@@ -1347,7 +2030,14 @@ export async function insertBankingEntries(applicationDB, payload) {
             ticket_quantity,
             data_source,
             note,
-            email_requested
+            mail_status,
+            mail_request_id,
+            mail_batch_id,
+            checked_out_by,
+            checked_out_at,
+            written_to_eso_at,
+            sent_at,
+            failed_reason
           )
           VALUES (
             ?,
@@ -1359,7 +2049,14 @@ export async function insertBankingEntries(applicationDB, payload) {
             ?,
             ?,
             ?,
-            0
+            ?,
+            ?,
+            ?,
+            ?,
+            ${initial_checked_out_at_expression},
+            ${initial_written_to_eso_at_expression},
+            ${initial_sent_at_expression},
+            ?
           )
         `,
         [
@@ -1371,7 +2068,12 @@ export async function insertBankingEntries(applicationDB, payload) {
           deposit_amount,
           ticket_quantity,
           String(payload?.source || 'GuildSyncBanking').trim(),
-          String(entry.note || '').trim() || null
+          String(entry.note || '').trim() || null,
+          initial_mail_status,
+          initial_mail_request_id,
+          initial_mail_batch_id,
+          initial_checked_out_by,
+          initial_failed_reason
         ]
       );
 
@@ -2095,7 +2797,8 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
         ticket_quantity,
         data_source,
         note,
-        email_requested
+        mail_status,
+        mail_request_id
       )
       VALUES (
         ?,
@@ -2107,7 +2810,8 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
         ?,
         ?,
         ?,
-        0
+        'unsent',
+        NULL
       )
     `,
     [event_id, transactionType, accountName, String(timestamp), timestamp, goldValue, tickets, dataSource, auditedNote]

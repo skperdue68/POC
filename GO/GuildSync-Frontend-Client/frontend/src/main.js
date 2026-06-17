@@ -17,8 +17,13 @@ import {
   StopGuildSyncFileWatcher,
   GetGuildSyncFileWatcherStatus,
   SetGuildSyncSavedVarsWatchFileEnabled,
+  GetESORunningStatus,
   CollectGuildSyncBankingData,
   CommitGuildSyncBankingData,
+  WriteDepositMailToGuildSyncBanking,
+  CollectDepositMailAckFromGuildSyncBanking,
+  CleanupDepositMailAckFromGuildSyncBanking,
+  FlushPendingDepositMailAckCleanup,
   CollectGuildSyncRosterData,
   CommitGuildSyncRosterData,
   CollectGuildSyncApplicationsData,
@@ -30,6 +35,9 @@ import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime';
 const GUILDSYNC_APP_VERSION = '1.0.3';
 const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
+const PENDING_DEPOSIT_MAIL_STORAGE_KEY = 'guildsync-pending-deposit-mail';
+const ESO_STATUS_POLL_INTERVAL_MS = 5000;
+const DEPOSIT_MAIL_AVAILABILITY_POLL_INTERVAL_MS = 30 * 1000;
 const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
 const PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY = 'guildsync-pending-applications-uploads';
 
@@ -51,6 +59,13 @@ let bankingUploadQueueProcessing = false;
 let rosterUploadQueueProcessing = false;
 let applicationsUploadQueueProcessing = false;
 let guildSyncFileWatcherStatus = null;
+let esoRunningStatus = { running: false, message: '' };
+let esoStatusPollTimer = null;
+let depositMailAvailabilityPollTimer = null;
+let depositMailCheckoutRunning = false;
+let depositMailPendingWriteRunning = false;
+let depositMailPendingWriteAutoTimer = null;
+let depositMailAckCleanupFlushRunning = false;
 
 let systemMessages = new Map();
 let systemMessageTimers = new Map();
@@ -336,19 +351,43 @@ function renderGuildSyncTabs() {
     .map((tab) => {
       const isActive = tab.id === activeGuildSyncTab;
 
+      const showMailAttention = shouldShowBankingMailTabAttention(tab.id, isActive);
+      const attentionCount = showMailAttention ? getBankingMailAttentionCount() : 0;
+      const attentionTitle = showMailAttention
+        ? `Deposit mail needs attention: ${attentionCount} item${attentionCount === 1 ? '' : 's'} ready to check out or write.`
+        : '';
+
       return `
         <button
-          class="guildsync-tab${isActive ? ' active' : ''}"
+          class="guildsync-tab${isActive ? ' active' : ''}${showMailAttention ? ' banking-mail-attention' : ''}"
           type="button"
           data-tab-id="${escapeAttribute(tab.id)}"
           aria-selected="${isActive ? 'true' : 'false'}"
+          ${attentionTitle ? `title="${escapeAttribute(attentionTitle)}"` : ''}
         >
           <span class="guildsync-tab-icon" aria-hidden="true">${getGuildSyncTabIcon(tab.icon)}</span>
           <span class="guildsync-tab-label">${escapeHtml(tab.label)}</span>
+          ${showMailAttention ? `<span class="guildsync-tab-mail-badge" aria-label="${escapeAttribute(attentionTitle)}">${attentionCount > 99 ? '99+' : escapeHtml(String(attentionCount))}</span>` : ''}
         </button>
       `;
     })
     .join('');
+}
+
+function getBankingMailAttentionCount() {
+  if (!isAuthenticatedSession()) {
+    return 0;
+  }
+
+  return getUnsentDepositMailCount() + getPendingDepositMailWriteCount() + getWrittenDepositMailWaitingCount();
+}
+
+function shouldShowBankingMailTabAttention(tabId, isActive) {
+  if (tabId !== 'more' || isActive) {
+    return false;
+  }
+
+  return getBankingMailAttentionCount() > 0;
 }
 
 function getGuildSyncTabIcon(icon) {
@@ -4729,6 +4768,7 @@ function renderBankDepositsPanel() {
             <span aria-hidden="true">＋</span>
             <span>Add Manual Tickets</span>
           </button>
+          ${renderDepositMailCheckoutButton()}
           <button class="bank-export-button" type="button" data-bank-export-section="biweekly">
             <span aria-hidden="true">▦</span>
             <span>Export Bi-Weekly</span>
@@ -4882,6 +4922,113 @@ function renderBankSectionCard(section, icon, title, subtitle) {
   `;
 }
 
+
+function renderDepositMailCheckoutButton() {
+  if (!isAuthenticatedSession()) {
+    return '';
+  }
+
+  const availableCount = getUnsentDepositMailCount();
+  const pendingCount = getPendingDepositMailWriteCount();
+  const writtenCount = getWrittenDepositMailWaitingCount();
+  const hasAvailableMail = availableCount > 0;
+  const hasPendingWrite = pendingCount > 0;
+  const hasWrittenWaiting = writtenCount > 0;
+
+  if (!hasAvailableMail && !hasPendingWrite && !hasWrittenWaiting) {
+    return '';
+  }
+
+  let label = '';
+  let action = '';
+  let statusOnly = false;
+
+  if (hasAvailableMail) {
+    label = `Check Out ${availableCount} Deposit Mail`;
+    action = 'checkout';
+  } else if (hasPendingWrite) {
+    statusOnly = true;
+    if (depositMailPendingWriteRunning) {
+      label = `Writing ${pendingCount} Pending Mail`;
+    } else if (esoRunningStatus.running) {
+      label = `${pendingCount} Mail Waiting for ESO Closure`;
+    } else {
+      schedulePendingDepositMailAutoWrite('render-pending-mail-button');
+      label = `${pendingCount} Mail Writing to Disk`;
+    }
+  } else {
+    statusOnly = true;
+    label = `${writtenCount} Mail Ready to Send`;
+  }
+
+  const statusText = hasAvailableMail
+    ? 'Check out new deposit mail. GuildSync will immediately try to write it, or hold it until ESO closes.'
+    : hasPendingWrite
+      ? 'Deposit mail is already checked out and will be written automatically after ESO closes.'
+      : 'Deposit mail has been written to ESO SavedVariables and is ready for ESO to send it and write acknowledgements.';
+
+  const busy = depositMailCheckoutRunning || depositMailPendingWriteRunning;
+  const esoStatusLabel = esoRunningStatus.running ? 'ESO Running' : 'ESO Not Running';
+  const esoStatusClass = esoRunningStatus.running ? 'eso-running' : 'eso-not-running';
+  const buttonClass = `bank-export-button deposit-mail-button${statusOnly ? ' deposit-mail-status-only' : ''}`;
+
+  return `
+    <button id="checkoutDepositMailButton" class="${buttonClass}" type="button" data-deposit-mail-action="${escapeAttribute(action)}" ${statusOnly || busy ? 'aria-disabled="true"' : ''} title="${escapeAttribute(esoRunningStatus.message || statusText)}" aria-label="${escapeAttribute(`${label}. ${statusText}`)}">
+      <span aria-hidden="true">📬</span>
+      <span>${escapeHtml(label)}</span>
+      <span aria-hidden="true">(</span><span class="deposit-mail-eso-status ${esoStatusClass}" aria-hidden="true">${escapeHtml(esoStatusLabel)}</span><span aria-hidden="true">)</span>
+    </button>
+  `;
+}
+
+function getPendingDepositMailWriteCount() {
+  return loadPendingDepositMailBatches().reduce((total, batch) => total + normalizeBankingEntries(batch.records).length, 0);
+}
+
+function getCurrentDepositMailOwnerKeys() {
+  const user = guildSyncSession?.user || {};
+  return new Set([
+    getDisplayName(),
+    user.display_name,
+    user.global_name,
+    user.username,
+    user.discord_user_id,
+    user.id
+  ]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean));
+}
+
+function isDepositMailOwnedByCurrentUser(entry) {
+  const checkedOutBy = String(entry?.checkedOutBy || entry?.checked_out_by || '').trim().toLowerCase();
+  if (!checkedOutBy) {
+    return false;
+  }
+  return getCurrentDepositMailOwnerKeys().has(checkedOutBy);
+}
+
+function getWrittenDepositMailWaitingCount() {
+  if (!isAuthenticatedSession()) {
+    return 0;
+  }
+
+  return bankingEntries.filter((entry) => {
+    const type = String(entry?.type || '').toLowerCase();
+    const mailStatus = String(entry?.mailStatus || '').toLowerCase();
+    return (type === 'biweekly' || type === 'monthly')
+      && mailStatus === 'written_to_eso'
+      && isDepositMailOwnedByCurrentUser(entry);
+  }).length;
+}
+
+function getUnsentDepositMailCount() {
+  return bankingEntries.filter((entry) => {
+    const type = String(entry?.type || '').toLowerCase();
+    const mailStatus = String(entry?.mailStatus || '').toLowerCase();
+    return (type === 'biweekly' || type === 'monthly') && mailStatus === 'unsent';
+  }).length;
+}
+
 function wireBankDepositsPanel() {
   if (activeGuildSyncTab !== 'more') {
     return;
@@ -4947,6 +5094,15 @@ function wireBankDepositsPanel() {
         await refreshRosterDataFromBackend({ silent: true });
       }
       renderGuildSyncTabLayout();
+    });
+  }
+
+  const checkoutMailButton = document.querySelector('#checkoutDepositMailButton');
+  if (checkoutMailButton) {
+    checkoutMailButton.addEventListener('click', () => {
+      if (checkoutMailButton.dataset.depositMailAction === 'checkout' && checkoutMailButton.getAttribute('aria-disabled') !== 'true') {
+        checkoutDepositMailFromBackend();
+      }
     });
   }
 
@@ -5194,7 +5350,20 @@ function normalizeBankingEntries(entries) {
       amount: Number(entry?.amount ?? 0) || 0,
       ticketAmount: Number(entry?.ticketAmount ?? entry?.ticket_amount ?? 0) || 0,
       note: String(entry?.note ?? '').trim(),
-      dataSource: String(entry?.dataSource ?? entry?.data_source ?? '').trim()
+      dataSource: String(entry?.dataSource ?? entry?.data_source ?? '').trim(),
+      emailRequested: Boolean(entry?.emailRequested ?? entry?.email_requested),
+      mailStatus: String(entry?.mailStatus ?? entry?.mail_status ?? '').trim(),
+      mailRequestId: String(entry?.mailRequestId ?? entry?.mail_request_id ?? '').trim(),
+      mailBatchId: String(entry?.mailBatchId ?? entry?.mail_batch_id ?? '').trim(),
+      checkedOutBy: String(entry?.checkedOutBy ?? entry?.checked_out_by ?? '').trim(),
+      checkedOutAt: String(entry?.checkedOutAt ?? entry?.checked_out_at ?? '').trim(),
+      checkoutExpiresAt: String(entry?.checkoutExpiresAt ?? entry?.checkout_expires_at ?? '').trim(),
+      writtenToEsoAt: String(entry?.writtenToEsoAt ?? entry?.written_to_eso_at ?? '').trim(),
+      sentAt: String(entry?.sentAt ?? entry?.sent_at ?? '').trim(),
+      failedReason: String(entry?.failedReason ?? entry?.failed_reason ?? '').trim(),
+      recipient: String(entry?.recipient ?? entry?.account_name ?? entry?.displayName ?? entry?.display_name ?? '').trim(),
+      subject: String(entry?.subject ?? entry?.mailSubject ?? entry?.mail_subject ?? '').trim(),
+      body: String(entry?.body ?? entry?.mailBody ?? entry?.mail_body ?? '').trim()
     };
   });
 }
@@ -5242,6 +5411,7 @@ async function handleBankingDataUpdated(payload = {}) {
 
 async function refreshBankingDataFromBackend(options = {}) {
   const silent = Boolean(options.silent);
+  const background = Boolean(options.background);
 
   if (!socket?.connected) {
     if (!silent) {
@@ -5252,8 +5422,10 @@ async function refreshBankingDataFromBackend(options = {}) {
     return;
   }
 
-  bankingDataLoading = true;
-  renderGuildSyncTabLayout();
+  if (!background) {
+    bankingDataLoading = true;
+    renderGuildSyncTabLayout();
+  }
 
   try {
     const response = await emitSocketWithAck('guildsync:request-banking-data', {}, 30000);
@@ -5277,8 +5449,129 @@ async function refreshBankingDataFromBackend(options = {}) {
       });
     }
   } finally {
-    bankingDataLoading = false;
+    if (!background) {
+      bankingDataLoading = false;
+    }
     renderGuildSyncTabLayout();
+  }
+}
+
+async function refreshDepositMailAvailabilityFromBackend() {
+  if (!socket?.connected || !isAuthenticatedSession() || bankingDataLoading) {
+    return;
+  }
+
+  await refreshBankingDataFromBackend({ silent: true, background: true });
+
+  if (getUnsentDepositMailCount() <= 0 && getPendingDepositMailWriteCount() > 0) {
+    if (esoRunningStatus.running) {
+      renderGuildSyncTabLayout();
+    } else {
+      schedulePendingDepositMailAutoWrite('availability-refresh');
+    }
+  }
+}
+
+function startDepositMailAvailabilityPolling() {
+  if (depositMailAvailabilityPollTimer) {
+    clearInterval(depositMailAvailabilityPollTimer);
+  }
+
+  refreshDepositMailAvailabilityFromBackend();
+  depositMailAvailabilityPollTimer = window.setInterval(refreshDepositMailAvailabilityFromBackend, DEPOSIT_MAIL_AVAILABILITY_POLL_INTERVAL_MS);
+}
+
+function stopDepositMailAvailabilityPolling() {
+  if (depositMailAvailabilityPollTimer) {
+    clearInterval(depositMailAvailabilityPollTimer);
+    depositMailAvailabilityPollTimer = null;
+  }
+}
+
+
+async function collectAndSendDepositMailAck(payload = {}) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('deposit-mail-ack-pending', 'Deposit mail acknowledgements were found, but GuildSync websocket is not connected yet.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  try {
+    const ackResult = await CollectDepositMailAckFromGuildSyncBanking(payload);
+    if (!ackResult?.ok) {
+      return;
+    }
+
+    const ackEntries = Array.isArray(ackResult.ackEntries) ? ackResult.ackEntries : [];
+    if (ackEntries.length === 0) {
+      return;
+    }
+
+    const response = await emitSocketWithAck('guildsync:mark-deposit-mail-sent', {
+      mail_ack: ackEntries,
+      mail_request_ids: ackEntries.map((entry) => entry?.mail_request_id || entry?.mailRequestId).filter(Boolean),
+      source: 'guildsync-frontend-client',
+      file_name: ackResult.fileName || payload.fileName || '',
+      file_path: ackResult.filePath || payload.filePath || ''
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Backend rejected the deposit mail acknowledgements.');
+    }
+
+    const confirmedIds = Array.isArray(response.mail_request_ids)
+      ? response.mail_request_ids
+      : Array.isArray(response.mailRequestIds)
+        ? response.mailRequestIds
+        : [];
+
+    if (confirmedIds.length === 0) {
+      addSystemMessage('deposit-mail-ack-none', response.message || 'No matching deposit mail acknowledgements were confirmed by the backend.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const cleanupResult = await CleanupDepositMailAckFromGuildSyncBanking(confirmedIds);
+    if (!cleanupResult?.ok) {
+      throw new Error(cleanupResult?.message || 'Backend confirmed sent mail, but local mailAck cleanup failed.');
+    }
+
+    addSystemMessage('deposit-mail-ack-sent', cleanupResult.message || `Confirmed ${confirmedIds.length} deposit mail acknowledgement(s).`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
+    await refreshBankingDataFromBackend({ silent: true });
+  } catch (error) {
+    addSystemMessage('deposit-mail-ack-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+async function flushPendingDepositMailAckCleanup() {
+  if (depositMailAckCleanupFlushRunning) {
+    return;
+  }
+  depositMailAckCleanupFlushRunning = true;
+  try {
+    const result = await FlushPendingDepositMailAckCleanup();
+    if (result?.ok && Number(result.removedCount || 0) > 0) {
+      addSystemMessage('deposit-mail-ack-cleanup-flushed', result.message || 'Cleaned up pending deposit mail acknowledgements.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
+  } catch (error) {
+    addSystemMessage('deposit-mail-ack-cleanup-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    depositMailAckCleanupFlushRunning = false;
   }
 }
 
@@ -5337,6 +5630,230 @@ async function collectAndSendGuildSyncBankingData(payload = {}) {
   } finally {
     bankingDataLoading = false;
     renderGuildSyncTabLayout();
+  }
+}
+
+
+function createLocalDepositMailBatchId() {
+  return `deposit-mail-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function loadPendingDepositMailBatches() {
+  try {
+    const raw = window.localStorage.getItem(PENDING_DEPOSIT_MAIL_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingDepositMailBatches(queue) {
+  window.localStorage.setItem(PENDING_DEPOSIT_MAIL_STORAGE_KEY, JSON.stringify(Array.isArray(queue) ? queue : []));
+}
+
+function enqueuePendingDepositMailBatch(batch) {
+  const batchId = String(batch?.mail_batch_id || batch?.mailBatchId || batch?.local_batch_id || createLocalDepositMailBatchId());
+  const queue = loadPendingDepositMailBatches().filter((item) => String(item?.mail_batch_id || item?.mailBatchId || item?.local_batch_id || '') !== batchId);
+  queue.push({
+    ...batch,
+    local_batch_id: batchId,
+    pending_saved_at: new Date().toISOString()
+  });
+  savePendingDepositMailBatches(queue);
+}
+
+function removePendingDepositMailBatch(batchId) {
+  const cleanBatchId = String(batchId || '').trim();
+  if (!cleanBatchId) {
+    return;
+  }
+  const queue = loadPendingDepositMailBatches().filter((item) => String(item?.mail_batch_id || item?.mailBatchId || item?.local_batch_id || '') !== cleanBatchId);
+  savePendingDepositMailBatches(queue);
+}
+
+async function checkoutDepositMailFromBackend() {
+  if (!isAuthenticatedSession()) {
+    addSystemMessage('deposit-mail-login-required', 'Login required to check out deposit mail.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('deposit-mail-socket-error', 'GuildSync websocket is not connected.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  const pending = loadPendingDepositMailBatches();
+  const availableCount = getUnsentDepositMailCount();
+  if (pending.length > 0 && availableCount <= 0) {
+    await processPendingDepositMailBatches();
+    return;
+  }
+
+  depositMailCheckoutRunning = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:checkout-deposit-mail', {
+      source: 'guildsync-frontend-client',
+      max_records: 100,
+      checkout_minutes: 60
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Backend rejected the deposit mail checkout request.');
+    }
+
+    const records = normalizeBankingEntries(response.records);
+    if (records.length === 0) {
+      addSystemMessage('deposit-mail-none', response.message || 'No unsent deposit mail is available.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+      await refreshBankingDataFromBackend({ silent: true });
+      return;
+    }
+
+    const batch = {
+      mail_batch_id: response.mail_batch_id || response.mailBatchId || createLocalDepositMailBatchId(),
+      checked_out_by: response.checked_out_by || response.checkedOutBy || getDisplayName(),
+      checked_out_at: new Date().toISOString(),
+      records
+    };
+
+    enqueuePendingDepositMailBatch(batch);
+    await processPendingDepositMailBatches();
+  } catch (error) {
+    addSystemMessage('deposit-mail-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } finally {
+    depositMailCheckoutRunning = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+
+function schedulePendingDepositMailAutoWrite(reason = '') {
+  if (depositMailPendingWriteAutoTimer || depositMailPendingWriteRunning || !isAuthenticatedSession()) {
+    return;
+  }
+
+  if (getPendingDepositMailWriteCount() <= 0 || esoRunningStatus.running) {
+    return;
+  }
+
+  depositMailPendingWriteAutoTimer = window.setTimeout(() => {
+    depositMailPendingWriteAutoTimer = null;
+    processPendingDepositMailBatches();
+  }, 100);
+}
+
+async function processPendingDepositMailBatches() {
+  if (depositMailPendingWriteAutoTimer) {
+    window.clearTimeout(depositMailPendingWriteAutoTimer);
+    depositMailPendingWriteAutoTimer = null;
+  }
+
+  if (depositMailPendingWriteRunning || !isAuthenticatedSession()) {
+    return;
+  }
+
+  const queue = loadPendingDepositMailBatches();
+  if (queue.length === 0) {
+    return;
+  }
+
+  await refreshESORunningStatus({ silent: true });
+  if (esoRunningStatus.running) {
+    addSystemMessage('deposit-mail-waiting-eso', `${queue.length} deposit mail batch${queue.length === 1 ? '' : 'es'} checked out. Close ESO to write them to SavedVariables.`, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  depositMailPendingWriteRunning = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    for (const batch of queue) {
+      const batchId = String(batch?.mail_batch_id || batch?.mailBatchId || batch?.local_batch_id || '').trim();
+      const records = normalizeBankingEntries(batch?.records);
+      if (records.length === 0) {
+        removePendingDepositMailBatch(batchId);
+        continue;
+      }
+
+      const writeResult = await WriteDepositMailToGuildSyncBanking(records);
+      if (!writeResult?.ok) {
+        throw new Error(writeResult?.message || 'Deposit mail could not be written to GuildSyncBanking.lua.');
+      }
+
+      if (!socket?.connected) {
+        throw new Error('Deposit mail was written locally, but GuildSync websocket is not connected to mark it written_to_eso.');
+      }
+
+      const response = await emitSocketWithAck('guildsync:mark-deposit-mail-written-to-eso', {
+        mail_batch_id: batchId,
+        event_ids: writeResult.eventIds || records.map((record) => record.eventId).filter(Boolean),
+        source: 'guildsync-frontend-client'
+      }, 30000);
+
+      if (!response?.ok) {
+        throw new Error(response?.message || 'Backend did not confirm deposit mail was marked written_to_eso.');
+      }
+
+      removePendingDepositMailBatch(batchId);
+      addSystemMessage('deposit-mail-written', writeResult.message || `Wrote ${records.length} deposit mail record(s) to GuildSyncBanking.lua.`, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    }
+
+    await refreshBankingDataFromBackend({ silent: true });
+  } catch (error) {
+    addSystemMessage('deposit-mail-write-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } finally {
+    depositMailPendingWriteRunning = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function refreshESORunningStatus(options = {}) {
+  try {
+    const previousRunning = Boolean(esoRunningStatus.running);
+    const status = await GetESORunningStatus();
+    esoRunningStatus = {
+      running: Boolean(status?.running),
+      message: String(status?.message || '')
+    };
+
+    if (!esoRunningStatus.running) {
+      await flushPendingDepositMailAckCleanup();
+    }
+
+    if (previousRunning && !esoRunningStatus.running) {
+      addSystemMessage('eso-closed-deposit-mail-flush', 'ESO is no longer running. Processing pending deposit mail SavedVariables work now.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+      await processPendingDepositMailBatches();
+    }
+
+    if (previousRunning !== esoRunningStatus.running) {
+      renderGuildSyncTabLayout();
+    }
+  } catch (error) {
+    if (!options.silent) {
+      addSystemMessage('eso-status-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    }
+  }
+}
+
+function startESOStatusPolling() {
+  if (esoStatusPollTimer) {
+    clearInterval(esoStatusPollTimer);
+  }
+  refreshESORunningStatus({ silent: true }).then(() => {
+    if (!esoRunningStatus.running && getPendingDepositMailWriteCount() > 0) {
+      processPendingDepositMailBatches();
+    }
+  });
+  esoStatusPollTimer = window.setInterval(() => refreshESORunningStatus({ silent: true }), ESO_STATUS_POLL_INTERVAL_MS);
+}
+
+function stopESOStatusPolling() {
+  if (esoStatusPollTimer) {
+    clearInterval(esoStatusPollTimer);
+    esoStatusPollTimer = null;
   }
 }
 
@@ -6442,6 +6959,9 @@ function connectSocket() {
     }
 
     processPendingGuildSyncBankingUploads();
+    processPendingDepositMailBatches();
+    startESOStatusPolling();
+    startDepositMailAvailabilityPolling();
     processPendingGuildSyncRosterUploads();
     processPendingGuildSyncApplicationsUploads();
     startVersionCheckTimer();
@@ -6455,6 +6975,8 @@ function connectSocket() {
   socket.on('disconnect', () => {
     updateStatusDot();
     stopVersionCheckTimer();
+    stopESOStatusPolling();
+    stopDepositMailAvailabilityPolling();
   });
 
   socket.on('guildsync:version-status', (payload) => {
@@ -7098,6 +7620,7 @@ function handleGuildSyncSavedVarsFileModified(payload = {}) {
 }
 
 async function handleGuildSyncBankingSavedVarsModified(payload = {}) {
+  await collectAndSendDepositMailAck(payload);
   await collectAndSendGuildSyncBankingData(payload);
 }
 
