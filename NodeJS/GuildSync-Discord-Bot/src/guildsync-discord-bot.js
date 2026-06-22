@@ -22,7 +22,8 @@ import {
   GatewayIntentBits,
   MessageFlags,
   Partials,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  AuditLogEvent
 } from 'discord.js';
 
 import * as roles from './commands/roles.js';
@@ -92,29 +93,14 @@ client.commands = new Collection();
 const gsaCommand = {
   data: new SlashCommandBuilder()
     .setName('gsa')
-    .setDescription('GuildSync Applications tools')
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('post')
-        .setDescription('Post a saved GuildSync application record to Discord')
-        .addStringOption((option) =>
-          option
-            .setName('name')
-            .setDescription('ESO account name from GuildSyncApplications, for example @example')
-            .setRequired(true)
-        )
+    .setDescription('Post saved GuildSync application record(s) to Discord')
+    .addStringOption((option) =>
+      option
+        .setName('name')
+        .setDescription('Full or partial ESO account name from GuildSyncApplications')
+        .setRequired(true)
     ),
   async execute(interaction, guildSyncSocket) {
-    const subcommand = interaction.options.getSubcommand();
-
-    if (subcommand !== 'post') {
-      await interaction.reply({
-        content: 'Unknown GSA subcommand.',
-        flags: [MessageFlags.Ephemeral]
-      });
-      return;
-    }
-
     const name = interaction.options.getString('name', true).trim();
 
     await interaction.deferReply({
@@ -139,7 +125,7 @@ const gsaCommand = {
         return;
       }
 
-      await interaction.editReply(result.message || `Posted GuildSync application record for ${result.applicant_account || name}.`);
+      await interaction.editReply(result.message || `Posted GuildSync application record(s) matching ${name}.`);
     } catch (error) {
       await interaction.editReply(error.message || 'Failed to post GuildSync application record.');
     }
@@ -376,7 +362,10 @@ client.on(Events.GuildMemberAdd, async member => {
 client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
   await handleDiscordLiveUpdate(
     `Discord member updated: ${newMember.user.tag} (${newMember.user.id})`,
-    async () => await sendDiscordMemberUpsert(newMember, guildSyncSocket)
+    async () => {
+      const initiator = await getGuildMemberUpdateInitiator(oldMember, newMember);
+      return await sendDiscordMemberUpsert(newMember, guildSyncSocket, { initiator });
+    }
   );
 });
 
@@ -392,6 +381,11 @@ client.on(Events.UserUpdate, async (oldUser, newUser) => {
   await handleDiscordLiveUpdate(
     `Discord user updated: ${newUser.tag} (${newUser.id})`,
     async () => {
+      if (isUserUpdateAvatarOnly(oldUser, newUser)) {
+        Log(`Discord user update skipped because only avatar changed: ${newUser.tag} (${newUser.id})`);
+        return { skipped: true, reason: 'avatar_only' };
+      }
+
       const guild = await getStartupGuild(client);
       const member = await guild.members.fetch(newUser.id).catch(() => null);
 
@@ -426,6 +420,101 @@ client.on(Events.GuildRoleDelete, async role => {
   );
 });
 
+
+
+function getMemberRoleIdSet(member) {
+  const roleIds = new Set();
+
+  for (const role of member?.roles?.cache?.values?.() || []) {
+    if (role.id === member.guild?.id) {
+      continue;
+    }
+
+    roleIds.add(String(role.id));
+  }
+
+  return roleIds;
+}
+
+function didMemberRolesChange(oldMember, newMember) {
+  const oldRoleIds = getMemberRoleIdSet(oldMember);
+  const newRoleIds = getMemberRoleIdSet(newMember);
+
+  if (oldRoleIds.size !== newRoleIds.size) {
+    return true;
+  }
+
+  for (const roleId of oldRoleIds) {
+    if (!newRoleIds.has(roleId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function formatDiscordInitiator(user) {
+  if (!user) return '';
+
+  const tag = String(user.tag || '').trim();
+  if (tag) return tag.slice(0, 50);
+
+  const username = String(user.username || '').trim();
+  if (username) return username.slice(0, 50);
+
+  return String(user.id || '').trim().slice(0, 50);
+}
+
+function normalizeComparableDiscordValue(value) {
+  return String(value ?? '').trim();
+}
+
+function isUserUpdateAvatarOnly(oldUser, newUser) {
+  const oldAvatar = normalizeComparableDiscordValue(oldUser?.avatar);
+  const newAvatar = normalizeComparableDiscordValue(newUser?.avatar);
+
+  if (oldAvatar === newAvatar) {
+    return false;
+  }
+
+  const trackedFields = [
+    ['username', 'username'],
+    ['globalName', 'globalName']
+  ];
+
+  return trackedFields.every(([oldKey, newKey]) => (
+    normalizeComparableDiscordValue(oldUser?.[oldKey]) === normalizeComparableDiscordValue(newUser?.[newKey])
+  ));
+}
+
+async function getGuildMemberUpdateInitiator(oldMember, newMember) {
+  if (!didMemberRolesChange(oldMember, newMember)) {
+    return '';
+  }
+
+  try {
+    const guild = newMember.guild;
+    const auditLogs = await guild.fetchAuditLogs({
+      type: AuditLogEvent.MemberRoleUpdate,
+      limit: 5
+    });
+
+    const now = Date.now();
+    const entry = auditLogs.entries.find((candidate) => {
+      if (candidate.target?.id !== newMember.user.id) {
+        return false;
+      }
+
+      const ageMs = Math.abs(now - Number(candidate.createdTimestamp || 0));
+      return ageMs <= 15000;
+    });
+
+    return formatDiscordInitiator(entry?.executor);
+  } catch (error) {
+    Log(`Unable to fetch Discord audit log initiator for role update: ${error.message}`);
+    return '';
+  }
+}
 
 async function handleDiscordLiveUpdate(description, action) {
   if (!client.isReady()) {

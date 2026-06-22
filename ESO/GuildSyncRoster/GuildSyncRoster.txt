@@ -1,11 +1,10 @@
 ## Title: GuildSyncRoster
 ## APIVersion: 101050
-## Version: 1.2.1
+## Version: 1.1.2
 ## Author: @evainefaye
 ## SavedVariables: GuildSyncRoster GuildSyncRosterState
 ## DependsOn: LibHistoire
 
-GSRData.lua
 GuildSyncRoster.lua
-
+GSRData.lua
 

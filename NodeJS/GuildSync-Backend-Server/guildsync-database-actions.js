@@ -67,9 +67,10 @@ function getDepositMailTicketGoldCost(row = {}) {
   const amount = Number(row.deposit_amount ?? row.amount ?? 0);
   if (!Number.isFinite(amount)) return 0;
 
-  const type = normalizeDepositMailTicketType(row.transaction_type || row.ticket_type || row.type);
-  const marker = type === 'monthly' ? 3 : type === 'biweekly' ? 1 : 0;
-  return Math.max(0, Math.trunc(amount) - marker);
+  // Mail receipts should show the actual ESO deposit/ticket price.
+  // The +1/+3 raffle marker is only removed from raffle summary totals,
+  // not from queued mail content or rendered mail placeholders.
+  return Math.max(0, Math.trunc(amount));
 }
 
 function getDepositMailPurchaseDate(row = {}) {
@@ -100,21 +101,59 @@ function getDepositMailRaffleTimestamp(row = {}) {
   if (type !== 'monthly' && type !== 'biweekly') return null;
 
   const eventTimestamp = Number(row.event_timestamp || row.time || 0);
-  const anchor = type === 'monthly' ? BANKING_MONTHLY_SALES_END_ANCHOR_UTC : BANKING_BIWEEKLY_SALES_END_ANCHOR_UTC;
-  const interval = type === 'monthly' ? BANKING_MONTHLY_INTERVAL_SECONDS : BANKING_BIWEEKLY_INTERVAL_SECONDS;
   const referenceTime = Number.isFinite(eventTimestamp) && eventTimestamp > 0
     ? eventTimestamp
     : Math.floor(Date.now() / 1000);
 
-  let salesEnd = anchor;
-  while (salesEnd - interval > referenceTime) {
-    salesEnd -= interval;
-  }
-  while (salesEnd < referenceTime) {
-    salesEnd += interval;
-  }
+  const salesEnd = type === 'monthly'
+    ? getDepositMailMonthlySalesEndAtOrAfter(referenceTime)
+    : getDepositMailBiweeklySalesEndAtOrAfter(referenceTime);
 
   return salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS;
+}
+
+function getDepositMailBiweeklySalesEndAtOrAfter(referenceTime) {
+  let salesEnd = BANKING_BIWEEKLY_SALES_END_ANCHOR_UTC;
+
+  while (salesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS > referenceTime) {
+    salesEnd -= BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  }
+
+  while (salesEnd < referenceTime) {
+    salesEnd += BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  }
+
+  return salesEnd;
+}
+
+function getDepositMailMonthlySalesEndAtOrAfter(referenceTime) {
+  let salesEnd = getDepositMailBiweeklySalesEndAtOrAfter(referenceTime);
+
+  while (!isDepositMailLastRaffleSalesEndInEasternMonth(salesEnd)) {
+    salesEnd += BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  }
+
+  return salesEnd;
+}
+
+function isDepositMailLastRaffleSalesEndInEasternMonth(salesEnd) {
+  const raffleTimestamp = salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS;
+  const nextRaffleTimestamp = salesEnd + BANKING_BIWEEKLY_INTERVAL_SECONDS + BANKING_RAFFLE_AFTER_SALES_SECONDS;
+  return getDepositMailEasternMonthKey(raffleTimestamp) !== getDepositMailEasternMonthKey(nextRaffleTimestamp);
+}
+
+function getDepositMailEasternMonthKey(timestamp) {
+  const date = new Date(Number(timestamp || 0) * 1000);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit'
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value || '';
+  const month = parts.find((part) => part.type === 'month')?.value || '';
+  return `${year}-${month}`;
 }
 
 function getDepositMailRaffleDateTimeEastern(row = {}) {
@@ -358,6 +397,7 @@ async function initializeSchema(db) {
       event_timestamp VARCHAR(25) NOT NULL,
       event_datetime DATETIME NOT NULL,
       source VARCHAR(64) NOT NULL DEFAULT 'unknown',
+      initiator VARCHAR(50) DEFAULT NULL,
       INDEX idx_discord_member_history_discord_id (discord_id),
       INDEX idx_discord_member_history_event_type (event_type),
       INDEX idx_discord_member_history_event_datetime (event_datetime),
@@ -383,6 +423,7 @@ async function initializeSchema(db) {
 
   await ensureColumn(db, 'discord_members', 'last_seen', 'VARCHAR(25) NULL', 'server_nickname');
   await ensureColumn(db, 'discord_members', 'last_seen_action', 'VARCHAR(64) NULL', 'last_seen');
+  await ensureColumn(db, 'discord_member_history', 'initiator', 'VARCHAR(50) NULL', 'source');
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_discord_members
@@ -653,6 +694,49 @@ export async function recordGuildSyncApplications(applicationDB, records = []) {
   return { inserted: normalizedRecords.length, skipped: (Array.isArray(records) ? records.length : 1) - normalizedRecords.length };
 }
 
+
+
+export async function getGuildSyncApplicationsByApplicantSearch(applicationDB, applicantSearch) {
+  const normalizedName = String(applicantSearch || '').trim();
+
+  if (!normalizedName) {
+    throw new Error('Applicant account name is required.');
+  }
+
+  const searchTerm = `%${normalizedName}%`;
+
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        applicant_account,
+        application_text,
+        application_timestamp,
+        officer_processing,
+        application_action,
+        decline_message,
+        blacklist_message,
+        discord_broadcast
+      FROM guildsync_applications
+      WHERE applicant_account LIKE ?
+      ORDER BY applicant_account, CAST(application_timestamp AS UNSIGNED) DESC
+    `,
+    [searchTerm]
+  );
+
+  return rows;
+}
+
+export async function markGuildSyncApplicationRecordBroadcasted(applicationDB, applicantAccount, applicationTimestamp) {
+  await applicationDB.execute(
+    `
+      UPDATE guildsync_applications
+      SET discord_broadcast = 1
+      WHERE applicant_account = ?
+        AND application_timestamp = ?
+    `,
+    [applicantAccount, applicationTimestamp]
+  );
+}
 
 export async function getGuildSyncApplicationByApplicantAccount(applicationDB, applicantAccount) {
   const normalizedName = String(applicantAccount || '').trim();
@@ -1555,7 +1639,8 @@ export async function getDiscordMemberHistoryForMember(applicationDB, discordID)
         new_value,
         event_timestamp,
         event_datetime,
-        source
+        source,
+        initiator
       FROM discord_member_history
       WHERE discord_id = ?
       ORDER BY event_datetime DESC, history_id DESC
@@ -3422,6 +3507,7 @@ function normalizeDiscordMemberPayload(member = {}) {
     server_nickname: String(member.server_nickname || member.serverNickname || member.nickname || '').trim(),
     joined_at: String(member.joined_at || member.joinedAt || '').trim(),
     source: String(member.source || '').trim(),
+    initiator: String(member.initiator || '').trim().slice(0, 50),
     roles: Array.isArray(member.roles) ? member.roles : []
   };
 }
@@ -3459,6 +3545,70 @@ async function getDiscordMemberRoleIDs(connection, discordID) {
   return new Set(rows.map((row) => String(row.role_id || '').trim()).filter(Boolean));
 }
 
+function cleanDiscordRoleHistoryLabel(value) {
+  const text = String(value || '').trim();
+
+  if (!text) {
+    return '';
+  }
+
+  const missingRoleMatch = text.match(/^\[\s*missing\s+role\s*:?[\s#]*([^\]]+)\]$/i);
+  if (missingRoleMatch?.[1]) {
+    return missingRoleMatch[1].trim();
+  }
+
+  return text;
+}
+
+async function getDiscordRoleNameMap(connection, roleIDs = []) {
+  const normalizedRoleIDs = [...new Set(
+    [...roleIDs].map((roleID) => cleanDiscordRoleHistoryLabel(roleID)).filter(Boolean)
+  )];
+
+  if (normalizedRoleIDs.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = normalizedRoleIDs.map(() => '?').join(', ');
+  const [rows] = await connection.execute(
+    `
+      SELECT role_id, role_name
+      FROM discord_roles
+      WHERE role_id IN (${placeholders})
+         OR role_name IN (${placeholders})
+    `,
+    [...normalizedRoleIDs, ...normalizedRoleIDs]
+  );
+
+  const roleNameMap = new Map();
+
+  for (const row of rows) {
+    const roleID = String(row.role_id || '').trim();
+    const roleName = String(row.role_name || '').trim();
+
+    if (roleID && roleName) {
+      roleNameMap.set(roleID, roleName);
+    }
+
+    if (roleName) {
+      roleNameMap.set(roleName, roleName);
+    }
+  }
+
+  return roleNameMap;
+}
+
+function formatDiscordRoleNamesForHistory(roleIDs = [], roleNameMap = new Map()) {
+  return [...roleIDs]
+    .map((roleID) => {
+      const normalizedRoleID = cleanDiscordRoleHistoryLabel(roleID);
+      return roleNameMap.get(normalizedRoleID) || normalizedRoleID;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }))
+    .join(', ');
+}
+
 async function recordDiscordMemberSnapshotHistory(connection, existing, existingRoleIDs, member, newRoleIDs, source) {
   let recorded = 0;
 
@@ -3477,8 +3627,7 @@ async function recordDiscordMemberSnapshotHistory(connection, existing, existing
   const fields = [
     ['username', 'username'],
     ['global_name', 'global_name'],
-    ['server_nickname', 'server_nickname'],
-    ['avatar', 'avatar']
+    ['server_nickname', 'server_nickname']
   ];
 
   for (const [fieldName, memberKey] of fields) {
@@ -3501,13 +3650,16 @@ async function recordDiscordMemberSnapshotHistory(connection, existing, existing
   const newRoles = [...newRoleIDs].sort();
 
   if (oldRoles.join('|') !== newRoles.join('|')) {
+    const roleNameMap = await getDiscordRoleNameMap(connection, [...oldRoles, ...newRoles]);
+
     recorded += await insertDiscordMemberHistory(connection, {
       member,
       event_type: 'roles_changed',
       field_name: 'roles',
-      old_value: oldRoles.join(', '),
-      new_value: newRoles.join(', '),
-      source
+      old_value: formatDiscordRoleNamesForHistory(oldRoles, roleNameMap),
+      new_value: formatDiscordRoleNamesForHistory(newRoles, roleNameMap),
+      source,
+      initiator: member.initiator
     });
   }
 
@@ -3532,9 +3684,10 @@ async function insertDiscordMemberHistory(connection, event = {}) {
         new_value,
         event_timestamp,
         event_datetime,
-        source
+        source,
+        initiator
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       String(member.discord_id || member.id || '').trim(),
@@ -3547,7 +3700,8 @@ async function insertDiscordMemberHistory(connection, event = {}) {
       event.new_value == null ? null : String(event.new_value),
       eventTimestamp,
       now,
-      String(event.source || 'unknown').trim().slice(0, 64) || 'unknown'
+      String(event.source || 'unknown').trim().slice(0, 64) || 'unknown',
+      String(event.initiator || member.initiator || '').trim().slice(0, 50) || null
     ]
   );
 

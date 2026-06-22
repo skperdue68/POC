@@ -5124,7 +5124,8 @@ function renderBankDepositsPanel() {
         <div class="bank-deposits-summary-row">
           <div>Total Deposits: <strong>${escapeHtml(formatGoldAmount(totals.amount))}</strong> <span aria-hidden="true">🪙</span></div>
           ${bankingActiveSection === 'monthly' ? `<div>Raffle Pot: <strong>${escapeHtml(formatGoldAmount(Math.floor(totals.amount / 2)))}</strong> <span aria-hidden="true">🪙</span></div>` : ''}
-          ${bankingActiveSection === 'biweekly' ? `<div>Draws: <strong>${escapeHtml(String(Math.ceil(totals.amount / 200000)))}</strong></div>` : ''}
+          ${bankingActiveSection === 'biweekly' ? `<div>Raffle Pot: <strong>${escapeHtml(formatGoldAmount(getRoundedBiweeklyRafflePot(totals.amount)))}</strong> <span aria-hidden="true">🪙</span></div>` : ''}
+          ${bankingActiveSection === 'biweekly' ? `<div>Draws: <strong>${escapeHtml(String(getBiweeklyDrawCount(totals.amount)))}</strong></div>` : ''}
           ${showTicketColumn ? `<div>Total Tickets Awarded: <strong>${escapeHtml(formatTicketAmount(totals.tickets))}</strong> <span aria-hidden="true">🎟</span></div>` : ''}
         </div>
       </div>
@@ -5442,17 +5443,20 @@ function moveBankingRafflePeriod(direction) {
 
 function getBankingRaffleWindow(section) {
   const now = Math.floor(Date.now() / 1000);
-  const isMonthly = section === 'monthly';
-  const interval = isMonthly ? BANKING_MONTHLY_INTERVAL_SECONDS : BANKING_BIWEEKLY_INTERVAL_SECONDS;
-  let salesEnd = isMonthly ? BANKING_MONTHLY_SALES_END_ANCHOR_UTC : BANKING_BIWEEKLY_SALES_END_ANCHOR_UTC;
 
-  while (salesEnd - interval > now) {
-    salesEnd -= interval;
+  if (section === 'monthly') {
+    const salesEnd = getBankingMonthlySalesEndForOffset(now, getBankingRafflePeriodOffset(section));
+    const previousSalesEnd = getBankingPreviousMonthlySalesEnd(salesEnd);
+
+    return {
+      salesStart: previousSalesEnd + 1,
+      salesEnd,
+      raffleTime: salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS
+    };
   }
 
-  while (salesEnd < now) {
-    salesEnd += interval;
-  }
+  const interval = BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  let salesEnd = getBankingBiweeklySalesEndAtOrAfter(now);
 
   salesEnd += getBankingRafflePeriodOffset(section) * interval;
 
@@ -5463,19 +5467,138 @@ function getBankingRaffleWindow(section) {
   };
 }
 
-function getBankingTotals(rows, section = bankingActiveSection) {
-  const markerAmount = section === 'monthly' ? 3 : section === 'biweekly' ? 1 : 0;
+function getBankingBiweeklySalesEndAtOrAfter(referenceTime) {
+  const interval = BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  let salesEnd = BANKING_BIWEEKLY_SALES_END_ANCHOR_UTC;
 
+  while (salesEnd - interval > referenceTime) {
+    salesEnd -= interval;
+  }
+
+  while (salesEnd < referenceTime) {
+    salesEnd += interval;
+  }
+
+  return salesEnd;
+}
+
+function getBankingMonthlySalesEndForOffset(referenceTime, offset = 0) {
+  let salesEnd = getBankingMonthlySalesEndAtOrAfter(referenceTime);
+  let remainingOffset = Number(offset) || 0;
+
+  while (remainingOffset < 0) {
+    salesEnd = getBankingPreviousMonthlySalesEnd(salesEnd);
+    remainingOffset += 1;
+  }
+
+  while (remainingOffset > 0) {
+    salesEnd = getBankingNextMonthlySalesEnd(salesEnd);
+    remainingOffset -= 1;
+  }
+
+  return salesEnd;
+}
+
+function getBankingMonthlySalesEndAtOrAfter(referenceTime) {
+  let salesEnd = getBankingBiweeklySalesEndAtOrAfter(referenceTime);
+
+  while (!isBankingLastRaffleSalesEndInEasternMonth(salesEnd)) {
+    salesEnd += BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  }
+
+  return salesEnd;
+}
+
+function getBankingPreviousMonthlySalesEnd(currentSalesEnd) {
+  let salesEnd = currentSalesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS;
+
+  while (!isBankingLastRaffleSalesEndInEasternMonth(salesEnd)) {
+    salesEnd -= BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  }
+
+  return salesEnd;
+}
+
+function getBankingNextMonthlySalesEnd(currentSalesEnd) {
+  let salesEnd = currentSalesEnd + BANKING_BIWEEKLY_INTERVAL_SECONDS;
+
+  while (!isBankingLastRaffleSalesEndInEasternMonth(salesEnd)) {
+    salesEnd += BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  }
+
+  return salesEnd;
+}
+
+function isBankingLastRaffleSalesEndInEasternMonth(salesEnd) {
+  const raffleTimestamp = salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS;
+  const nextRaffleTimestamp = salesEnd + BANKING_BIWEEKLY_INTERVAL_SECONDS + BANKING_RAFFLE_AFTER_SALES_SECONDS;
+  return getBankingEasternMonthKey(raffleTimestamp) !== getBankingEasternMonthKey(nextRaffleTimestamp);
+}
+
+function getBankingEasternMonthKey(timestamp) {
+  const date = new Date(Number(timestamp || 0) * 1000);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit'
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value || '';
+  const month = parts.find((part) => part.type === 'month')?.value || '';
+  return `${year}-${month}`;
+}
+
+function getBankingRaffleTypeMarker(section = bankingActiveSection) {
+  const cleanSection = String(section || '').toLowerCase();
+  if (cleanSection !== 'monthly' && cleanSection !== 'biweekly') {
+    return 0;
+  }
+
+  // ESO raffle deposits carry a small visible type marker on the gold amount:
+  // +1 for Bi-Weekly and +3 for 50/50. Totals and pots should exclude either
+  // marker if it is present, even if an entry has been moved between sections.
+  return 'auto';
+}
+
+function getBankingTotalDepositAmount(entry = {}, section = bankingActiveSection) {
+  const rawAmount = Number(entry.amount) || 0;
+  if (!getBankingRaffleTypeMarker(section)) {
+    return rawAmount;
+  }
+
+  const finalDigit = Math.abs(Math.trunc(rawAmount)) % 10;
+  const markerAmount = finalDigit === 1 || finalDigit === 3 ? finalDigit : 0;
+
+  if (markerAmount > 0 && rawAmount > markerAmount) {
+    return rawAmount - markerAmount;
+  }
+
+  return rawAmount;
+}
+
+function getBankingTotals(rows, section = bankingActiveSection) {
   return rows.reduce(
     (totals, entry) => {
-      const rawAmount = Number(entry.amount) || 0;
-      const adjustedAmount = markerAmount > 0 && rawAmount >= markerAmount ? rawAmount - markerAmount : rawAmount;
-      totals.amount += adjustedAmount;
+      totals.amount += getBankingTotalDepositAmount(entry, section);
       totals.tickets += Number(entry.ticketAmount) || 0;
       return totals;
     },
     { amount: 0, tickets: 0 }
   );
+}
+
+function getRoundedBiweeklyRafflePot(totalDeposits) {
+  const halfTotal = Math.ceil((Number(totalDeposits) || 0) / 2);
+  if (halfTotal <= 0) return 0;
+  return Math.ceil(halfTotal / 200000) * 200000;
+}
+
+function getBiweeklyDrawCount(totalDeposits) {
+  const pot = getRoundedBiweeklyRafflePot(totalDeposits);
+  return pot > 0 ? pot / 200000 : 0;
 }
 
 function renderBankDepositRow(entry, showTicketColumn = true) {

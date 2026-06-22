@@ -5,17 +5,12 @@ import * as roles from './commands/roles.js';
 
 const gsaCommandData = new SlashCommandBuilder()
   .setName('gsa')
-  .setDescription('GuildSync Applications tools')
-  .addSubcommand((subcommand) =>
-    subcommand
-      .setName('post')
-      .setDescription('Post a saved GuildSync application record to Discord')
-      .addStringOption((option) =>
-        option
-          .setName('name')
-          .setDescription('ESO account name from GuildSyncApplications, for example @example')
-          .setRequired(true)
-      )
+  .setDescription('Post saved GuildSync application record(s) to Discord')
+  .addStringOption((option) =>
+    option
+      .setName('name')
+      .setDescription('Full or partial ESO account name from GuildSyncApplications')
+      .setRequired(true)
   );
 
 const commands = [

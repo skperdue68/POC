@@ -48,9 +48,10 @@ import {
   runMemberAutoLinking,
   processRosterData,
   recordGuildSyncApplications,
-  getGuildSyncApplicationByApplicantAccount,
+  getGuildSyncApplicationsByApplicantSearch,
   getPendingGuildSyncApplicationBroadcasts,
   markGuildSyncApplicationBroadcasted,
+  markGuildSyncApplicationRecordBroadcasted,
   parseGuildSyncBankingSavedVarsLua,
   parseGuildSyncRosterSavedVarsLua,
   parseGuildSyncApplicationsSavedVarsLua
@@ -570,19 +571,22 @@ io.on('connection', (socket) => {
     }
 
     try {
-      const applicantAccount = String(payload?.applicant_account || payload?.applicantAccount || payload?.name || '').trim();
+      const applicantSearch = String(payload?.applicant_account || payload?.applicantAccount || payload?.name || '').trim();
 
-      if (!applicantAccount) {
+      if (!applicantSearch) {
         throw new Error('Applicant account name is required.');
       }
 
-      const record = await getGuildSyncApplicationByApplicantAccount(applicationDB, applicantAccount);
+      const records = await getGuildSyncApplicationsByApplicantSearch(applicationDB, applicantSearch);
 
-      if (!record) {
+      if (!records.length) {
         sendSocketResponse(socket, 'guildsync:gsa-post-application-result', callback, {
           ok: false,
-          message: `No GuildSync application record was found for ${applicantAccount}.`,
-          applicant_account: applicantAccount,
+          message: `No GuildSync application records were found matching ${applicantSearch}.`,
+          applicant_account: applicantSearch,
+          match_count: 0,
+          posted: 0,
+          failed: 0,
           at: new Date().toLocaleString()
         });
         return;
@@ -593,40 +597,57 @@ io.on('connection', (socket) => {
       if (!botSocket?.connected) {
         discordBotConnected = false;
         discordBotSocketId = null;
-        throw new Error('The GuildSync Discord bot is not connected. Application was not posted.');
+        throw new Error('The GuildSync Discord bot is not connected. Applications were not posted.');
       }
 
-      Log(`Manual GSA application repost requested for ${record.applicant_account} by Discord bot command.`);
+      Log(`Manual GSA application repost requested for ${records.length} record(s) matching "${applicantSearch}" by Discord bot command.`);
 
-      const botResponse = await emitToSocketWithAck(
-        botSocket,
-        'guildsync:eso-guild-application-message',
-        {
-          source: 'guildsync-backend-server:gsa-post-command',
-          applicantAccount: record.applicant_account,
-          capturedAt: record.application_timestamp,
-          officerAccount: record.officer_processing,
-          action: record.application_action,
-          applicationText: record.application_text,
-          declineMessage: record.decline_message,
-          blacklistMessage: record.blacklist_message,
-          message: buildGuildSyncApplicationDiscordMessage(record)
-        },
-        30000
-      );
+      let posted = 0;
+      let failed = 0;
+      const postedAccounts = [];
+      const failedAccounts = [];
 
-      if (!botResponse?.ok) {
-        throw new Error(botResponse?.message || 'Discord bot failed to post the GuildSync application message.');
+      for (const record of records) {
+        const botResponse = await emitToSocketWithAck(
+          botSocket,
+          'guildsync:eso-guild-application-message',
+          {
+            source: 'guildsync-backend-server:gsa-command',
+            applicantAccount: record.applicant_account,
+            capturedAt: record.application_timestamp,
+            officerAccount: record.officer_processing,
+            action: record.application_action,
+            applicationText: record.application_text,
+            declineMessage: record.decline_message,
+            blacklistMessage: record.blacklist_message,
+            message: buildGuildSyncApplicationDiscordMessage(record)
+          },
+          30000
+        );
+
+        if (botResponse?.ok) {
+          await markGuildSyncApplicationRecordBroadcasted(applicationDB, record.applicant_account, record.application_timestamp);
+          posted += 1;
+          postedAccounts.push(record.applicant_account);
+        } else {
+          failed += 1;
+          failedAccounts.push(record.applicant_account);
+          Log(`Manual GSA application repost failed for ${record.applicant_account}: ${botResponse?.message || 'Unknown error'}`);
+        }
       }
-
-      await markGuildSyncApplicationBroadcasted(applicationDB, record.applicant_account);
 
       sendSocketResponse(socket, 'guildsync:gsa-post-application-result', callback, {
-        ok: true,
-        message: `Posted GuildSync application record for ${record.applicant_account}.`,
-        applicant_account: record.applicant_account,
-        application_action: record.application_action,
-        discord_broadcast: 1,
+        ok: posted > 0,
+        message: failed > 0
+          ? `Posted ${posted}/${records.length} GuildSync application record(s) matching ${applicantSearch}. Failed: ${failed}.`
+          : `Posted ${posted} GuildSync application record(s) matching ${applicantSearch}.`,
+        applicant_account: applicantSearch,
+        match_count: records.length,
+        posted,
+        failed,
+        posted_accounts: postedAccounts,
+        failed_accounts: failedAccounts,
+        discord_broadcast: posted > 0 ? 1 : 0,
         at: new Date().toLocaleString()
       });
     } catch (error) {
@@ -816,7 +837,8 @@ io.on('connection', (socket) => {
     try {
       const result = await upsertDiscordMember(applicationDB, {
         ...(payload.member || payload),
-        source: payload.source || 'live_event'
+        source: payload.source || 'live_event',
+        initiator: payload.initiator || payload.member?.initiator || ''
       });
 
       Log(

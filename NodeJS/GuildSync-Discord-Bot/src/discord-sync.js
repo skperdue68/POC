@@ -222,7 +222,7 @@ export async function sendDiscordRoleDelete(role, guildSyncSocket) {
   );
 }
 
-export async function sendDiscordMemberUpsert(member, guildSyncSocket) {
+export async function sendDiscordMemberUpsert(member, guildSyncSocket, options = {}) {
   if (!member || member.user?.bot) {
     return null;
   }
@@ -234,7 +234,11 @@ export async function sendDiscordMemberUpsert(member, guildSyncSocket) {
       guild_id: member.guild.id,
       guild_name: member.guild.name,
       source: 'live_event',
-      member: discordMemberToPayload(member)
+      initiator: options.initiator || null,
+      member: {
+        ...discordMemberToPayload(member),
+        initiator: options.initiator || null
+      }
     }
   );
 }
