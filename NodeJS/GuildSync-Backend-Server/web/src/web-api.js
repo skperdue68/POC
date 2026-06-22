@@ -124,3 +124,41 @@ export async function CollectGuildSyncRosterData() {
 export async function CommitGuildSyncRosterData() {
   return { ok: true };
 }
+
+export async function BrowserOpenURL(url) {
+  if (url) {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+  return true;
+}
+
+export async function GetESORunningStatus() {
+  return {
+    running: false,
+    message: 'ESO process detection is only available in the desktop client.'
+  };
+}
+
+export async function WriteDepositMailToGuildSyncBanking() {
+  throw new Error('Deposit mail sending is disabled in the web client. Use the GuildSync desktop client for ESO mail queue writes.');
+}
+
+export async function CollectDepositMailAckFromGuildSyncBanking() {
+  return { ok: true, acknowledgements: [], records: [] };
+}
+
+export async function CleanupDepositMailAckFromGuildSyncBanking() {
+  return { ok: true };
+}
+
+export async function FlushPendingDepositMailAckCleanup() {
+  return { ok: true };
+}
+
+export async function CollectGuildSyncApplicationsData() {
+  throw new Error('File watching is not available in the web interface. Drag and drop GuildSyncApplications.lua onto the GuildSync web window.');
+}
+
+export async function CommitGuildSyncApplicationsData() {
+  return { ok: true };
+}

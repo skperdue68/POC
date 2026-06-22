@@ -17,46 +17,42 @@ import {
   StopGuildSyncFileWatcher,
   GetGuildSyncFileWatcherStatus,
   SetGuildSyncSavedVarsWatchFileEnabled,
+  GetESORunningStatus,
   CollectGuildSyncBankingData,
   CommitGuildSyncBankingData,
+  WriteDepositMailToGuildSyncBanking,
+  CollectDepositMailAckFromGuildSyncBanking,
+  CleanupDepositMailAckFromGuildSyncBanking,
+  FlushPendingDepositMailAckCleanup,
   CollectGuildSyncRosterData,
-  CommitGuildSyncRosterData
+  CommitGuildSyncRosterData,
+  CollectGuildSyncApplicationsData,
+  CommitGuildSyncApplicationsData,
+  BrowserOpenURL
 } from './web-api.js';
 
 import { EventsOn } from './web-events.js';
 
-const GUILDSYNC_APP_VERSION = '1.0.3';
-const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
-  windows: {
-    label: 'Windows detected',
-    shortLabel: 'Windows',
-    fileName: 'GuildSync-windows-amd64.zip',
-    href: '/downloads/GuildSync-windows-amd64.zip'
-  },
-  macos: {
-    label: 'macOS detected',
-    shortLabel: 'macOS',
-    fileName: 'GuildSync-macos.zip',
-    href: '/downloads/GuildSync-macos.zip'
-  },
-  linux: {
-    label: 'Linux detected',
-    shortLabel: 'Linux',
-    fileName: 'GuildSync-linux-amd64.zip',
-    href: '/downloads/GuildSync-linux-amd64.zip'
-  }
-};
+const GUILDSYNC_APP_VERSION = '1.1.2';
 
-const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
-const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
-const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
+const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
+  windows: { label: 'Windows detected', shortLabel: 'Windows', fileName: 'GuildSync-windows-amd64.zip', href: '/downloads/GuildSync-windows-amd64.zip' },
+  macos: { label: 'macOS detected', shortLabel: 'macOS', fileName: 'GuildSync-macos.zip', href: '/downloads/GuildSync-macos.zip' },
+  linux: { label: 'Linux detected', shortLabel: 'Linux', fileName: 'GuildSync-linux-amd64.zip', href: '/downloads/GuildSync-linux-amd64.zip' }
+};
 const WEB_SAVEDVARS_UPLOAD_BANNER_DISMISSED_STORAGE_KEY = 'guildsync-web-savedvars-upload-banner-dismissed';
 const WEB_SAVEDVARS_ALLOWED_FILES = new Map([
   ['GuildSyncBanking.lua', 'banking'],
   ['GuildSyncRoster.lua', 'roster'],
   ['GuildSyncApplications.lua', 'applications']
 ]);
-
+const VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const PENDING_BANKING_UPLOADS_STORAGE_KEY = 'guildsync-pending-banking-uploads';
+const PENDING_DEPOSIT_MAIL_STORAGE_KEY = 'guildsync-pending-deposit-mail';
+const ESO_STATUS_POLL_INTERVAL_MS = 5000;
+const DEPOSIT_MAIL_AVAILABILITY_POLL_INTERVAL_MS = 30 * 1000;
+const PENDING_ROSTER_UPLOADS_STORAGE_KEY = 'guildsync-pending-roster-uploads';
+const PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY = 'guildsync-pending-applications-uploads';
 
 const TRANSIENT_MESSAGE_TTL_MS = 60 * 1000;
 const MESSAGE_VISIBLE_MS = 7000;
@@ -74,10 +70,17 @@ let profileMenuOpen = false;
 let versionCheckTimer = null;
 let bankingUploadQueueProcessing = false;
 let rosterUploadQueueProcessing = false;
+let applicationsUploadQueueProcessing = false;
 let guildSyncFileWatcherStatus = null;
+let esoRunningStatus = { running: false, message: '' };
+let esoStatusPollTimer = null;
+let depositMailAvailabilityPollTimer = null;
+let depositMailCheckoutRunning = false;
+let depositMailPendingWriteRunning = false;
+let depositMailPendingWriteAutoTimer = null;
+let depositMailAckCleanupFlushRunning = false;
 let webSavedVarsDragDepth = 0;
 let webSavedVarsUploadInProgress = false;
-
 
 let systemMessages = new Map();
 let systemMessageTimers = new Map();
@@ -91,6 +94,14 @@ let guildSyncSession = {
   logged_in: false,
   allowed: false,
   status_message: ''
+};
+
+let desktopClientUpdateInfo = {
+  updateRequired: false,
+  latestVersion: '',
+  downloadUrl: '',
+  fileName: '',
+  platformLabel: ''
 };
 
 let socket = null;
@@ -191,6 +202,11 @@ let bankingLastRefreshValue = null;
 let bankingDataLoading = false;
 let bankingExportGridOpen = false;
 let bankingExportSection = 'biweekly';
+let bankingMoveDialogOpen = false;
+let bankingMoveSubmitting = false;
+let bankingMoveError = '';
+let bankingMoveEntry = null;
+let bankingMoveForm = { targetType: 'other', note: '', tickets: '' };
 let manualBiweeklyTicketDialogOpen = false;
 let manualBiweeklyTicketSubmitting = false;
 let manualBiweeklyTicketError = '';
@@ -272,7 +288,7 @@ function showMainWindow() {
             <img src="${guildSyncLogo}" alt="GuildSync" class="compact-brand-logo" />
             <div class="compact-brand-text">
               <div class="compact-brand-title">GuildSync</div>
-              <div class="compact-brand-version">Mobile Companion</div>
+              <div class="compact-brand-version">Version ${escapeHtml(GUILDSYNC_APP_VERSION)}</div>
             </div>
           </div>
           <div class="compact-header-actions">
@@ -328,6 +344,7 @@ function showMainWindow() {
 
   renderDiscordArea();
   wireWebSavedVariablesUploadBanner();
+  // Desktop auto-update checks are intentionally hidden in the web client.
   wireGuildSyncTabs();
   wireDiscordMemberDataPanel();
   wireEsoRosterPanel();
@@ -356,6 +373,34 @@ function showMainWindow() {
   }
 }
 
+
+function renderGuildSyncTabs() {
+  return GUILDSYNC_TABS
+    .map((tab) => {
+      const isActive = tab.id === activeGuildSyncTab;
+
+      const showMailAttention = shouldShowBankingMailTabAttention(tab.id, isActive);
+      const attentionCount = showMailAttention ? getBankingMailAttentionCount() : 0;
+      const attentionTitle = showMailAttention
+        ? `Deposit mail needs attention: ${attentionCount} item${attentionCount === 1 ? '' : 's'} ready to check out or write.`
+        : '';
+
+      return `
+        <button
+          class="guildsync-tab${isActive ? ' active' : ''}${showMailAttention ? ' banking-mail-attention' : ''}"
+          type="button"
+          data-tab-id="${escapeAttribute(tab.id)}"
+          aria-selected="${isActive ? 'true' : 'false'}"
+          ${attentionTitle ? `title="${escapeAttribute(attentionTitle)}"` : ''}
+        >
+          <span class="guildsync-tab-icon" aria-hidden="true">${getGuildSyncTabIcon(tab.icon)}</span>
+          <span class="guildsync-tab-label">${escapeHtml(tab.label)}</span>
+          ${showMailAttention ? `<span class="guildsync-tab-mail-badge" aria-label="${escapeAttribute(attentionTitle)}">${attentionCount > 99 ? '99+' : escapeHtml(String(attentionCount))}</span>` : ''}
+        </button>
+      `;
+    })
+    .join('');
+}
 
 function getDetectedDesktopClientDownload() {
   const userAgentDataPlatform = navigator.userAgentData?.platform || '';
@@ -402,70 +447,21 @@ function renderDesktopClientDownloadButton() {
 }
 
 
-function renderGuildSyncTabs() {
-  return GUILDSYNC_TABS
-    .map((tab) => {
-      const isActive = tab.id === activeGuildSyncTab;
 
-      return `
-        <button
-          class="guildsync-tab${isActive ? ' active' : ''}"
-          type="button"
-          data-tab-id="${escapeAttribute(tab.id)}"
-          aria-selected="${isActive ? 'true' : 'false'}"
-        >
-          <span class="guildsync-tab-icon" aria-hidden="true">${getGuildSyncTabIcon(tab.icon)}</span>
-          <span class="guildsync-tab-mobile-icon" aria-hidden="true">${getGuildSyncMobileTabIcon(tab.id)}</span>
-          <span class="guildsync-tab-label">${escapeHtml(tab.label)}</span>
-          <span class="guildsync-tab-mobile-label">${escapeHtml(getGuildSyncMobileTabLabel(tab.id))}</span>
-        </button>
-      `;
-    })
-    .join('');
+function getBankingMailAttentionCount() {
+  if (!isAuthenticatedSession()) {
+    return 0;
+  }
+
+  return getUnsentDepositMailCount() + getPendingDepositMailWriteCount() + getWrittenDepositMailWaitingCount();
 }
 
-
-function getGuildSyncMobileTabLabel(tabID) {
-  if (tabID === 'discord-members') return 'Discord';
-  if (tabID === 'more') return 'Bank';
-  if (tabID === 'eso-members') return 'Roster';
-  if (tabID === 'settings') return 'More';
-  return 'More';
-}
-
-function getGuildSyncMobileTabIcon(tabID) {
-  if (tabID === 'discord-members') {
-    return `
-      <svg class="guildsync-tab-mobile-svg" viewBox="0 0 127.14 96.36" xmlns="http://www.w3.org/2000/svg">
-        <path fill="currentColor" d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,33.35-1.71,57.98.54,82.26A105.73,105.73,0,0,0,32.71,96.36a77.7,77.7,0,0,0,6.89-11.26,68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2A75.57,75.57,0,0,0,95.73,78c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.25A105.25,105.25,0,0,0,126.6,82.25C129.24,54.09,122.09,29.69,107.7,8.07ZM42.45,65.69C35.93,65.69,30.6,59.77,30.6,52.49s5.23-13.2,11.85-13.2S54.3,45.21,54.3,52.49,49.06,65.69,42.45,65.69Zm42.24,0c-6.52,0-11.85-5.92-11.85-13.2s5.24-13.2,11.85-13.2S96.54,45.21,96.54,52.49,91.3,65.69,84.69,65.69Z"/>
-      </svg>
-    `;
+function shouldShowBankingMailTabAttention(tabId, isActive) {
+  if (tabId !== 'more' || isActive) {
+    return false;
   }
 
-  if (tabID === 'eso-members') {
-    return `
-      <svg class="guildsync-tab-mobile-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M16 20v-1.8c0-2.05-1.75-3.7-3.9-3.7H7.9c-2.15 0-3.9 1.65-3.9 3.7V20"/>
-        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M10 10.8a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z"/>
-        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M20 20v-1.6c0-1.75-1.12-3.05-2.85-3.48"/>
-        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M15.2 4.25a3.1 3.1 0 0 1 0 6.05"/>
-      </svg>
-    `;
-  }
-
-  if (tabID === 'more') {
-    return `
-      <svg class="guildsync-tab-mobile-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M5 21V10.25M9.7 21V10.25M14.3 21V10.25M19 21V10.25M3.5 8.25 12 3l8.5 5.25H3.5Z"/>
-      </svg>
-    `;
-  }
-
-  return `
-    <svg class="guildsync-tab-mobile-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path fill="currentColor" d="M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/>
-    </svg>
-  `;
+  return getBankingMailAttentionCount() > 0;
 }
 
 function getGuildSyncTabIcon(icon) {
@@ -521,6 +517,7 @@ function renderGuildSyncTabContent() {
   return `
     ${content}
     ${manualBiweeklyTicketDialogOpen ? renderManualBiweeklyTicketDialog() : ''}
+    ${bankingMoveDialogOpen ? renderBankingMoveDialog() : ''}
     ${memberLinkDialogOpen ? renderMemberLinkDialog() : ''}
     ${associateTicketReportDialogOpen ? renderAssociateTicketReportDialog() : ''}
     ${discordRankAuditReportDialogOpen ? renderDiscordRankAuditReportDialog() : ''}
@@ -535,6 +532,7 @@ function isBlockingModalOpen() {
     || rosterHistoryDialogOpen
     || discordHistoryDialogOpen
     || manualBiweeklyTicketDialogOpen
+    || bankingMoveDialogOpen
     || memberLinkDialogOpen
     || associateTicketReportDialogOpen
     || discordRankAuditReportDialogOpen
@@ -557,10 +555,6 @@ function closeTopOpenModal() {
     closeDiscordLastSeenReportDialog();
     return true;
   }
-  if (discordLastSeenReportDialogOpen) {
-    closeDiscordLastSeenReportDialog();
-    return true;
-  }
   if (discordRankAuditReportDialogOpen) {
     closeDiscordRankAuditReportDialog();
     return true;
@@ -571,6 +565,10 @@ function closeTopOpenModal() {
   }
   if (memberLinkDialogOpen) {
     closeMemberLinkDialog();
+    return true;
+  }
+  if (bankingMoveDialogOpen) {
+    closeBankingMoveDialog();
     return true;
   }
   if (manualBiweeklyTicketDialogOpen) {
@@ -841,8 +839,8 @@ function renderDiscordMemberDataPanel() {
     <div class="guildsync-tab-panel discord-member-panel" data-active-tab="discord-members">
       <div class="discord-data-header">
         <div>
-          <h2 class="discord-data-title">Discord Members</h2>
-          <p class="discord-data-subtitle"><span class="discord-member-total-count">${filteredMembers.length} of ${discordMembers.length} members</span></p>
+          <h2 class="discord-data-title">Discord Member Data</h2>
+          <p class="discord-data-subtitle">Manage and view Discord member information.</p>
         </div>
         <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
           <button id="openDiscordHistoryButton" class="refresh-discord-button" type="button">Lookup Member History</button>
@@ -904,12 +902,6 @@ function renderDiscordMemberDataPanel() {
             </div>
           </div>
 
-        </div>
-
-        <div class="discord-mobile-member-list" aria-label="Discord members">
-          ${filteredMembers.length > 0
-      ? filteredMembers.map((member) => renderDiscordMobileMemberCard(member)).join('')
-      : renderEmptyDiscordMobileMemberList()}
         </div>
 
         <div class="discord-member-table-shell">
@@ -1411,7 +1403,7 @@ function renderDiscordHistoryEvents() {
             <th>Event</th>
             <th>Old</th>
             <th>New</th>
-            <th>Source</th>
+            <th>Initiator</th>
           </tr>
         </thead>
         <tbody>
@@ -1421,7 +1413,7 @@ function renderDiscordHistoryEvents() {
               <td>${escapeHtml(formatDiscordHistoryEventType(event.event_type))}</td>
               <td>${escapeHtml(event.old_value || '')}</td>
               <td>${escapeHtml(event.new_value || '')}</td>
-              <td>${escapeHtml(event.source || '')}</td>
+              <td>${escapeHtml(event.initiator || '')}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -1594,6 +1586,7 @@ function wireWebSavedVariablesUploadBanner() {
   });
 }
 
+
 function renderReportsPanel() {
   return `
     <div class="guildsync-tab-panel reports-panel" data-active-tab="settings">
@@ -1629,7 +1622,7 @@ function renderReportsPanel() {
           <article class="report-option-card">
             <div class="report-option-copy">
               <h3>Discord Last Seen</h3>
-              <p>Shows Discord roster members with avatar, preferred server display name, last server-specific activity time, days since last activity, and the activity that updated the timestamp.</p>
+              <p>Shows Discord roster members with avatar, preferred server display name, and the most recent server activity time tracked by GuildSync.</p>
             </div>
             <button id="runDiscordLastSeenReportButton" class="refresh-discord-button report-run-button" type="button" ${discordLastSeenReportLoading ? 'disabled' : ''}>
               ${discordLastSeenReportLoading ? 'Loading...' : 'Run'}
@@ -1940,6 +1933,7 @@ async function uploadWebSavedVarsRawFile(file) {
   removeSystemMessage('version');
 }
 
+
 function openAssociatePromotionReportDialog() {
   associateTicketReportDialogOpen = true;
   associateTicketReportError = '';
@@ -2215,7 +2209,6 @@ async function copyDiscordRankAuditReportGrid() {
   }
   addSystemMessage('discord-rank-audit-report-copy-failed', 'Could not copy automatically. The grid text is selected for manual copy.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
 }
-
 
 function openDiscordLastSeenReportDialog() {
   discordLastSeenReportDialogOpen = true;
@@ -2522,6 +2515,7 @@ function formatDiscordLastSeenAgeDays(value) {
   return `${ageDays} day${ageDays === 1 ? '' : 's'}`;
 }
 
+
 function getDiscordLastSeenSortAgeDays(value) {
   const numeric = Number(value);
   if (!numeric) return Number.POSITIVE_INFINITY;
@@ -2529,14 +2523,12 @@ function getDiscordLastSeenSortAgeDays(value) {
   const ageMs = Date.now() - numeric * 1000;
   if (!Number.isFinite(ageMs)) return Number.POSITIVE_INFINITY;
   if (ageMs < 0) return 0;
-
   return Math.floor(ageMs / 86400000);
 }
 
 function formatDiscordLastSeenAction(value) {
   return String(value || '').trim() || 'None tracked';
 }
-
 
 
 function getDiscordLastSeenReportTsv(rows = getSortedDiscordLastSeenReportRows()) {
@@ -3830,7 +3822,6 @@ function applyDiscordLastSeenReportSearchFilter() {
   }
 }
 
-
 async function runDiscordLastSeenReport() {
   if (!socket?.connected || !isAuthenticatedSession()) {
     discordLastSeenReportError = 'You must be logged in and connected to run this report.';
@@ -3856,7 +3847,6 @@ async function runDiscordLastSeenReport() {
     focusInputById('discordLastSeenReportSearchInput');
   }
 }
-
 
 async function runDiscordRankAuditReport() {
   if (!socket?.connected || !isAuthenticatedSession()) {
@@ -4030,8 +4020,8 @@ function renderManualBiweeklyTicketDialog() {
       <div class="roster-history-dialog manual-ticket-dialog">
         <div class="roster-history-header">
           <div>
-            <h3 id="manualBiweeklyTicketTitle">Add Manual Tickets</h3>
-            <p>Add free/manual raffle tickets such as FFTG. These do not count as purchased tickets.</p>
+            <h3 id="manualBiweeklyTicketTitle">Add Manual Entry</h3>
+            <p>Add a manual banking or raffle entry such as FFTG, officer corrections, or anonymous gold.</p>
           </div>
           <button id="closeManualBiweeklyTicketButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
         </div>
@@ -4082,7 +4072,7 @@ function renderManualBiweeklyTicketDialog() {
             </div>
           </div>
           <div class="manual-ticket-actions">
-            <button id="saveManualBiweeklyTicketButton" class="refresh-discord-button" type="button" ${manualBiweeklyTicketSubmitting ? 'disabled' : ''}>${manualBiweeklyTicketSubmitting ? 'Saving...' : 'Add Manual Tickets'}</button>
+            <button id="saveManualBiweeklyTicketButton" class="refresh-discord-button" type="button" ${manualBiweeklyTicketSubmitting ? 'disabled' : ''}>${manualBiweeklyTicketSubmitting ? 'Saving...' : 'Add Manual Entry'}</button>
           </div>
         </div>
       </div>
@@ -4273,6 +4263,12 @@ async function submitManualBiweeklyTicket() {
 
   const isAnonymousManualTicketEntry = accountName.toLowerCase() === 'anonymous';
 
+  if (isAnonymousManualTicketEntry && Math.floor(tickets) > 0) {
+    manualBiweeklyTicketError = 'Anonymous cannot be awarded tickets. Use 0 tickets and enter a gold value.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
   if (Math.floor(goldValue) === 0 && Math.floor(tickets) === 0) {
     manualBiweeklyTicketError = isAnonymousManualTicketEntry
       ? 'Enter a gold value for Anonymous when tickets are 0.'
@@ -4295,7 +4291,7 @@ async function submitManualBiweeklyTicket() {
     }, 30000);
 
     if (!response?.ok) {
-      throw new Error(response?.message || response?.error || 'Failed to add manual ticket entry.');
+      throw new Error(response?.message || response?.error || 'Failed to add manual entry.');
     }
 
     manualBiweeklyTicketDialogOpen = false;
@@ -4304,7 +4300,7 @@ async function submitManualBiweeklyTicket() {
     manualBiweeklyTicketActiveMatchIndex = -1;
     manualBiweeklyTicketAccountDropdownOpen = false;
     await refreshBankingDataFromBackend({ silent: true });
-    addSystemMessage('manual-ticket-added', response.message || 'Manual ticket entry added.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    addSystemMessage('manual-ticket-added', response.message || 'Manual entry added.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
     manualBiweeklyTicketError = formatError(error);
   } finally {
@@ -4712,6 +4708,7 @@ function normalizeDiscordHistoryEvents(events) {
         new_value: String(item.new_value ?? item.newValue ?? '').trim(),
         event_timestamp: item.event_timestamp ?? item.eventTimestamp ?? item.timestamp ?? '',
         event_datetime: item.event_datetime ?? item.eventDatetime ?? '',
+        initiator: String(item.initiator ?? item.initiatorName ?? '').trim(),
         source: String(item.source || '').trim()
       }))
     : [];
@@ -5062,6 +5059,227 @@ async function sendQueuedGuildSyncRosterUpload(rosterPayload) {
   return response;
 }
 
+
+async function collectAndSendGuildSyncApplicationsData(payload = {}) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('applications-data-pending', 'Applications SavedVariables changed, but GuildSync websocket is not connected yet. The file was not cleared.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  try {
+    const result = await CollectGuildSyncApplicationsData(payload);
+
+    if (!result?.ok) {
+      addSystemMessage('applications-data-info', result?.message || 'No application records were found to process.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const collectedRecords = Array.isArray(result?.data?.records)
+      ? result.data.records
+      : [];
+
+    if (collectedRecords.length === 0) {
+      addSystemMessage('applications-data-info', `No application records were found in ${result.fileName || 'GuildSyncApplications.lua'}. Nothing was uploaded.`, {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const applicationsPayload = {
+      local_upload_id: createLocalApplicationsUploadId(),
+      authenticated_username: getDisplayName(),
+      authenticated_discord_user_id: guildSyncSession?.user?.discord_user_id || '',
+      source: 'guildsync-frontend-client',
+      file_name: result.fileName || payload.fileName || '',
+      file_path: result.filePath || payload.filePath || '',
+      collected_at: new Date().toISOString(),
+      data: result.data || {}
+    };
+
+    try {
+      await sendQueuedGuildSyncApplicationsUpload(applicationsPayload);
+    } catch (sendError) {
+      enqueuePendingGuildSyncApplicationsUpload(applicationsPayload);
+      throw sendError;
+    }
+  } catch (error) {
+    addSystemMessage('applications-data-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+function createLocalApplicationsUploadId() {
+  return `applications-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function loadPendingGuildSyncApplicationsUploads() {
+  try {
+    const raw = window.localStorage.getItem(PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingGuildSyncApplicationsUploads(queue) {
+  window.localStorage.setItem(PENDING_APPLICATIONS_UPLOADS_STORAGE_KEY, JSON.stringify(Array.isArray(queue) ? queue : []));
+}
+
+function enqueuePendingGuildSyncApplicationsUpload(payload) {
+  const uploadId = String(payload?.local_upload_id || createLocalApplicationsUploadId());
+  const queue = loadPendingGuildSyncApplicationsUploads().filter((item) => item?.local_upload_id !== uploadId);
+
+  queue.push({
+    ...payload,
+    local_upload_id: uploadId,
+    pending_saved_at: new Date().toISOString()
+  });
+
+  savePendingGuildSyncApplicationsUploads(queue);
+
+  addSystemMessage('applications-data-pending', 'Application data is queued and will retry after GuildSync reconnects.', {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+}
+
+function removePendingGuildSyncApplicationsUpload(uploadId) {
+  const queue = loadPendingGuildSyncApplicationsUploads().filter((item) => item?.local_upload_id !== uploadId);
+  savePendingGuildSyncApplicationsUploads(queue);
+}
+
+async function processPendingGuildSyncApplicationsUploads() {
+  if (applicationsUploadQueueProcessing || !socket?.connected || !isAuthenticatedSession()) {
+    return;
+  }
+
+  const queue = loadPendingGuildSyncApplicationsUploads();
+  if (queue.length === 0) {
+    return;
+  }
+
+  applicationsUploadQueueProcessing = true;
+
+  try {
+    for (const pendingPayload of queue) {
+      if (!socket?.connected || !isAuthenticatedSession()) {
+        return;
+      }
+
+      await sendQueuedGuildSyncApplicationsUpload(pendingPayload);
+      removePendingGuildSyncApplicationsUpload(pendingPayload.local_upload_id);
+    }
+  } catch (error) {
+    addSystemMessage('applications-data-pending-error', `Pending application upload retry failed: ${formatError(error)}`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    applicationsUploadQueueProcessing = false;
+  }
+}
+
+async function sendQueuedGuildSyncApplicationsUpload(applicationsPayload) {
+  if (!socket?.connected) {
+    throw new Error('GuildSync websocket is not connected. Application data was not cleared.');
+  }
+
+  const records = Array.isArray(applicationsPayload?.data?.records)
+    ? applicationsPayload.data.records
+    : [];
+
+  if (records.length === 0) {
+    addSystemMessage('applications-data-info', 'No application records were found to process. Nothing was uploaded.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return { ok: true, sent_count: 0, skipped_empty: true };
+  }
+
+  let sentCount = 0;
+
+  for (const record of records) {
+    const response = await emitSocketWithAck('guildsync:eso-guild-application-message', {
+      ...applicationsPayload,
+      record,
+      recordKey: record?.recordKey || '',
+      message: formatGuildSyncApplicationDiscordMessage(record)
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Backend rejected the application data payload. Application data was not cleared.');
+    }
+
+    sentCount += 1;
+  }
+
+  const commitResult = await CommitGuildSyncApplicationsData(
+    applicationsPayload.file_path || '',
+    applicationsPayload.file_name || ''
+  );
+
+  if (!commitResult?.ok) {
+    throw new Error(commitResult?.message || 'Backend confirmed application data, but the SavedVariables file could not be cleared.');
+  }
+
+  addSystemMessage('applications-data-sent', `Sent ${sentCount} application record${sentCount === 1 ? '' : 's'} to GuildSync backend.`, {
+    ttlMs: TRANSIENT_MESSAGE_TTL_MS
+  });
+
+  return { ok: true, sent_count: sentCount };
+}
+
+function formatGuildSyncApplicationDiscordMessage(record = {}) {
+  const timestamp = Number(record.capturedAt || Math.floor(Date.now() / 1000));
+  const officer = String(record.officerAccount || 'Unknown officer').trim() || 'Unknown officer';
+  const action = String(record.action || 'processed').trim() || 'processed';
+  const applicant = String(record.applicantAccount || record.recordKey || 'Unknown applicant').trim() || 'Unknown applicant';
+  const applicationText = String(record.applicationText || '_No application text captured._');
+  const extraFields = Object.entries(record)
+    .filter(([key]) => !['recordKey', 'capturedAt', 'officerAccount', 'applicantAccount', 'action', 'applicationText'].includes(key))
+    .map(([key, value]) => `**${key}:** ${formatApplicationRecordValue(value)}`);
+
+  return [
+    `📝 <t:${timestamp}:F>`,
+    `**${officer}** ${action} an application from **${applicant}**.`,
+    '',
+    '**Application text:**',
+    '```',
+    applicationText.slice(0, 1500),
+    '```',
+    extraFields.length > 0 ? '' : null,
+    extraFields.length > 0 ? '**Full captured record fields:**' : null,
+    ...extraFields
+  ].filter((line) => line !== null).join('\n');
+}
+
+function formatApplicationRecordValue(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'object') {
+    try {
+      return `\`${JSON.stringify(value).slice(0, 900)}\``;
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value).slice(0, 900);
+}
+
+async function handleGuildSyncApplicationsSavedVarsModified(payload = {}) {
+  await collectAndSendGuildSyncApplicationsData(payload);
+}
+
 function renderBankDepositsPanel() {
   const rows = getBankingRowsForSection(bankingActiveSection);
   const totals = getBankingTotals(rows, bankingActiveSection);
@@ -5075,10 +5293,11 @@ function renderBankDepositsPanel() {
           <p class="discord-data-subtitle">View guild bank deposits and raffle ticket allocations by raffle period.</p>
         </div>
         <div class="discord-data-actions">
-          <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button" ${isAuthenticatedSession() ? '' : 'disabled title="Login required to add manual tickets."'}>
+          <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button" ${isAuthenticatedSession() ? '' : 'disabled title="Login required to add manual entries."'}>
             <span aria-hidden="true">＋</span>
-            <span>Add Manual Tickets</span>
+            <span>Add Manual Entry</span>
           </button>
+          ${renderDepositMailCheckoutButton()}
           <button class="bank-export-button" type="button" data-bank-export-section="biweekly">
             <span aria-hidden="true">▦</span>
             <span>Export Bi-Weekly</span>
@@ -5113,6 +5332,7 @@ function renderBankDepositsPanel() {
                 <th>Depositor</th>
                 <th>Amount Deposited</th>
                 ${showTicketColumn ? '<th>Tickets Awarded</th>' : ''}
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -5235,10 +5455,320 @@ function renderBankSectionCard(section, icon, title, subtitle) {
   `;
 }
 
+
+function renderDepositMailCheckoutButton() {
+  if (!isAuthenticatedSession()) {
+    return '';
+  }
+
+  const availableCount = getUnsentDepositMailCount();
+  const pendingCount = getPendingDepositMailWriteCount();
+  const writtenCount = getWrittenDepositMailWaitingCount();
+  const totalCount = availableCount + pendingCount + writtenCount;
+
+  if (totalCount <= 0) {
+    return '';
+  }
+
+  const label = `Desktop Client Required${totalCount > 0 ? ` (${totalCount})` : ''}`;
+  const statusText = 'Deposit mail checkout and ESO SavedVariables writing are disabled in the web client. Use the GuildSync desktop client for this mail workflow.';
+
+  return `
+    <button id="checkoutDepositMailButton" class="bank-export-button deposit-mail-button deposit-mail-status-only" type="button" data-deposit-mail-action="disabled" aria-disabled="true" title="${escapeAttribute(statusText)}" aria-label="${escapeAttribute(`${label}. ${statusText}`)}">
+      <span aria-hidden="true">📬</span>
+      <span>${escapeHtml(label)}</span>
+      <span class="deposit-mail-web-disabled" aria-hidden="true">Web Disabled</span>
+    </button>
+  `;
+}
+
+function getPendingDepositMailWriteCount() {
+  return loadPendingDepositMailBatches().reduce((total, batch) => total + normalizeBankingEntries(batch.records).length, 0);
+}
+
+function getCurrentDepositMailOwnerKeys() {
+  const user = guildSyncSession?.user || {};
+  return new Set([
+    getDisplayName(),
+    user.display_name,
+    user.global_name,
+    user.username,
+    user.discord_user_id,
+    user.id
+  ]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean));
+}
+
+function isDepositMailOwnedByCurrentUser(entry) {
+  const checkedOutBy = String(entry?.checkedOutBy || entry?.checked_out_by || '').trim().toLowerCase();
+  if (!checkedOutBy) {
+    return false;
+  }
+  return getCurrentDepositMailOwnerKeys().has(checkedOutBy);
+}
+
+function getWrittenDepositMailWaitingCount() {
+  if (!isAuthenticatedSession()) {
+    return 0;
+  }
+
+  return bankingEntries.filter((entry) => {
+    const type = String(entry?.type || '').toLowerCase();
+    const mailStatus = String(entry?.mailStatus || '').toLowerCase();
+    return (type === 'biweekly' || type === 'monthly')
+      && mailStatus === 'written_to_eso'
+      && isDepositMailOwnedByCurrentUser(entry);
+  }).length;
+}
+
+function getUnsentDepositMailCount() {
+  return bankingEntries.filter((entry) => {
+    const type = String(entry?.type || '').toLowerCase();
+    const mailStatus = String(entry?.mailStatus || '').toLowerCase();
+    return (type === 'biweekly' || type === 'monthly') && mailStatus === 'unsent';
+  }).length;
+}
+
+function getBankingEntryByEventId(eventId) {
+  const cleanEventId = String(eventId || '').trim();
+  return bankingEntries.find((entry) => String(entry.eventId || '').trim() === cleanEventId) || null;
+}
+
+function getBankingMoveTargetOptions(currentType) {
+  const cleanType = String(currentType || 'other').toLowerCase();
+  return ['biweekly', 'monthly', 'other'].filter((type) => type !== cleanType);
+}
+
+function getBankingMovePreviewNote(entry = {}, targetType = 'other', moveReason = '') {
+  const currentType = String(entry.type || 'other').toLowerCase();
+  const currentLabel = getBankingSectionLabel(currentType);
+  const targetLabel = getBankingSectionLabel(targetType);
+  const movedBy = getDisplayName() || 'Unknown user';
+  const lines = [
+    `Moved from ${currentLabel} to ${targetLabel} by ${movedBy}.`,
+    `Ref ${entry.eventId || ''}`
+  ];
+  const cleanReason = String(moveReason || '').trim();
+  if (cleanReason) {
+    lines.push(`Reason: ${cleanReason}`);
+  }
+  return lines.join('\n');
+}
+
+function openBankingMoveDialog(eventId) {
+  const entry = getBankingEntryByEventId(eventId);
+  if (!entry) {
+    addSystemMessage('banking-move-missing', 'Could not find the selected banking entry.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  const currentType = String(entry.type || 'other').toLowerCase();
+  const targetOptions = getBankingMoveTargetOptions(currentType);
+  const defaultTargetType = targetOptions[0] || 'other';
+
+  bankingMoveEntry = entry;
+  bankingMoveForm = {
+    targetType: defaultTargetType,
+    note: '',
+    tickets: String(Number(entry.ticketAmount) || 0)
+  };
+  bankingMoveError = '';
+  bankingMoveSubmitting = false;
+  bankingMoveDialogOpen = true;
+  renderGuildSyncTabLayout();
+}
+
+function closeBankingMoveDialog() {
+  bankingMoveDialogOpen = false;
+  bankingMoveSubmitting = false;
+  bankingMoveError = '';
+  bankingMoveEntry = null;
+  bankingMoveForm = { targetType: 'other', note: '', tickets: '' };
+  renderGuildSyncTabLayout();
+}
+
+function renderBankingMoveDialog() {
+  const entry = bankingMoveEntry || {};
+  const currentType = String(entry.type || 'other').toLowerCase();
+  const currentLabel = getBankingSectionLabel(currentType);
+  const targetOptions = getBankingMoveTargetOptions(currentType);
+  let targetType = String(bankingMoveForm.targetType || targetOptions[0] || 'other').toLowerCase();
+  if (!targetOptions.includes(targetType)) {
+    targetType = targetOptions[0] || 'other';
+    bankingMoveForm.targetType = targetType;
+  }
+  const showTickets = targetType !== 'other';
+  const generatedNote = getBankingMovePreviewNote(entry, targetType, bankingMoveForm.note);
+
+  return `
+    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="bankingMoveDialogTitle">
+      <div class="roster-history-dialog manual-ticket-dialog banking-move-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="bankingMoveDialogTitle">Move Banking Entry</h3>
+            <p>Move this deposit to a different banking section while preserving a reference to the original event.</p>
+          </div>
+          <button id="closeBankingMoveDialogButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
+        </div>
+
+        ${bankingMoveError ? `<div class="discord-data-error">${escapeHtml(bankingMoveError)}</div>` : ''}
+
+        <div class="manual-ticket-form banking-move-form">
+          <div class="banking-move-current-entry">
+            <div><strong>Current Type:</strong> ${escapeHtml(currentLabel)}</div>
+            <div><strong>Event ID:</strong> ${escapeHtml(entry.eventId || '')}</div>
+            <div><strong>Depositor:</strong> ${escapeHtml(entry.displayName || '')}</div>
+            <div><strong>Amount:</strong> ${escapeHtml(formatGoldAmount(entry.amount))} 🪙</div>
+          </div>
+
+          <div class="banking-move-target-row banking-move-switch-row">
+            <span>Move To</span>
+            <div class="banking-move-destination-switch" role="radiogroup" aria-label="Move banking entry destination">
+              ${targetOptions.map((type, index) => `
+                <button
+                  class="banking-move-destination-option ${targetType === type ? 'selected' : ''}"
+                  type="button"
+                  role="radio"
+                  aria-checked="${targetType === type ? 'true' : 'false'}"
+                  data-banking-move-target="${escapeAttribute(type)}"
+                >${escapeHtml(getBankingSectionLabel(type))}</button>
+                ${index === 0 ? '<div class="banking-move-switch-track" aria-hidden="true"><span></span></div>' : ''}
+              `).join('')}
+            </div>
+          </div>
+
+          ${showTickets ? `
+            <label class="manual-ticket-count-field banking-move-ticket-field">
+              <span>Tickets Awarded</span>
+              <input id="bankingMoveTicketsInput" class="discord-search-input manual-ticket-count-input" type="number" min="0" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(bankingMoveForm.tickets)}" />
+            </label>
+          ` : ''}
+
+          <label class="manual-ticket-note-field banking-move-note-field">
+            <span>Move Note</span>
+            <textarea id="bankingMoveNoteInput" class="discord-search-input manual-ticket-note-input banking-move-note-input" rows="2" placeholder="Optional reason for this move">${escapeHtml(bankingMoveForm.note)}</textarea>
+          </label>
+
+          <div class="roster-history-muted banking-move-generated-note">${escapeHtml(generatedNote).replace(/\n/g, '<br>')}</div>
+
+          <div class="manual-ticket-actions banking-move-actions">
+            <button id="saveBankingMoveButton" class="refresh-discord-button banking-move-submit-button" type="button" ${bankingMoveSubmitting ? 'disabled' : ''}>${bankingMoveSubmitting ? 'MOVING...' : 'MOVE'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireBankingMoveDialog() {
+  if (!bankingMoveDialogOpen) {
+    return;
+  }
+
+  document.querySelector('#closeBankingMoveDialogButton')?.addEventListener('click', () => closeBankingMoveDialog());
+
+  document.querySelectorAll('[data-banking-move-target]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const value = String(button.dataset.bankingMoveTarget || 'other').toLowerCase();
+      const currentType = String(bankingMoveEntry?.type || 'other').toLowerCase();
+      const targetOptions = getBankingMoveTargetOptions(currentType);
+      bankingMoveForm.targetType = targetOptions.includes(value) ? value : (targetOptions[0] || 'other');
+      if (bankingMoveForm.targetType === 'other') {
+        bankingMoveForm.tickets = '0';
+      }
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  document.querySelector('#bankingMoveTicketsInput')?.addEventListener('input', (event) => {
+    const numericValue = String(event.target.value || '').replace(/\D/g, '');
+    if (event.target.value !== numericValue) {
+      event.target.value = numericValue;
+    }
+    bankingMoveForm.tickets = numericValue;
+  });
+
+  document.querySelector('#bankingMoveNoteInput')?.addEventListener('input', (event) => {
+    bankingMoveForm.note = event.target.value || '';
+    const preview = document.querySelector('.banking-move-generated-note');
+    if (preview) {
+      preview.innerText = getBankingMovePreviewNote(bankingMoveEntry || {}, bankingMoveForm.targetType || 'other', bankingMoveForm.note);
+    }
+  });
+
+  document.querySelector('#saveBankingMoveButton')?.addEventListener('click', () => submitBankingMove());
+
+  const overlay = document.querySelector('.roster-history-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        closeBankingMoveDialog();
+      }
+    });
+  }
+}
+
+async function submitBankingMove() {
+  const entry = bankingMoveEntry;
+  if (!entry?.eventId) {
+    bankingMoveError = 'No banking entry is selected.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  const currentType = String(entry.type || 'other').toLowerCase();
+  const targetOptions = getBankingMoveTargetOptions(currentType);
+  const targetType = String(bankingMoveForm.targetType || targetOptions[0] || 'other').toLowerCase();
+  if (!targetOptions.includes(targetType)) {
+    bankingMoveError = 'Select a valid destination section.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  const tickets = targetType === 'other' ? 0 : Math.floor(Number(String(bankingMoveForm.tickets || '').trim() || 0));
+  if (!Number.isFinite(tickets) || tickets < 0) {
+    bankingMoveError = 'Tickets must be zero or greater.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  bankingMoveSubmitting = true;
+  bankingMoveError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:move-banking-entry', {
+      event_id: entry.eventId,
+      target_type: targetType,
+      tickets,
+      note: bankingMoveForm.note || ''
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to move banking entry.');
+    }
+
+    closeBankingMoveDialog();
+    await refreshBankingDataFromBackend({ silent: true });
+    addSystemMessage('banking-entry-moved', response.message || 'Banking entry moved.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } catch (error) {
+    bankingMoveSubmitting = false;
+    bankingMoveError = formatError(error);
+    renderGuildSyncTabLayout();
+  }
+}
+
 function wireBankDepositsPanel() {
   if (activeGuildSyncTab !== 'more') {
     return;
   }
+
+  wireBankingMoveDialog();
+
+  document.querySelectorAll('[data-bank-entry-move]').forEach((button) => {
+    button.addEventListener('click', () => openBankingMoveDialog(button.dataset.bankEntryMove || ''));
+  });
 
   document.querySelectorAll('[data-bank-section]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -5290,7 +5820,7 @@ function wireBankDepositsPanel() {
   if (manualTicketButton) {
     manualTicketButton.addEventListener('click', async () => {
       if (!isAuthenticatedSession()) {
-        addSystemMessage('manual-ticket-login-required', 'Login required to add manual tickets.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+        addSystemMessage('manual-ticket-login-required', 'Login required to add manual entries.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
         return;
       }
       manualBiweeklyTicketDialogOpen = true;
@@ -5302,6 +5832,15 @@ function wireBankDepositsPanel() {
         await refreshRosterDataFromBackend({ silent: true });
       }
       renderGuildSyncTabLayout();
+    });
+  }
+
+  const checkoutMailButton = document.querySelector('#checkoutDepositMailButton');
+  if (checkoutMailButton) {
+    checkoutMailButton.addEventListener('click', () => {
+      if (checkoutMailButton.dataset.depositMailAction === 'checkout' && checkoutMailButton.getAttribute('aria-disabled') !== 'true') {
+        checkoutDepositMailFromBackend();
+      }
     });
   }
 
@@ -5609,6 +6148,7 @@ function renderBankDepositRow(entry, showTicketColumn = true) {
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td><strong class="bank-gold-amount">${escapeHtml(formatGoldAmount(entry.amount))}</strong> <span aria-hidden="true">🪙</span></td>
       ${showTicketColumn ? `<td><strong class="bank-ticket-amount">${escapeHtml(formatTicketAmount(entry.ticketAmount))}</strong></td>` : ''}
+      <td><button class="bank-entry-move-button" type="button" data-bank-entry-move="${escapeAttribute(entry.eventId || '')}">Move</button></td>
     </tr>
   `;
 }
@@ -5616,7 +6156,7 @@ function renderBankDepositRow(entry, showTicketColumn = true) {
 function renderEmptyBankDepositRow(showTicketColumn = true) {
   return `
     <tr>
-      <td class="bank-empty-row" colspan="${showTicketColumn ? '5' : '4'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
+      <td class="bank-empty-row" colspan="${showTicketColumn ? '6' : '5'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
     </tr>
   `;
 }
@@ -5675,7 +6215,20 @@ function normalizeBankingEntries(entries) {
       amount: Number(entry?.amount ?? 0) || 0,
       ticketAmount: Number(entry?.ticketAmount ?? entry?.ticket_amount ?? 0) || 0,
       note: String(entry?.note ?? '').trim(),
-      dataSource: String(entry?.dataSource ?? entry?.data_source ?? '').trim()
+      dataSource: String(entry?.dataSource ?? entry?.data_source ?? '').trim(),
+      emailRequested: Boolean(entry?.emailRequested ?? entry?.email_requested),
+      mailStatus: String(entry?.mailStatus ?? entry?.mail_status ?? '').trim(),
+      mailRequestId: String(entry?.mailRequestId ?? entry?.mail_request_id ?? '').trim(),
+      mailBatchId: String(entry?.mailBatchId ?? entry?.mail_batch_id ?? '').trim(),
+      checkedOutBy: String(entry?.checkedOutBy ?? entry?.checked_out_by ?? '').trim(),
+      checkedOutAt: String(entry?.checkedOutAt ?? entry?.checked_out_at ?? '').trim(),
+      checkoutExpiresAt: String(entry?.checkoutExpiresAt ?? entry?.checkout_expires_at ?? '').trim(),
+      writtenToEsoAt: String(entry?.writtenToEsoAt ?? entry?.written_to_eso_at ?? '').trim(),
+      sentAt: String(entry?.sentAt ?? entry?.sent_at ?? '').trim(),
+      failedReason: String(entry?.failedReason ?? entry?.failed_reason ?? '').trim(),
+      recipient: String(entry?.recipient ?? entry?.account_name ?? entry?.displayName ?? entry?.display_name ?? '').trim(),
+      subject: String(entry?.subject ?? entry?.mailSubject ?? entry?.mail_subject ?? '').trim(),
+      body: String(entry?.body ?? entry?.mailBody ?? entry?.mail_body ?? '').trim()
     };
   });
 }
@@ -5723,6 +6276,7 @@ async function handleBankingDataUpdated(payload = {}) {
 
 async function refreshBankingDataFromBackend(options = {}) {
   const silent = Boolean(options.silent);
+  const background = Boolean(options.background);
 
   if (!socket?.connected) {
     if (!silent) {
@@ -5733,8 +6287,10 @@ async function refreshBankingDataFromBackend(options = {}) {
     return;
   }
 
-  bankingDataLoading = true;
-  renderGuildSyncTabLayout();
+  if (!background) {
+    bankingDataLoading = true;
+    renderGuildSyncTabLayout();
+  }
 
   try {
     const response = await emitSocketWithAck('guildsync:request-banking-data', {}, 30000);
@@ -5758,8 +6314,129 @@ async function refreshBankingDataFromBackend(options = {}) {
       });
     }
   } finally {
-    bankingDataLoading = false;
+    if (!background) {
+      bankingDataLoading = false;
+    }
     renderGuildSyncTabLayout();
+  }
+}
+
+async function refreshDepositMailAvailabilityFromBackend() {
+  if (!socket?.connected || !isAuthenticatedSession() || bankingDataLoading) {
+    return;
+  }
+
+  await refreshBankingDataFromBackend({ silent: true, background: true });
+
+  if (getUnsentDepositMailCount() <= 0 && getPendingDepositMailWriteCount() > 0) {
+    if (esoRunningStatus.running) {
+      renderGuildSyncTabLayout();
+    } else {
+      schedulePendingDepositMailAutoWrite('availability-refresh');
+    }
+  }
+}
+
+function startDepositMailAvailabilityPolling() {
+  if (depositMailAvailabilityPollTimer) {
+    clearInterval(depositMailAvailabilityPollTimer);
+  }
+
+  refreshDepositMailAvailabilityFromBackend();
+  depositMailAvailabilityPollTimer = window.setInterval(refreshDepositMailAvailabilityFromBackend, DEPOSIT_MAIL_AVAILABILITY_POLL_INTERVAL_MS);
+}
+
+function stopDepositMailAvailabilityPolling() {
+  if (depositMailAvailabilityPollTimer) {
+    clearInterval(depositMailAvailabilityPollTimer);
+    depositMailAvailabilityPollTimer = null;
+  }
+}
+
+
+async function collectAndSendDepositMailAck(payload = {}) {
+  if (!isAuthenticatedSession()) {
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('deposit-mail-ack-pending', 'Deposit mail acknowledgements were found, but GuildSync websocket is not connected yet.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  try {
+    const ackResult = await CollectDepositMailAckFromGuildSyncBanking(payload);
+    if (!ackResult?.ok) {
+      return;
+    }
+
+    const ackEntries = Array.isArray(ackResult.ackEntries) ? ackResult.ackEntries : [];
+    if (ackEntries.length === 0) {
+      return;
+    }
+
+    const response = await emitSocketWithAck('guildsync:mark-deposit-mail-sent', {
+      mail_ack: ackEntries,
+      mail_request_ids: ackEntries.map((entry) => entry?.mail_request_id || entry?.mailRequestId).filter(Boolean),
+      source: 'guildsync-frontend-client',
+      file_name: ackResult.fileName || payload.fileName || '',
+      file_path: ackResult.filePath || payload.filePath || ''
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Backend rejected the deposit mail acknowledgements.');
+    }
+
+    const confirmedIds = Array.isArray(response.mail_request_ids)
+      ? response.mail_request_ids
+      : Array.isArray(response.mailRequestIds)
+        ? response.mailRequestIds
+        : [];
+
+    if (confirmedIds.length === 0) {
+      addSystemMessage('deposit-mail-ack-none', response.message || 'No matching deposit mail acknowledgements were confirmed by the backend.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+      return;
+    }
+
+    const cleanupResult = await CleanupDepositMailAckFromGuildSyncBanking(confirmedIds);
+    if (!cleanupResult?.ok) {
+      throw new Error(cleanupResult?.message || 'Backend confirmed sent mail, but local mailAck cleanup failed.');
+    }
+
+    addSystemMessage('deposit-mail-ack-sent', cleanupResult.message || `Confirmed ${confirmedIds.length} deposit mail acknowledgement(s).`, {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+
+    await refreshBankingDataFromBackend({ silent: true });
+  } catch (error) {
+    addSystemMessage('deposit-mail-ack-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  }
+}
+
+async function flushPendingDepositMailAckCleanup() {
+  if (depositMailAckCleanupFlushRunning) {
+    return;
+  }
+  depositMailAckCleanupFlushRunning = true;
+  try {
+    const result = await FlushPendingDepositMailAckCleanup();
+    if (result?.ok && Number(result.removedCount || 0) > 0) {
+      addSystemMessage('deposit-mail-ack-cleanup-flushed', result.message || 'Cleaned up pending deposit mail acknowledgements.', {
+        ttlMs: TRANSIENT_MESSAGE_TTL_MS
+      });
+    }
+  } catch (error) {
+    addSystemMessage('deposit-mail-ack-cleanup-error', formatError(error), {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+  } finally {
+    depositMailAckCleanupFlushRunning = false;
   }
 }
 
@@ -5818,6 +6495,230 @@ async function collectAndSendGuildSyncBankingData(payload = {}) {
   } finally {
     bankingDataLoading = false;
     renderGuildSyncTabLayout();
+  }
+}
+
+
+function createLocalDepositMailBatchId() {
+  return `deposit-mail-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function loadPendingDepositMailBatches() {
+  try {
+    const raw = window.localStorage.getItem(PENDING_DEPOSIT_MAIL_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingDepositMailBatches(queue) {
+  window.localStorage.setItem(PENDING_DEPOSIT_MAIL_STORAGE_KEY, JSON.stringify(Array.isArray(queue) ? queue : []));
+}
+
+function enqueuePendingDepositMailBatch(batch) {
+  const batchId = String(batch?.mail_batch_id || batch?.mailBatchId || batch?.local_batch_id || createLocalDepositMailBatchId());
+  const queue = loadPendingDepositMailBatches().filter((item) => String(item?.mail_batch_id || item?.mailBatchId || item?.local_batch_id || '') !== batchId);
+  queue.push({
+    ...batch,
+    local_batch_id: batchId,
+    pending_saved_at: new Date().toISOString()
+  });
+  savePendingDepositMailBatches(queue);
+}
+
+function removePendingDepositMailBatch(batchId) {
+  const cleanBatchId = String(batchId || '').trim();
+  if (!cleanBatchId) {
+    return;
+  }
+  const queue = loadPendingDepositMailBatches().filter((item) => String(item?.mail_batch_id || item?.mailBatchId || item?.local_batch_id || '') !== cleanBatchId);
+  savePendingDepositMailBatches(queue);
+}
+
+async function checkoutDepositMailFromBackend() {
+  if (!isAuthenticatedSession()) {
+    addSystemMessage('deposit-mail-login-required', 'Login required to check out deposit mail.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  if (!socket?.connected) {
+    addSystemMessage('deposit-mail-socket-error', 'GuildSync websocket is not connected.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  const pending = loadPendingDepositMailBatches();
+  const availableCount = getUnsentDepositMailCount();
+  if (pending.length > 0 && availableCount <= 0) {
+    await processPendingDepositMailBatches();
+    return;
+  }
+
+  depositMailCheckoutRunning = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:checkout-deposit-mail', {
+      source: 'guildsync-frontend-client',
+      max_records: 100,
+      checkout_minutes: 60
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || 'Backend rejected the deposit mail checkout request.');
+    }
+
+    const records = normalizeBankingEntries(response.records);
+    if (records.length === 0) {
+      addSystemMessage('deposit-mail-none', response.message || 'No unsent deposit mail is available.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+      await refreshBankingDataFromBackend({ silent: true });
+      return;
+    }
+
+    const batch = {
+      mail_batch_id: response.mail_batch_id || response.mailBatchId || createLocalDepositMailBatchId(),
+      checked_out_by: response.checked_out_by || response.checkedOutBy || getDisplayName(),
+      checked_out_at: new Date().toISOString(),
+      records
+    };
+
+    enqueuePendingDepositMailBatch(batch);
+    await processPendingDepositMailBatches();
+  } catch (error) {
+    addSystemMessage('deposit-mail-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } finally {
+    depositMailCheckoutRunning = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+
+function schedulePendingDepositMailAutoWrite(reason = '') {
+  if (depositMailPendingWriteAutoTimer || depositMailPendingWriteRunning || !isAuthenticatedSession()) {
+    return;
+  }
+
+  if (getPendingDepositMailWriteCount() <= 0 || esoRunningStatus.running) {
+    return;
+  }
+
+  depositMailPendingWriteAutoTimer = window.setTimeout(() => {
+    depositMailPendingWriteAutoTimer = null;
+    processPendingDepositMailBatches();
+  }, 100);
+}
+
+async function processPendingDepositMailBatches() {
+  if (depositMailPendingWriteAutoTimer) {
+    window.clearTimeout(depositMailPendingWriteAutoTimer);
+    depositMailPendingWriteAutoTimer = null;
+  }
+
+  if (depositMailPendingWriteRunning || !isAuthenticatedSession()) {
+    return;
+  }
+
+  const queue = loadPendingDepositMailBatches();
+  if (queue.length === 0) {
+    return;
+  }
+
+  await refreshESORunningStatus({ silent: true });
+  if (esoRunningStatus.running) {
+    addSystemMessage('deposit-mail-waiting-eso', `${queue.length} deposit mail batch${queue.length === 1 ? '' : 'es'} checked out. Close ESO to write them to SavedVariables.`, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  depositMailPendingWriteRunning = true;
+  renderGuildSyncTabLayout();
+
+  try {
+    for (const batch of queue) {
+      const batchId = String(batch?.mail_batch_id || batch?.mailBatchId || batch?.local_batch_id || '').trim();
+      const records = normalizeBankingEntries(batch?.records);
+      if (records.length === 0) {
+        removePendingDepositMailBatch(batchId);
+        continue;
+      }
+
+      const writeResult = await WriteDepositMailToGuildSyncBanking(records);
+      if (!writeResult?.ok) {
+        throw new Error(writeResult?.message || 'Deposit mail could not be written to GuildSyncBanking.lua.');
+      }
+
+      if (!socket?.connected) {
+        throw new Error('Deposit mail was written locally, but GuildSync websocket is not connected to mark it written_to_eso.');
+      }
+
+      const response = await emitSocketWithAck('guildsync:mark-deposit-mail-written-to-eso', {
+        mail_batch_id: batchId,
+        event_ids: writeResult.eventIds || records.map((record) => record.eventId).filter(Boolean),
+        source: 'guildsync-frontend-client'
+      }, 30000);
+
+      if (!response?.ok) {
+        throw new Error(response?.message || 'Backend did not confirm deposit mail was marked written_to_eso.');
+      }
+
+      removePendingDepositMailBatch(batchId);
+      addSystemMessage('deposit-mail-written', writeResult.message || `Wrote ${records.length} deposit mail record(s) to GuildSyncBanking.lua.`, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    }
+
+    await refreshBankingDataFromBackend({ silent: true });
+  } catch (error) {
+    addSystemMessage('deposit-mail-write-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } finally {
+    depositMailPendingWriteRunning = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+async function refreshESORunningStatus(options = {}) {
+  try {
+    const previousRunning = Boolean(esoRunningStatus.running);
+    const status = await GetESORunningStatus();
+    esoRunningStatus = {
+      running: Boolean(status?.running),
+      message: String(status?.message || '')
+    };
+
+    if (!esoRunningStatus.running) {
+      await flushPendingDepositMailAckCleanup();
+    }
+
+    if (previousRunning && !esoRunningStatus.running) {
+      addSystemMessage('eso-closed-deposit-mail-flush', 'ESO is no longer running. Processing pending deposit mail SavedVariables work now.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+      await processPendingDepositMailBatches();
+    }
+
+    if (previousRunning !== esoRunningStatus.running) {
+      renderGuildSyncTabLayout();
+    }
+  } catch (error) {
+    if (!options.silent) {
+      addSystemMessage('eso-status-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    }
+  }
+}
+
+function startESOStatusPolling() {
+  if (esoStatusPollTimer) {
+    clearInterval(esoStatusPollTimer);
+  }
+  refreshESORunningStatus({ silent: true }).then(() => {
+    if (!esoRunningStatus.running && getPendingDepositMailWriteCount() > 0) {
+      processPendingDepositMailBatches();
+    }
+  });
+  esoStatusPollTimer = window.setInterval(() => refreshESORunningStatus({ silent: true }), ESO_STATUS_POLL_INTERVAL_MS);
+}
+
+function stopESOStatusPolling() {
+  if (esoStatusPollTimer) {
+    clearInterval(esoStatusPollTimer);
+    esoStatusPollTimer = null;
   }
 }
 
@@ -6420,177 +7321,6 @@ function renderEmptyDiscordMemberRow() {
   `;
 }
 
-
-function renderDiscordMobileMemberCard(member) {
-  const avatarURL = getDiscordMemberAvatarURL(member);
-  const displayName = getMemberSortName(member);
-  const roles = Array.isArray(member.roles) ? member.roles : [];
-  const linkedEsoRole = getDiscordMobileLinkedEsoRole(member);
-  const primaryRole = getDiscordMobilePrimaryRole(member, linkedEsoRole);
-  const roleHexColor = getDiscordMobileRankColor(primaryRole);
-  const linkData = getMemberLinkButtonData({ mode: 'discord-to-eso', discordUserId: member.discord_id });
-  const links = getMemberLinksByDiscordUserId(member.discord_id);
-  const linkedAccounts = links
-    .filter((link) => String(link.link_status || '').trim().toLowerCase() === 'linked')
-    .map((link) => link.eso_account_name)
-    .filter(Boolean);
-  const candidateAccounts = links
-    .filter((link) => String(link.link_status || '').trim().toLowerCase() === 'candidate')
-    .map((link) => link.eso_account_name)
-    .filter(Boolean);
-  const cardStyle = `--discord-card-role-color:${escapeAttribute(roleHexColor)};`;
-
-  return `
-    <details class="discord-mobile-member-card" style="${cardStyle}" data-discord-user-id="${escapeAttribute(member.discord_id || '')}">
-      <summary class="discord-mobile-member-summary">
-        <div class="discord-mobile-avatar-wrap">
-          <div class="discord-mobile-avatar">
-            ${avatarURL
-      ? `<img src="${escapeAttribute(avatarURL)}" alt="${escapeAttribute(displayName)}" />`
-      : `<span>${escapeHtml(getInitials(displayName))}</span>`}
-          </div>
-          <span class="discord-mobile-online-dot" aria-hidden="true"></span>
-        </div>
-
-        <div class="discord-mobile-member-copy">
-          <div class="discord-mobile-member-name-row">
-            <strong>${escapeHtml(displayName || member.username || 'Unknown Member')}</strong>
-          </div>
-          <div class="discord-mobile-name-line">${escapeHtml(member.username || '—')}</div>
-          <div class="discord-mobile-name-line">${escapeHtml(member.global_name || '—')}</div>
-          <div class="discord-mobile-name-line">${escapeHtml(member.server_nickname || '—')}</div>
-        </div>
-
-        <div class="discord-mobile-role-side">
-          <div class="discord-mobile-role-shield" aria-hidden="true">♜</div>
-          <span>${escapeHtml(primaryRole?.role_name || 'Member')}</span>
-          <i class="discord-mobile-card-caret" aria-hidden="true">›</i>
-        </div>
-      </summary>
-
-      <div class="discord-mobile-member-details">
-        <div class="discord-mobile-detail-section">
-          <div class="discord-mobile-detail-title">Linked Accounts</div>
-          <div class="discord-mobile-link-status member-link-status-${escapeAttribute(linkData.className)}">${escapeHtml(linkData.label)}</div>
-          <div class="discord-mobile-detail-grid">
-            <span>ESO Account</span>
-            <strong>${escapeHtml(linkedAccounts.join(', ') || candidateAccounts.join(', ') || 'Not linked')}</strong>
-            <span>ESO Role</span>
-            <strong>${escapeHtml(linkedEsoRole || '—')}</strong>
-          </div>
-          <button
-            class="discord-mobile-link-action"
-            type="button"
-            data-open-member-link-dialog="discord-to-eso"
-            data-member-link-value="${escapeAttribute(member.discord_id || '')}"
-          >Manage Link</button>
-        </div>
-
-        <div class="discord-mobile-detail-section">
-          <div class="discord-mobile-detail-title">Roles (${roles.length})</div>
-          <div class="discord-mobile-role-grid">
-            ${roles.length > 0
-      ? roles.map((role) => renderDiscordMobileRolePill(role)).join('')
-      : '<span class="discord-mobile-empty-note">No roles</span>'}
-          </div>
-        </div>
-
-        <div class="discord-mobile-detail-section">
-          <div class="discord-mobile-detail-title">Member Info</div>
-          <div class="discord-mobile-detail-grid">
-            <span>Username</span>
-            <strong>${escapeHtml(member.username || '—')}</strong>
-            <span>Global Name</span>
-            <strong>${escapeHtml(member.global_name || '—')}</strong>
-            <span>Server Nickname</span>
-            <strong>${escapeHtml(member.server_nickname || '—')}</strong>
-            <span>Last Seen</span>
-            <strong>${escapeHtml(formatDiscordMobileLastSeen(member.last_seen))}</strong>
-          </div>
-        </div>
-      </div>
-    </details>
-  `;
-}
-
-function renderEmptyDiscordMobileMemberList() {
-  const message = discordDataLoading
-    ? 'Loading Discord member data...'
-    : 'No Discord members found.';
-
-  return `
-    <div class="discord-mobile-empty-card">
-      ${escapeHtml(message)}
-    </div>
-  `;
-}
-
-function getDiscordMobilePrimaryRole(member, linkedEsoRole = '') {
-  const roles = Array.isArray(member?.roles) ? member.roles.filter((role) => role?.role_name) : [];
-  const esoRankNames = ['Associates', 'Soldiers', 'Capo', 'CapoRegime', 'Consigliere'];
-
-  for (const rankName of esoRankNames) {
-    const match = roles.find((role) => String(role.role_name || '').trim().toLowerCase() === rankName.toLowerCase());
-    if (match) return match;
-  }
-
-  if (linkedEsoRole) {
-    return { role_name: linkedEsoRole, role_color: getDiscordMobileRankFallbackColor(linkedEsoRole) };
-  }
-
-  for (const rankName of esoRankNames) {
-    const match = roles.find((role) => String(role.role_name || '').trim().toLowerCase().includes(rankName.toLowerCase()));
-    if (match) return { ...match, role_name: rankName };
-  }
-
-  return roles[0] || { role_name: 'Associates', role_color: getDiscordMobileRankFallbackColor('Associates') };
-}
-
-function getDiscordMobileLinkedEsoRole(member) {
-  const links = getMemberLinksByDiscordUserId(member?.discord_id);
-  const preferredLink = getPreferredMemberLink(links);
-  const accountName = preferredLink?.eso_account_name || '';
-  if (!accountName) return '';
-
-  const cleanName = normalizeMemberLinkName(accountName);
-  const rosterMember = rosterMembers.find((item) => normalizeMemberLinkName(item.account_name) === cleanName);
-  return rosterMember?.rank || '';
-}
-
-function getDiscordMobileRankFallbackColor(rankName) {
-  const normalized = String(rankName || '').trim().toLowerCase();
-  if (normalized === 'consigliere') return '#a855f7';
-  if (normalized === 'caporegime') return '#06b6d4';
-  if (normalized === 'capo') return '#3b82f6';
-  if (normalized === 'soldiers') return '#22c55e';
-  if (normalized === 'associates') return '#f59e0b';
-  return '#8b5cf6';
-}
-
-function getDiscordMobileRankColor(role) {
-  const explicit = discordRoleColorToHex(role?.role_color);
-  if (explicit && explicit !== '#99aab5') return explicit;
-  return getDiscordMobileRankFallbackColor(role?.role_name);
-}
-
-function formatDiscordMobileLastSeen(value) {
-  if (!value) return '—';
-  const numeric = Number(value);
-  const date = numeric ? new Date(numeric > 9999999999 ? numeric : numeric * 1000) : new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
-}
-
-function renderDiscordMobileRolePill(role) {
-  const hexColor = discordRoleColorToHex(role.role_color);
-  const textColor = getReadableTextColor(hexColor);
-  const roleStyle = buildFilledRoleStyle(hexColor, textColor);
-
-  return `
-    <span class="discord-mobile-role-pill" style="${roleStyle}">${escapeHtml(role.role_name || 'Role')}</span>
-  `;
-}
-
 function renderDiscordRoleBadge(role) {
   const hexColor = discordRoleColorToHex(role.role_color);
   const textColor = getReadableTextColor(hexColor);
@@ -6891,6 +7621,13 @@ function renderOpenProfileMenuContents() {
         <span class="profile-label">Client Version</span>
         <span class="profile-value">${escapeHtml(GUILDSYNC_APP_VERSION)}</span>
       </div>
+      <div class="profile-section profile-filewatch-section">
+        <div class="profile-section-header">
+          <span>File Watch</span>
+          <span class="profile-section-subtitle">${guildSyncFileWatcherStatus?.watching ? 'Active' : 'Stopped'}</span>
+        </div>
+        ${renderProfileFileWatcherSection()}
+      </div>
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
   `;
@@ -6906,6 +7643,11 @@ function renderOpenProfileMenuContents() {
       openAssociatePromotionReportDialog();
     });
 
+  document
+    .querySelectorAll('.profile-filewatch-toggle')
+    .forEach((toggle) => {
+      toggle.addEventListener('change', handleProfileFileWatchToggleChange);
+    });
 }
 
 async function refreshProfileFileWatcherStatus() {
@@ -6964,6 +7706,7 @@ function openProfileMenu() {
   menu.setAttribute('aria-hidden', 'false');
   profileMenuOpen = true;
 
+  refreshProfileFileWatcherStatus();
 
   setTimeout(() => {
     window.addEventListener('click', closeProfileMenuOnOutsideClick);
@@ -7081,7 +7824,11 @@ function connectSocket() {
     }
 
     processPendingGuildSyncBankingUploads();
+    processPendingDepositMailBatches();
+    startESOStatusPolling();
+    startDepositMailAvailabilityPolling();
     processPendingGuildSyncRosterUploads();
+    processPendingGuildSyncApplicationsUploads();
     startVersionCheckTimer();
   });
 
@@ -7093,6 +7840,8 @@ function connectSocket() {
   socket.on('disconnect', () => {
     updateStatusDot();
     stopVersionCheckTimer();
+    stopESOStatusPolling();
+    stopDepositMailAvailabilityPolling();
   });
 
   socket.on('guildsync:version-status', (payload) => {
@@ -7150,7 +7899,9 @@ function sendVersionCheck() {
   }
 
   socket.emit('guildsync:client-version', {
-    version: GUILDSYNC_APP_VERSION
+    version: GUILDSYNC_APP_VERSION,
+    platform: getGuildSyncClientPlatform(),
+    client_type: 'wails'
   });
 }
 
@@ -7176,16 +7927,104 @@ function handleVersionStatus(payload) {
 
   if (payload.update_required) {
     const latestVersion = payload.latest_version || 'unknown';
+    const download = payload.download && typeof payload.download === 'object' ? payload.download : {};
+
+    desktopClientUpdateInfo = {
+      updateRequired: true,
+      latestVersion,
+      downloadUrl: String(payload.download_url || download.url || '').trim(),
+      fileName: String(payload.download_file_name || download.file_name || '').trim(),
+      platformLabel: String(download.label || payload.platform || getGuildSyncClientPlatform()).trim()
+    };
 
     addSystemMessage(
       'version',
       `GuildSync is out of date. Current version: ${GUILDSYNC_APP_VERSION}. Latest version: ${latestVersion}.`
     );
 
+    renderDesktopUpdateArea();
     return;
   }
 
+  desktopClientUpdateInfo = {
+    updateRequired: false,
+    latestVersion: '',
+    downloadUrl: '',
+    fileName: '',
+    platformLabel: ''
+  };
+
+  renderDesktopUpdateArea();
   removeSystemMessage('version');
+}
+
+function getGuildSyncClientPlatform() {
+  const userAgent = String(navigator.userAgent || '').toLowerCase();
+  const platform = String(navigator.platform || '').toLowerCase();
+  const combined = `${platform} ${userAgent}`;
+
+  if (combined.includes('mac')) {
+    return 'macos';
+  }
+
+  if (combined.includes('linux')) {
+    return 'linux';
+  }
+
+  return 'windows';
+}
+
+function renderDesktopUpdateArea() {
+  const container = document.querySelector('#desktopUpdateArea');
+
+  if (!container) {
+    return;
+  }
+
+  if (!desktopClientUpdateInfo.updateRequired || !desktopClientUpdateInfo.downloadUrl) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const platformLabel = desktopClientUpdateInfo.platformLabel || 'Desktop';
+  const latestVersion = desktopClientUpdateInfo.latestVersion || 'latest';
+  const fileName = desktopClientUpdateInfo.fileName || 'GuildSync client download';
+
+  container.innerHTML = `
+    <button
+      id="desktopUpdateDownloadButton"
+      class="desktop-update-download-button"
+      type="button"
+      title="Download ${escapeAttribute(fileName)}"
+      aria-label="Download GuildSync ${escapeAttribute(latestVersion)} for ${escapeAttribute(platformLabel)}"
+    >
+      <span class="desktop-update-download-icon" aria-hidden="true">⬇</span>
+      <span class="desktop-update-download-copy">
+        <span class="desktop-update-download-title">Update Available</span>
+        <span class="desktop-update-download-subtitle">${escapeHtml(platformLabel)} · ${escapeHtml(latestVersion)}</span>
+      </span>
+    </button>
+  `;
+
+  const button = container.querySelector('#desktopUpdateDownloadButton');
+  if (button) {
+    button.addEventListener('click', () => {
+      openDesktopClientUpdateDownload();
+    });
+  }
+}
+
+function openDesktopClientUpdateDownload() {
+  const downloadUrl = String(desktopClientUpdateInfo.downloadUrl || '').trim();
+
+  if (!downloadUrl) {
+    addSystemMessage('version-download-error', 'No GuildSync update download URL was provided by the server.', {
+      ttlMs: TRANSIENT_MESSAGE_TTL_MS
+    });
+    return;
+  }
+
+  BrowserOpenURL(downloadUrl);
 }
 
 function addSystemMessage(id, text, options = {}) {
@@ -7197,12 +8036,6 @@ function addSystemMessage(id, text, options = {}) {
   }
 
   systemMessages.set(cleanID, cleanText);
-  if (activeSystemMessageID === cleanID) {
-    const track = document.querySelector('#statusMessageTrack');
-    if (track) {
-      track.textContent = cleanText;
-    }
-  }
 
   if (systemMessageTimers.has(cleanID)) {
     window.clearTimeout(systemMessageTimers.get(cleanID));
@@ -7605,30 +8438,54 @@ async function syncGuildSyncFileWatcherWithAuthState(options = {}) {
   }
 }
 
+function logGuildSyncFileWatcher(message, payload = null) {
+  const prefix = '[GuildSync File Watcher]';
+
+  if (payload) {
+    console.log(`${prefix} ${message}`, payload);
+    return;
+  }
+
+  console.log(`${prefix} ${message}`);
+}
+
 function handleGuildSyncSavedVarsFileModified(payload = {}) {
   if (!isAuthenticatedSession()) {
+    logGuildSyncFileWatcher('SavedVariables change ignored because the user is not authenticated.', payload);
     return;
   }
 
   const key = String(payload.key || payload.fileName || 'saved-vars-file').trim() || 'saved-vars-file';
+  const normalizedKey = key.toLowerCase();
   const label = String(payload.label || '').trim();
   const fileName = String(payload.fileName || 'SavedVariables file').trim() || 'SavedVariables file';
+  const filePath = String(payload.filePath || '').trim();
   const displayName = label ? `${label} saved variables (${fileName})` : fileName;
+
+  logGuildSyncFileWatcher(`SavedVariables change detected: ${fileName}${filePath ? ` (${filePath})` : ''}. Key: ${normalizedKey}.`, payload);
 
   addSystemMessage(`saved-vars-file-updated-${key}`, `${displayName} has been updated.`, {
     ttlMs: TRANSIENT_MESSAGE_TTL_MS
   });
 
-  if (key.toLowerCase() === 'banking') {
+  if (normalizedKey === 'banking') {
+    logGuildSyncFileWatcher(`Processing banking SavedVariables update from ${fileName}.`);
     handleGuildSyncBankingSavedVarsModified(payload);
   }
 
-  if (key.toLowerCase() === 'roster') {
+  if (normalizedKey === 'roster') {
+    logGuildSyncFileWatcher(`Processing roster SavedVariables update from ${fileName}.`);
     handleGuildSyncRosterSavedVarsModified(payload);
+  }
+
+  if (normalizedKey === 'applications') {
+    logGuildSyncFileWatcher(`Processing applications SavedVariables update from ${fileName}.`);
+    handleGuildSyncApplicationsSavedVarsModified(payload);
   }
 }
 
 async function handleGuildSyncBankingSavedVarsModified(payload = {}) {
+  await collectAndSendDepositMailAck(payload);
   await collectAndSendGuildSyncBankingData(payload);
 }
 
@@ -7834,5 +8691,6 @@ function escapeAttribute(value) {
 }
 
 wireGuildSyncEvents();
-installWebSavedVarsFullScreenDropZone();
 showSplash();
+
+installWebSavedVarsFullScreenDropZone();
