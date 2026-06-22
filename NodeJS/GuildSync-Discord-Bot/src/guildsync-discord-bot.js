@@ -22,8 +22,7 @@ import {
   GatewayIntentBits,
   MessageFlags,
   Partials,
-  SlashCommandBuilder,
-  AuditLogEvent
+  SlashCommandBuilder
 } from 'discord.js';
 
 import * as roles from './commands/roles.js';
@@ -90,17 +89,60 @@ const client = new Client({
 
 client.commands = new Collection();
 
+let guildSyncApplicationDiscordPostingEnabled = true;
+
 const gsaCommand = {
   data: new SlashCommandBuilder()
     .setName('gsa')
-    .setDescription('Post saved GuildSync application record(s) to Discord')
-    .addStringOption((option) =>
-      option
-        .setName('name')
-        .setDescription('Full or partial ESO account name from GuildSyncApplications')
-        .setRequired(true)
+    .setDescription('Manage GuildSync application Discord posting')
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('post')
+        .setDescription('Post saved GuildSync application record(s) to Discord')
+        .addStringOption((option) =>
+          option
+            .setName('name')
+            .setDescription('Full or partial ESO account name from GuildSyncApplications')
+            .setRequired(true)
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('stop')
+        .setDescription('Stop automatic GuildSync application posts to Discord')
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('start')
+        .setDescription('Resume automatic GuildSync application posts to Discord')
     ),
   async execute(interaction, guildSyncSocket) {
+    const subcommand = interaction.options.getSubcommand();
+
+    if (subcommand === 'stop') {
+      guildSyncApplicationDiscordPostingEnabled = false;
+
+      await interaction.reply({
+        content: 'GuildSync application posting to Discord is now stopped.',
+        flags: [MessageFlags.Ephemeral]
+      });
+
+      Log(`GuildSync application Discord posting stopped by ${interaction.user.tag}.`);
+      return;
+    }
+
+    if (subcommand === 'start') {
+      guildSyncApplicationDiscordPostingEnabled = true;
+
+      await interaction.reply({
+        content: 'GuildSync application posting to Discord is now started.',
+        flags: [MessageFlags.Ephemeral]
+      });
+
+      Log(`GuildSync application Discord posting started by ${interaction.user.tag}.`);
+      return;
+    }
+
     const name = interaction.options.getString('name', true).trim();
 
     await interaction.deferReply({
@@ -237,6 +279,17 @@ guildSyncSocket.on('guildsync:eso-guild-application-message', async (payload = {
       throw new Error('No message was provided.');
     }
 
+    if (!guildSyncApplicationDiscordPostingEnabled) {
+      Log('ESO guild application Discord post skipped because /gsa stop is active.');
+
+      respond({
+        ok: false,
+        stopped: true,
+        message: 'GuildSync application posting to Discord is currently stopped.'
+      });
+      return;
+    }
+
     await sendEsoGuildApplicationMessage(message);
 
     respond({
@@ -362,10 +415,7 @@ client.on(Events.GuildMemberAdd, async member => {
 client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
   await handleDiscordLiveUpdate(
     `Discord member updated: ${newMember.user.tag} (${newMember.user.id})`,
-    async () => {
-      const initiator = await getGuildMemberUpdateInitiator(oldMember, newMember);
-      return await sendDiscordMemberUpsert(newMember, guildSyncSocket, { initiator });
-    }
+    async () => await sendDiscordMemberUpsert(newMember, guildSyncSocket)
   );
 });
 
@@ -381,11 +431,6 @@ client.on(Events.UserUpdate, async (oldUser, newUser) => {
   await handleDiscordLiveUpdate(
     `Discord user updated: ${newUser.tag} (${newUser.id})`,
     async () => {
-      if (isUserUpdateAvatarOnly(oldUser, newUser)) {
-        Log(`Discord user update skipped because only avatar changed: ${newUser.tag} (${newUser.id})`);
-        return { skipped: true, reason: 'avatar_only' };
-      }
-
       const guild = await getStartupGuild(client);
       const member = await guild.members.fetch(newUser.id).catch(() => null);
 
@@ -420,101 +465,6 @@ client.on(Events.GuildRoleDelete, async role => {
   );
 });
 
-
-
-function getMemberRoleIdSet(member) {
-  const roleIds = new Set();
-
-  for (const role of member?.roles?.cache?.values?.() || []) {
-    if (role.id === member.guild?.id) {
-      continue;
-    }
-
-    roleIds.add(String(role.id));
-  }
-
-  return roleIds;
-}
-
-function didMemberRolesChange(oldMember, newMember) {
-  const oldRoleIds = getMemberRoleIdSet(oldMember);
-  const newRoleIds = getMemberRoleIdSet(newMember);
-
-  if (oldRoleIds.size !== newRoleIds.size) {
-    return true;
-  }
-
-  for (const roleId of oldRoleIds) {
-    if (!newRoleIds.has(roleId)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function formatDiscordInitiator(user) {
-  if (!user) return '';
-
-  const tag = String(user.tag || '').trim();
-  if (tag) return tag.slice(0, 50);
-
-  const username = String(user.username || '').trim();
-  if (username) return username.slice(0, 50);
-
-  return String(user.id || '').trim().slice(0, 50);
-}
-
-function normalizeComparableDiscordValue(value) {
-  return String(value ?? '').trim();
-}
-
-function isUserUpdateAvatarOnly(oldUser, newUser) {
-  const oldAvatar = normalizeComparableDiscordValue(oldUser?.avatar);
-  const newAvatar = normalizeComparableDiscordValue(newUser?.avatar);
-
-  if (oldAvatar === newAvatar) {
-    return false;
-  }
-
-  const trackedFields = [
-    ['username', 'username'],
-    ['globalName', 'globalName']
-  ];
-
-  return trackedFields.every(([oldKey, newKey]) => (
-    normalizeComparableDiscordValue(oldUser?.[oldKey]) === normalizeComparableDiscordValue(newUser?.[newKey])
-  ));
-}
-
-async function getGuildMemberUpdateInitiator(oldMember, newMember) {
-  if (!didMemberRolesChange(oldMember, newMember)) {
-    return '';
-  }
-
-  try {
-    const guild = newMember.guild;
-    const auditLogs = await guild.fetchAuditLogs({
-      type: AuditLogEvent.MemberRoleUpdate,
-      limit: 5
-    });
-
-    const now = Date.now();
-    const entry = auditLogs.entries.find((candidate) => {
-      if (candidate.target?.id !== newMember.user.id) {
-        return false;
-      }
-
-      const ageMs = Math.abs(now - Number(candidate.createdTimestamp || 0));
-      return ageMs <= 15000;
-    });
-
-    return formatDiscordInitiator(entry?.executor);
-  } catch (error) {
-    Log(`Unable to fetch Discord audit log initiator for role update: ${error.message}`);
-    return '';
-  }
-}
 
 async function handleDiscordLiveUpdate(description, action) {
   if (!client.isReady()) {

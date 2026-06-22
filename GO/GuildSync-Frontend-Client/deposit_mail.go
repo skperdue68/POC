@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -199,33 +198,51 @@ func verifyDepositMailQueueWrite(filePath string, records []map[string]interface
 	return missingIDs, nil
 }
 func isESORunning() bool {
-	names := []string{"eso64.exe", "eso.exe", "eso64", "eso"}
+	patterns := []string{
+		"eso64.exe",
+		"eso.exe",
+		"eso64",
+		"eso",
+		"zenimax online",
+		"the elder scrolls online",
+	}
+
 	switch runtime.GOOS {
 	case "windows":
-		out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+		out, err := runProcessCommand("tasklist", "/FO", "CSV", "/NH")
 		if err != nil {
 			return false
 		}
-		lower := strings.ToLower(string(out))
-		for _, name := range names {
-			if strings.Contains(lower, strings.ToLower(name)) {
-				return true
-			}
+		return outputContainsAnyProcessName(out, patterns)
+
+	case "darwin", "linux":
+		// pgrep with -a/-f checks the full process command line, which is better for
+		// ESO on Mac/Linux because it may run through Wine, CrossOver, Steam, or Proton.
+		out, err := runProcessCommand("pgrep", "-af", "eso64.exe|eso.exe|eso64|eso|Zenimax Online|The Elder Scrolls Online")
+		if err == nil && outputContainsAnyProcessName(out, patterns) {
+			return true
 		}
-		return false
+
+		// Fallback for systems without pgrep or with different pgrep behavior.
+		out, err = runProcessCommand("ps", "-axo", "comm=,args=")
+		if err != nil {
+			return false
+		}
+		return outputContainsAnyProcessName(out, patterns)
+
 	default:
-		out, err := exec.Command("ps", "-A", "-o", "comm=").Output()
-		if err != nil {
-			return false
-		}
-		lower := strings.ToLower(string(out))
-		for _, name := range names {
-			if strings.Contains(lower, strings.ToLower(name)) {
-				return true
-			}
-		}
 		return false
 	}
+}
+
+func outputContainsAnyProcessName(output []byte, patterns []string) bool {
+	lower := strings.ToLower(string(output))
+	for _, pattern := range patterns {
+		if strings.Contains(lower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeDepositMailRecordsForLua(records []map[string]interface{}) []map[string]interface{} {
