@@ -10,6 +10,7 @@ const DEFAULT_DEPOSIT_MAIL_BODY_TEMPLATE = [
   '',
   'We received your guild bank deposit of {amount} gold.',
   'Ticket Credit Earned: {ticket_quantity}',
+  '{note_block}',
   '',
   'Transaction ID: {event_id}',
   '',
@@ -288,14 +289,15 @@ async function initializeSchema(db) {
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_applications (
-      applicant_account VARCHAR(50) NOT NULL PRIMARY KEY,
+      applicant_account VARCHAR(50) NOT NULL,
       application_text TEXT DEFAULT NULL,
       application_timestamp VARCHAR(25) NOT NULL,
       officer_processing VARCHAR(50) NOT NULL,
       application_action VARCHAR(50) NOT NULL,
       decline_message TEXT DEFAULT NULL,
       blacklist_message TEXT DEFAULT NULL,
-      discord_broadcast TINYINT(1) NOT NULL DEFAULT 0
+      discord_broadcast TINYINT(1) NOT NULL DEFAULT 0,
+      PRIMARY KEY (applicant_account, application_timestamp)
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
@@ -627,7 +629,14 @@ export async function recordGuildSyncApplications(applicationDB, records = []) {
           application_action = VALUES(application_action),
           decline_message = VALUES(decline_message),
           blacklist_message = VALUES(blacklist_message),
-          discord_broadcast = 0
+          discord_broadcast =
+            CASE
+              WHEN application_timestamp <> VALUES(application_timestamp)
+                OR application_text <> VALUES(application_text)
+                OR application_action <> VALUES(application_action)
+              THEN 0
+              ELSE discord_broadcast
+            END
       `,
       [
         record.applicant_account,
@@ -642,6 +651,43 @@ export async function recordGuildSyncApplications(applicationDB, records = []) {
   }
 
   return { inserted: normalizedRecords.length, skipped: (Array.isArray(records) ? records.length : 1) - normalizedRecords.length };
+}
+
+
+export async function getGuildSyncApplicationByApplicantAccount(applicationDB, applicantAccount) {
+  const normalizedName = String(applicantAccount || '').trim();
+
+  if (!normalizedName) {
+    throw new Error('Applicant account name is required.');
+  }
+
+  const searchNames = Array.from(new Set([
+    normalizedName,
+    normalizedName.startsWith('@') ? normalizedName.slice(1) : `@${normalizedName}`
+  ].filter(Boolean)));
+
+  const placeholders = searchNames.map(() => '?').join(', ');
+
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        applicant_account,
+        application_text,
+        application_timestamp,
+        officer_processing,
+        application_action,
+        decline_message,
+        blacklist_message,
+        discord_broadcast
+      FROM guildsync_applications
+      WHERE applicant_account IN (${placeholders})
+      ORDER BY CAST(application_timestamp AS UNSIGNED) DESC, applicant_account
+      LIMIT 1
+    `,
+    searchNames
+  );
+
+  return rows[0] || null;
 }
 
 export async function getPendingGuildSyncApplicationBroadcasts(applicationDB) {
@@ -2762,8 +2808,8 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
   const transactionType = ticketTypeInput === 'monthly' || ticketTypeInput === '50/50' || ticketTypeInput === '5050'
     ? 'monthly'
     : 'biweekly';
-  const tickets = Math.floor(Number(payload.tickets || payload.ticket_quantity || payload.ticketAmount || 0));
-  const goldValue = Math.floor(Number(payload.gold_value || payload.goldValue || payload.deposit_amount || payload.depositAmount || 0));
+  const tickets = Math.floor(Number(payload.tickets ?? payload.ticket_quantity ?? payload.ticketAmount ?? 0));
+  const goldValue = Math.floor(Number(payload.gold_value ?? payload.goldValue ?? payload.deposit_amount ?? payload.depositAmount ?? 0));
   const addedBy = String(payload.addedBy || payload.auditUser || '').trim().slice(0, 64);
 
   if (!accountName) {
@@ -2774,8 +2820,18 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
     throw new Error('Manual ticket gold value must be zero or greater.');
   }
 
-  if (!Number.isFinite(tickets) || tickets <= 0) {
-    throw new Error('Manual ticket quantity must be greater than zero.');
+  if (!Number.isFinite(tickets) || tickets < 0) {
+    throw new Error('Manual ticket quantity must be zero or greater.');
+  }
+
+  const isAnonymousAccount = accountName.toLowerCase() === 'anonymous';
+
+  if (isAnonymousAccount && tickets > 0) {
+    throw new Error('Anonymous cannot be awarded tickets. Use 0 tickets and enter a gold value.');
+  }
+
+  if (goldValue === 0 && tickets === 0) {
+    throw new Error('Manual entry must include gold or tickets. Anonymous entries may use 0 tickets when a gold value is entered.');
   }
 
   const timestamp = Math.floor(Date.now() / 1000);
@@ -2784,6 +2840,9 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
   const defaultNote = transactionType === 'monthly' ? 'Manual 50/50 ticket entry' : 'Manual bi-weekly ticket entry';
   const auditedNote = `${note || defaultNote} - added by ${addedBy || 'Unknown'}`.slice(0, 255);
   const dataSource = transactionType === 'monthly' ? 'ManualMonthlyTicket' : 'ManualBiweeklyTicket';
+  const isAnonymousEntry = isAnonymousAccount;
+  const mailStatus = isAnonymousEntry ? 'sent' : 'unsent';
+  const mailRequestId = isAnonymousEntry ? `manual_no_mail_${event_id}` : null;
 
   const [result] = await applicationDB.execute(
     `
@@ -2798,7 +2857,13 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
         data_source,
         note,
         mail_status,
-        mail_request_id
+        mail_request_id,
+        mail_batch_id,
+        checked_out_by,
+        checked_out_at,
+        written_to_eso_at,
+        sent_at,
+        failed_reason
       )
       VALUES (
         ?,
@@ -2810,11 +2875,32 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
         ?,
         ?,
         ?,
-        'unsent',
-        NULL
+        ?,
+        ?,
+        ?,
+        ?,
+        ${isAnonymousEntry ? 'NOW()' : 'NULL'},
+        ${isAnonymousEntry ? 'NOW()' : 'NULL'},
+        ${isAnonymousEntry ? 'NOW()' : 'NULL'},
+        ?
       )
     `,
-    [event_id, transactionType, accountName, String(timestamp), timestamp, goldValue, tickets, dataSource, auditedNote]
+    [
+      event_id,
+      transactionType,
+      accountName,
+      String(timestamp),
+      timestamp,
+      goldValue,
+      tickets,
+      dataSource,
+      auditedNote,
+      mailStatus,
+      mailRequestId,
+      isAnonymousEntry ? 'N/A' : null,
+      isAnonymousEntry ? '000000000000000000' : null,
+      isAnonymousEntry ? 'Anonymous manual entry - no recipient email required' : null
+    ]
   );
 
   await setSetting(applicationDB, 'banking_refresh', new Date().toISOString());
@@ -2833,6 +2919,184 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
       note: auditedNote
     }
   };
+}
+
+
+export async function moveBankingEntry(applicationDB, payload = {}) {
+  const originalEventId = String(payload.event_id || payload.eventId || '').trim();
+  const targetTypeInput = String(payload.target_type || payload.targetType || '').trim().toLowerCase();
+  const targetType = targetTypeInput === 'monthly' || targetTypeInput === '50/50' || targetTypeInput === '5050'
+    ? 'monthly'
+    : targetTypeInput === 'biweekly' || targetTypeInput === 'bi-weekly' || targetTypeInput === 'bi weekly'
+      ? 'biweekly'
+      : targetTypeInput === 'other'
+        ? 'other'
+        : '';
+  const moveNote = String(payload.note || payload.reason || '').trim().slice(0, 120);
+  const movedBy = String(payload.movedBy || payload.auditUser || '').trim().slice(0, 64);
+  const requestedTickets = Math.floor(Number(payload.tickets ?? payload.ticket_quantity ?? payload.ticketAmount ?? 0));
+
+  if (!originalEventId) {
+    throw new Error('Missing banking entry event id.');
+  }
+
+  if (!targetType) {
+    throw new Error('Select Bi-Weekly, 50/50, or Other as the destination.');
+  }
+
+  if (!Number.isFinite(requestedTickets) || requestedTickets < 0) {
+    throw new Error('Ticket quantity must be zero or greater.');
+  }
+
+  const connection = await applicationDB.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.execute(
+      `
+        SELECT *
+        FROM guildsync_banking_entries
+        WHERE event_id = ?
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [originalEventId]
+    );
+
+    const original = rows[0];
+    if (!original) {
+      throw new Error('Original banking entry was not found.');
+    }
+
+    const originalType = String(original.transaction_type || '').trim().toLowerCase();
+    if (originalType === 'moved') {
+      throw new Error('This banking entry has already been moved.');
+    }
+
+    if (originalType === targetType) {
+      throw new Error('The destination must be different from the current section.');
+    }
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const random = Math.floor(Math.random() * 900000) + 100000;
+    const movedEventId = `ManualMove${timestamp}${random}`.slice(0, 32);
+    const fromLabel = originalType === 'monthly' ? '50/50' : originalType === 'biweekly' ? 'Bi-Weekly' : 'Other';
+    const toLabel = targetType === 'monthly' ? '50/50' : targetType === 'biweekly' ? 'Bi-Weekly' : 'Other';
+    const noteParts = [`Moved from ${fromLabel} to ${toLabel} by ${movedBy || 'Unknown user'}.`, `Ref ${originalEventId}`];
+    if (moveNote) noteParts.push(`Reason: ${moveNote}`);
+    const originalExistingNote = String(original.note || '').trim();
+    if (originalExistingNote) noteParts.push(`Original Note: ${originalExistingNote}`);
+    const movedNote = noteParts.join('\n').slice(0, 255);
+    const originalNote = [`Moved to ${toLabel}.`, `Replacement ${movedEventId}`].join(' ').slice(0, 255);
+    const ticketQuantity = targetType === 'other' ? 0 : requestedTickets;
+    const isOtherTarget = targetType === 'other';
+    const targetDataSource = targetType === 'monthly'
+      ? 'ManualMovedMonthlyTicket'
+      : targetType === 'biweekly'
+        ? 'ManualMovedBiweeklyTicket'
+        : 'ManualMovedOther';
+    const targetMailStatus = isOtherTarget ? 'N/A' : 'unsent';
+    const targetMailRequestId = isOtherTarget ? 'N/A' : null;
+    const targetMailBatchId = isOtherTarget ? 'N/A' : null;
+    const targetCheckedOutBy = isOtherTarget ? '000000000000000000' : null;
+    const targetFailedReason = isOtherTarget ? 'No deposit mail required for other category' : null;
+
+    await connection.execute(
+      `
+        UPDATE guildsync_banking_entries
+        SET transaction_type = 'moved',
+            data_source = 'MovedOriginal',
+            note = ?,
+            mail_status = 'N/A',
+            mail_request_id = 'N/A',
+            mail_batch_id = 'N/A',
+            checked_out_by = '000000000000000000',
+            checked_out_at = COALESCE(checked_out_at, NOW()),
+            checkout_expires_at = NULL,
+            written_to_eso_at = COALESCE(written_to_eso_at, NOW()),
+            sent_at = COALESCE(sent_at, NOW()),
+            failed_reason = 'Original entry moved to another banking section'
+        WHERE event_id = ?
+      `,
+      [originalNote, originalEventId]
+    );
+
+    await connection.execute(
+      `
+        INSERT INTO guildsync_banking_entries (
+          event_id,
+          transaction_type,
+          account_name,
+          event_timestamp,
+          event_datetime,
+          deposit_amount,
+          ticket_quantity,
+          data_source,
+          note,
+          mail_status,
+          mail_request_id,
+          mail_batch_id,
+          checked_out_by,
+          checked_out_at,
+          written_to_eso_at,
+          sent_at,
+          failed_reason
+        )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          ?,
+          FROM_UNIXTIME(?),
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ?,
+          ${isOtherTarget ? 'NOW()' : 'NULL'},
+          ${isOtherTarget ? 'NOW()' : 'NULL'},
+          ${isOtherTarget ? 'NOW()' : 'NULL'},
+          ?
+        )
+      `,
+      [
+        movedEventId,
+        targetType,
+        original.account_name,
+        String(original.event_timestamp || timestamp),
+        Number(original.event_timestamp || timestamp),
+        Number(original.deposit_amount || 0),
+        ticketQuantity,
+        targetDataSource,
+        movedNote,
+        targetMailStatus,
+        targetMailRequestId,
+        targetMailBatchId,
+        targetCheckedOutBy,
+        targetFailedReason
+      ]
+    );
+
+    await setSetting(connection, 'banking_refresh', new Date().toISOString());
+    await connection.commit();
+
+    return {
+      originalEventId,
+      movedEventId,
+      fromType: originalType,
+      targetType,
+      note: movedNote
+    };
+  } catch (error) {
+    await safeRollback(connection);
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 function normalizeRosterEvents(rosterEvents) {

@@ -1,10 +1,26 @@
 import 'dotenv/config';
-import { REST, Routes } from 'discord.js';
+import { REST, Routes, SlashCommandBuilder } from 'discord.js';
 
 import * as roles from './commands/roles.js';
 
+const gsaCommandData = new SlashCommandBuilder()
+  .setName('gsa')
+  .setDescription('GuildSync Applications tools')
+  .addSubcommand((subcommand) =>
+    subcommand
+      .setName('post')
+      .setDescription('Post a saved GuildSync application record to Discord')
+      .addStringOption((option) =>
+        option
+          .setName('name')
+          .setDescription('ESO account name from GuildSyncApplications, for example @example')
+          .setRequired(true)
+      )
+  );
+
 const commands = [
   roles.data.toJSON(),
+  gsaCommandData.toJSON(),
 ];
 
 const {

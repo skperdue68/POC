@@ -197,6 +197,7 @@ let manualBiweeklyTicketError = '';
 let manualBiweeklyTicketForm = { accountName: '', note: '', ticketType: 'biweekly', goldValue: '', tickets: '' };
 let manualBiweeklyTicketAccountSearchText = '';
 let manualBiweeklyTicketActiveMatchIndex = -1;
+let manualBiweeklyTicketAccountDropdownOpen = false;
 let bankingRafflePeriodOffsets = {
   biweekly: 0,
   monthly: 0
@@ -271,7 +272,7 @@ function showMainWindow() {
             <img src="${guildSyncLogo}" alt="GuildSync" class="compact-brand-logo" />
             <div class="compact-brand-text">
               <div class="compact-brand-title">GuildSync</div>
-              <div class="compact-brand-version">Version ${escapeHtml(GUILDSYNC_APP_VERSION)}</div>
+              <div class="compact-brand-version">Mobile Companion</div>
             </div>
           </div>
           <div class="compact-header-actions">
@@ -414,11 +415,57 @@ function renderGuildSyncTabs() {
           aria-selected="${isActive ? 'true' : 'false'}"
         >
           <span class="guildsync-tab-icon" aria-hidden="true">${getGuildSyncTabIcon(tab.icon)}</span>
+          <span class="guildsync-tab-mobile-icon" aria-hidden="true">${getGuildSyncMobileTabIcon(tab.id)}</span>
           <span class="guildsync-tab-label">${escapeHtml(tab.label)}</span>
+          <span class="guildsync-tab-mobile-label">${escapeHtml(getGuildSyncMobileTabLabel(tab.id))}</span>
         </button>
       `;
     })
     .join('');
+}
+
+
+function getGuildSyncMobileTabLabel(tabID) {
+  if (tabID === 'discord-members') return 'Discord';
+  if (tabID === 'more') return 'Bank';
+  if (tabID === 'eso-members') return 'Roster';
+  if (tabID === 'settings') return 'More';
+  return 'More';
+}
+
+function getGuildSyncMobileTabIcon(tabID) {
+  if (tabID === 'discord-members') {
+    return `
+      <svg class="guildsync-tab-mobile-svg" viewBox="0 0 127.14 96.36" xmlns="http://www.w3.org/2000/svg">
+        <path fill="currentColor" d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,33.35-1.71,57.98.54,82.26A105.73,105.73,0,0,0,32.71,96.36a77.7,77.7,0,0,0,6.89-11.26,68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2A75.57,75.57,0,0,0,95.73,78c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.25A105.25,105.25,0,0,0,126.6,82.25C129.24,54.09,122.09,29.69,107.7,8.07ZM42.45,65.69C35.93,65.69,30.6,59.77,30.6,52.49s5.23-13.2,11.85-13.2S54.3,45.21,54.3,52.49,49.06,65.69,42.45,65.69Zm42.24,0c-6.52,0-11.85-5.92-11.85-13.2s5.24-13.2,11.85-13.2S96.54,45.21,96.54,52.49,91.3,65.69,84.69,65.69Z"/>
+      </svg>
+    `;
+  }
+
+  if (tabID === 'eso-members') {
+    return `
+      <svg class="guildsync-tab-mobile-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M16 20v-1.8c0-2.05-1.75-3.7-3.9-3.7H7.9c-2.15 0-3.9 1.65-3.9 3.7V20"/>
+        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M10 10.8a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z"/>
+        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M20 20v-1.6c0-1.75-1.12-3.05-2.85-3.48"/>
+        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M15.2 4.25a3.1 3.1 0 0 1 0 6.05"/>
+      </svg>
+    `;
+  }
+
+  if (tabID === 'more') {
+    return `
+      <svg class="guildsync-tab-mobile-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M3 21h18M5 21V10.25M9.7 21V10.25M14.3 21V10.25M19 21V10.25M3.5 8.25 12 3l8.5 5.25H3.5Z"/>
+      </svg>
+    `;
+  }
+
+  return `
+    <svg class="guildsync-tab-mobile-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path fill="currentColor" d="M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/>
+    </svg>
+  `;
 }
 
 function getGuildSyncTabIcon(icon) {
@@ -794,8 +841,8 @@ function renderDiscordMemberDataPanel() {
     <div class="guildsync-tab-panel discord-member-panel" data-active-tab="discord-members">
       <div class="discord-data-header">
         <div>
-          <h2 class="discord-data-title">Discord Member Data</h2>
-          <p class="discord-data-subtitle">Manage and view Discord member information.</p>
+          <h2 class="discord-data-title">Discord Members</h2>
+          <p class="discord-data-subtitle"><span class="discord-member-total-count">${filteredMembers.length} of ${discordMembers.length} members</span></p>
         </div>
         <div class="discord-history-header-action" style="flex: 1; display: flex; justify-content: center; align-items: center;">
           <button id="openDiscordHistoryButton" class="refresh-discord-button" type="button">Lookup Member History</button>
@@ -857,6 +904,12 @@ function renderDiscordMemberDataPanel() {
             </div>
           </div>
 
+        </div>
+
+        <div class="discord-mobile-member-list" aria-label="Discord members">
+          ${filteredMembers.length > 0
+      ? filteredMembers.map((member) => renderDiscordMobileMemberCard(member)).join('')
+      : renderEmptyDiscordMobileMemberList()}
         </div>
 
         <div class="discord-member-table-shell">
@@ -3862,20 +3915,32 @@ async function runAssociateTicketReport() {
 
 function getManualTicketMemberMatches() {
   const query = String(manualBiweeklyTicketAccountSearchText || '').trim().toLowerCase();
+  const anonymousOption = { account_name: 'Anonymous', rank: 'Manual Entry' };
+  const seenAccountNames = new Set(['anonymous']);
 
-  if (!query) {
-    return [];
-  }
-
-  return rosterMembers
+  const matches = rosterMembers
     .filter((member) => String(member.account_name || '').trim())
-    .filter((member) => String(member.account_name || '').toLowerCase().includes(query))
+    .filter((member) => {
+      const accountName = String(member.account_name || '').trim();
+      const normalizedAccountName = accountName.toLowerCase();
+
+      if (!normalizedAccountName || seenAccountNames.has(normalizedAccountName)) {
+        return false;
+      }
+
+      if (query && !normalizedAccountName.includes(query)) {
+        return false;
+      }
+
+      seenAccountNames.add(normalizedAccountName);
+      return true;
+    })
     .slice()
     .sort((left, right) => {
       const leftName = String(left.account_name || '').toLowerCase();
       const rightName = String(right.account_name || '').toLowerCase();
-      const leftStarts = leftName.startsWith(query) ? 0 : 1;
-      const rightStarts = rightName.startsWith(query) ? 0 : 1;
+      const leftStarts = query && leftName.startsWith(query) ? 0 : 1;
+      const rightStarts = query && rightName.startsWith(query) ? 0 : 1;
 
       if (leftStarts !== rightStarts) {
         return leftStarts - rightStarts;
@@ -3883,7 +3948,50 @@ function getManualTicketMemberMatches() {
 
       return leftName.localeCompare(rightName);
     })
-    .slice(0, 20);
+    .slice(0, 19);
+
+  return [anonymousOption, ...matches];
+}
+
+function renderManualTicketMatchListHtml(memberMatches = getManualTicketMemberMatches()) {
+  const selectedAccountName = String(manualBiweeklyTicketForm.accountName || '').trim();
+
+  return memberMatches.length === 0
+    ? '<div class="roster-history-muted manual-ticket-no-matches">No matching guild members found.</div>'
+    : memberMatches.map((member, index) => `
+        <button class="roster-history-match${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? ' is-selected' : ''}" type="button" data-manual-ticket-account="${escapeAttribute(member.account_name)}" role="option" aria-selected="${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? 'true' : 'false'}">
+          <span>${escapeHtml(member.account_name)}</span>
+          <strong>${escapeHtml(member.rank || '')}</strong>
+          ${index === manualBiweeklyTicketActiveMatchIndex ? '<small>Enter</small>' : ''}
+        </button>
+      `).join('');
+}
+
+function wireManualTicketMatchList() {
+  document.querySelectorAll('[data-manual-ticket-account]').forEach((button) => {
+    button.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+
+    button.addEventListener('click', () => {
+      selectManualTicketAccount(button.dataset.manualTicketAccount || '');
+    });
+  });
+}
+
+function refreshManualTicketMatchList() {
+  const matchList = document.querySelector('#manualTicketMatchList');
+  if (!matchList) {
+    return;
+  }
+
+  const matches = getManualTicketMemberMatches();
+  if (manualBiweeklyTicketActiveMatchIndex >= matches.length) {
+    manualBiweeklyTicketActiveMatchIndex = matches.length > 0 ? matches.length - 1 : -1;
+  }
+
+  matchList.innerHTML = renderManualTicketMatchListHtml(matches);
+  wireManualTicketMatchList();
 }
 
 function selectManualTicketAccount(accountName) {
@@ -3891,9 +3999,10 @@ function selectManualTicketAccount(accountName) {
 
   manualBiweeklyTicketForm.accountName = cleanAccountName;
   manualBiweeklyTicketAccountSearchText = cleanAccountName;
+  manualBiweeklyTicketAccountDropdownOpen = false;
+  manualBiweeklyTicketActiveMatchIndex = -1;
   manualBiweeklyTicketError = '';
   renderGuildSyncTabLayout();
-  focusInputById('manualTicketAccountSearchInput');
 }
 
 function focusInputById(inputId) {
@@ -3913,7 +4022,7 @@ function focusInputById(inputId) {
 }
 
 function renderManualBiweeklyTicketDialog() {
-  const memberMatches = getManualTicketMemberMatches();
+  const memberMatches = manualBiweeklyTicketAccountDropdownOpen ? getManualTicketMemberMatches() : [];
   const selectedAccountName = String(manualBiweeklyTicketForm.accountName || '').trim();
 
   return `
@@ -3930,23 +4039,19 @@ function renderManualBiweeklyTicketDialog() {
         ${manualBiweeklyTicketError ? `<div class="discord-data-error">${escapeHtml(manualBiweeklyTicketError)}</div>` : ''}
 
         <div class="manual-ticket-form">
-          <label class="manual-ticket-member-field">
-            <input id="manualTicketAccountSearchInput" class="discord-search-input" type="search" placeholder="Start typing part of an account name..." value="${escapeAttribute(manualBiweeklyTicketAccountSearchText)}" autocomplete="off" />
-          </label>
+          <div class="manual-ticket-member-picker">
+            <label class="manual-ticket-member-field" for="manualTicketAccountSearchInput">
+              <input id="manualTicketAccountSearchInput" class="discord-search-input" type="search" placeholder="Start typing part of an account name..." value="${escapeAttribute(manualBiweeklyTicketAccountSearchText)}" autocomplete="off" />
+            </label>
 
-          ${selectedAccountName ? `<div class="roster-history-muted">Selected: ${escapeHtml(selectedAccountName)}</div>` : ''}
-
-          <div class="roster-history-match-list manual-ticket-match-list">
-            ${memberMatches.length === 0
-      ? '<div class="roster-history-muted">No matching names</div>'
-      : memberMatches.map((member, index) => `
-                <button class="roster-history-match${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? ' is-selected' : ''}" type="button" data-manual-ticket-account="${escapeAttribute(member.account_name)}">
-                  <span>${escapeHtml(member.account_name)}</span>
-                  <strong>${escapeHtml(member.rank || '')}</strong>
-                  ${index === manualBiweeklyTicketActiveMatchIndex ? '<small>Enter</small>' : ''}
-                </button>
-              `).join('')}
+            ${manualBiweeklyTicketAccountDropdownOpen ? `
+              <div id="manualTicketMatchList" class="roster-history-match-list manual-ticket-match-list" role="listbox" aria-label="Matching guild members">
+                ${renderManualTicketMatchListHtml(memberMatches)}
+              </div>
+            ` : ''}
           </div>
+
+          ${selectedAccountName ? `<div class="roster-history-muted manual-ticket-selected-member">Selected: ${escapeHtml(selectedAccountName)}</div>` : ''}
 
           <div class="manual-ticket-entry-row">
             <div class="manual-ticket-type-field" role="group" aria-label="Ticket type">
@@ -3967,7 +4072,7 @@ function renderManualBiweeklyTicketDialog() {
               </label>
               <label class="manual-ticket-count-field">
                 <div class="manual-ticket-number-wrap">
-                  <input id="manualTicketCountInput" class="discord-search-input manual-ticket-count-input" type="number" min="1" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(manualBiweeklyTicketForm.tickets)}" />
+                  <input id="manualTicketCountInput" class="discord-search-input manual-ticket-count-input" type="number" min="0" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(manualBiweeklyTicketForm.tickets)}" />
                   <div class="manual-ticket-number-buttons" aria-hidden="true">
                     <button id="manualTicketCountUpButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌃</button>
                     <button id="manualTicketCountDownButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌄</button>
@@ -3997,15 +4102,52 @@ function wireManualBiweeklyTicketDialog() {
 
   const accountSearchInput = document.querySelector('#manualTicketAccountSearchInput');
   if (accountSearchInput) {
+    const openManualTicketDropdown = ({ rerender = false } = {}) => {
+      manualBiweeklyTicketAccountDropdownOpen = true;
+      manualBiweeklyTicketActiveMatchIndex = getManualTicketMemberMatches().length > 0 ? 0 : -1;
+
+      if (rerender) {
+        renderGuildSyncTabLayout();
+        focusInputById('manualTicketAccountSearchInput');
+        return;
+      }
+
+      refreshManualTicketMatchList();
+    };
+
+    accountSearchInput.addEventListener('focus', () => {
+      if (!manualBiweeklyTicketAccountDropdownOpen) {
+        openManualTicketDropdown({ rerender: true });
+      }
+    });
+
+    accountSearchInput.addEventListener('click', () => {
+      if (!manualBiweeklyTicketAccountDropdownOpen) {
+        openManualTicketDropdown({ rerender: true });
+      }
+    });
+
     accountSearchInput.addEventListener('input', (event) => {
       manualBiweeklyTicketAccountSearchText = event.target.value || '';
       manualBiweeklyTicketForm.accountName = '';
+      manualBiweeklyTicketAccountDropdownOpen = true;
       manualBiweeklyTicketActiveMatchIndex = getManualTicketMemberMatches().length > 0 ? 0 : -1;
-      renderGuildSyncTabLayout();
-      focusInputById('manualTicketAccountSearchInput');
+      refreshManualTicketMatchList();
     });
 
     accountSearchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        return;
+      }
+
+      if (!manualBiweeklyTicketAccountDropdownOpen) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          openManualTicketDropdown({ rerender: true });
+        }
+        return;
+      }
+
       const matches = getManualTicketMemberMatches();
 
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -4017,8 +4159,7 @@ function wireManualBiweeklyTicketDialog() {
         const direction = event.key === 'ArrowDown' ? 1 : -1;
         const currentIndex = manualBiweeklyTicketActiveMatchIndex < 0 ? 0 : manualBiweeklyTicketActiveMatchIndex;
         manualBiweeklyTicketActiveMatchIndex = (currentIndex + direction + matches.length) % matches.length;
-        renderGuildSyncTabLayout();
-        focusInputById('manualTicketAccountSearchInput');
+        refreshManualTicketMatchList();
         return;
       }
 
@@ -4034,11 +4175,7 @@ function wireManualBiweeklyTicketDialog() {
     });
   }
 
-  document.querySelectorAll('[data-manual-ticket-account]').forEach((button) => {
-    button.addEventListener('click', () => {
-      selectManualTicketAccount(button.dataset.manualTicketAccount || '');
-    });
-  });
+  wireManualTicketMatchList();
 
   document.querySelector('#manualTicketNoteInput')?.addEventListener('input', (event) => {
     manualBiweeklyTicketForm.note = event.target.value || '';
@@ -4077,7 +4214,7 @@ function wireManualBiweeklyTicketDialog() {
 
   const stepManualTicketCount = (direction) => {
     const currentValue = Number(manualBiweeklyTicketForm.tickets) || 0;
-    const nextValue = Math.max(1, currentValue + direction);
+    const nextValue = Math.max(0, currentValue + direction);
     manualBiweeklyTicketForm.tickets = String(nextValue);
     if (ticketCountInput) {
       ticketCountInput.value = manualBiweeklyTicketForm.tickets;
@@ -4106,11 +4243,19 @@ async function submitManualBiweeklyTicket() {
   const note = String(manualBiweeklyTicketForm.note || '').trim();
   const ticketType = String(manualBiweeklyTicketForm.ticketType || 'biweekly').trim().toLowerCase() === 'monthly' ? 'monthly' : 'biweekly';
   const goldValue = Number(String(manualBiweeklyTicketForm.goldValue || '').trim() || 0);
-  const tickets = Number(manualBiweeklyTicketForm.tickets);
+  const tickets = Number(String(manualBiweeklyTicketForm.tickets || '').trim() || 0);
+
+  if (manualBiweeklyTicketAccountDropdownOpen) {
+    manualBiweeklyTicketError = 'Select a matching guild member or Anonymous from the list before saving.';
+    renderGuildSyncTabLayout();
+    focusInputById('manualTicketAccountSearchInput');
+    return;
+  }
 
   if (!accountName) {
-    manualBiweeklyTicketError = 'Choose a guild member.';
+    manualBiweeklyTicketError = 'Select a matching guild member or Anonymous from the list before saving.';
     renderGuildSyncTabLayout();
+    focusInputById('manualTicketAccountSearchInput');
     return;
   }
 
@@ -4120,8 +4265,18 @@ async function submitManualBiweeklyTicket() {
     return;
   }
 
-  if (!Number.isFinite(tickets) || tickets <= 0) {
-    manualBiweeklyTicketError = 'Enter the number of tickets to add.';
+  if (!Number.isFinite(tickets) || tickets < 0) {
+    manualBiweeklyTicketError = 'Tickets must be zero or greater.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  const isAnonymousManualTicketEntry = accountName.toLowerCase() === 'anonymous';
+
+  if (Math.floor(goldValue) === 0 && Math.floor(tickets) === 0) {
+    manualBiweeklyTicketError = isAnonymousManualTicketEntry
+      ? 'Enter a gold value for Anonymous when tickets are 0.'
+      : 'Enter gold or tickets. Both cannot be zero.';
     renderGuildSyncTabLayout();
     return;
   }
@@ -4147,6 +4302,7 @@ async function submitManualBiweeklyTicket() {
     manualBiweeklyTicketForm = { accountName: '', note: '', ticketType: 'biweekly', goldValue: '', tickets: '' };
     manualBiweeklyTicketAccountSearchText = '';
     manualBiweeklyTicketActiveMatchIndex = -1;
+    manualBiweeklyTicketAccountDropdownOpen = false;
     await refreshBankingDataFromBackend({ silent: true });
     addSystemMessage('manual-ticket-added', response.message || 'Manual ticket entry added.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
@@ -4908,7 +5064,7 @@ async function sendQueuedGuildSyncRosterUpload(rosterPayload) {
 
 function renderBankDepositsPanel() {
   const rows = getBankingRowsForSection(bankingActiveSection);
-  const totals = getBankingTotals(rows);
+  const totals = getBankingTotals(rows, bankingActiveSection);
   const showTicketColumn = bankingActiveSection !== 'other';
 
   return `
@@ -4967,6 +5123,8 @@ function renderBankDepositsPanel() {
 
         <div class="bank-deposits-summary-row">
           <div>Total Deposits: <strong>${escapeHtml(formatGoldAmount(totals.amount))}</strong> <span aria-hidden="true">🪙</span></div>
+          ${bankingActiveSection === 'monthly' ? `<div>Raffle Pot: <strong>${escapeHtml(formatGoldAmount(Math.floor(totals.amount / 2)))}</strong> <span aria-hidden="true">🪙</span></div>` : ''}
+          ${bankingActiveSection === 'biweekly' ? `<div>Draws: <strong>${escapeHtml(String(Math.ceil(totals.amount / 200000)))}</strong></div>` : ''}
           ${showTicketColumn ? `<div>Total Tickets Awarded: <strong>${escapeHtml(formatTicketAmount(totals.tickets))}</strong> <span aria-hidden="true">🎟</span></div>` : ''}
         </div>
       </div>
@@ -5137,6 +5295,8 @@ function wireBankDepositsPanel() {
       manualBiweeklyTicketDialogOpen = true;
       manualBiweeklyTicketError = '';
       manualBiweeklyTicketAccountSearchText = manualBiweeklyTicketForm.accountName || '';
+      manualBiweeklyTicketAccountDropdownOpen = false;
+      manualBiweeklyTicketActiveMatchIndex = -1;
       if (rosterMembers.length === 0 && socket?.connected && isAuthenticatedSession()) {
         await refreshRosterDataFromBackend({ silent: true });
       }
@@ -5303,10 +5463,14 @@ function getBankingRaffleWindow(section) {
   };
 }
 
-function getBankingTotals(rows) {
+function getBankingTotals(rows, section = bankingActiveSection) {
+  const markerAmount = section === 'monthly' ? 3 : section === 'biweekly' ? 1 : 0;
+
   return rows.reduce(
     (totals, entry) => {
-      totals.amount += Number(entry.amount) || 0;
+      const rawAmount = Number(entry.amount) || 0;
+      const adjustedAmount = markerAmount > 0 && rawAmount >= markerAmount ? rawAmount - markerAmount : rawAmount;
+      totals.amount += adjustedAmount;
       totals.tickets += Number(entry.ticketAmount) || 0;
       return totals;
     },
@@ -6130,6 +6294,177 @@ function renderEmptyDiscordMemberRow() {
     <tr>
       <td colspan="5" class="discord-empty-row">${escapeHtml(message)}</td>
     </tr>
+  `;
+}
+
+
+function renderDiscordMobileMemberCard(member) {
+  const avatarURL = getDiscordMemberAvatarURL(member);
+  const displayName = getMemberSortName(member);
+  const roles = Array.isArray(member.roles) ? member.roles : [];
+  const linkedEsoRole = getDiscordMobileLinkedEsoRole(member);
+  const primaryRole = getDiscordMobilePrimaryRole(member, linkedEsoRole);
+  const roleHexColor = getDiscordMobileRankColor(primaryRole);
+  const linkData = getMemberLinkButtonData({ mode: 'discord-to-eso', discordUserId: member.discord_id });
+  const links = getMemberLinksByDiscordUserId(member.discord_id);
+  const linkedAccounts = links
+    .filter((link) => String(link.link_status || '').trim().toLowerCase() === 'linked')
+    .map((link) => link.eso_account_name)
+    .filter(Boolean);
+  const candidateAccounts = links
+    .filter((link) => String(link.link_status || '').trim().toLowerCase() === 'candidate')
+    .map((link) => link.eso_account_name)
+    .filter(Boolean);
+  const cardStyle = `--discord-card-role-color:${escapeAttribute(roleHexColor)};`;
+
+  return `
+    <details class="discord-mobile-member-card" style="${cardStyle}" data-discord-user-id="${escapeAttribute(member.discord_id || '')}">
+      <summary class="discord-mobile-member-summary">
+        <div class="discord-mobile-avatar-wrap">
+          <div class="discord-mobile-avatar">
+            ${avatarURL
+      ? `<img src="${escapeAttribute(avatarURL)}" alt="${escapeAttribute(displayName)}" />`
+      : `<span>${escapeHtml(getInitials(displayName))}</span>`}
+          </div>
+          <span class="discord-mobile-online-dot" aria-hidden="true"></span>
+        </div>
+
+        <div class="discord-mobile-member-copy">
+          <div class="discord-mobile-member-name-row">
+            <strong>${escapeHtml(displayName || member.username || 'Unknown Member')}</strong>
+          </div>
+          <div class="discord-mobile-name-line">${escapeHtml(member.username || '—')}</div>
+          <div class="discord-mobile-name-line">${escapeHtml(member.global_name || '—')}</div>
+          <div class="discord-mobile-name-line">${escapeHtml(member.server_nickname || '—')}</div>
+        </div>
+
+        <div class="discord-mobile-role-side">
+          <div class="discord-mobile-role-shield" aria-hidden="true">♜</div>
+          <span>${escapeHtml(primaryRole?.role_name || 'Member')}</span>
+          <i class="discord-mobile-card-caret" aria-hidden="true">›</i>
+        </div>
+      </summary>
+
+      <div class="discord-mobile-member-details">
+        <div class="discord-mobile-detail-section">
+          <div class="discord-mobile-detail-title">Linked Accounts</div>
+          <div class="discord-mobile-link-status member-link-status-${escapeAttribute(linkData.className)}">${escapeHtml(linkData.label)}</div>
+          <div class="discord-mobile-detail-grid">
+            <span>ESO Account</span>
+            <strong>${escapeHtml(linkedAccounts.join(', ') || candidateAccounts.join(', ') || 'Not linked')}</strong>
+            <span>ESO Role</span>
+            <strong>${escapeHtml(linkedEsoRole || '—')}</strong>
+          </div>
+          <button
+            class="discord-mobile-link-action"
+            type="button"
+            data-open-member-link-dialog="discord-to-eso"
+            data-member-link-value="${escapeAttribute(member.discord_id || '')}"
+          >Manage Link</button>
+        </div>
+
+        <div class="discord-mobile-detail-section">
+          <div class="discord-mobile-detail-title">Roles (${roles.length})</div>
+          <div class="discord-mobile-role-grid">
+            ${roles.length > 0
+      ? roles.map((role) => renderDiscordMobileRolePill(role)).join('')
+      : '<span class="discord-mobile-empty-note">No roles</span>'}
+          </div>
+        </div>
+
+        <div class="discord-mobile-detail-section">
+          <div class="discord-mobile-detail-title">Member Info</div>
+          <div class="discord-mobile-detail-grid">
+            <span>Username</span>
+            <strong>${escapeHtml(member.username || '—')}</strong>
+            <span>Global Name</span>
+            <strong>${escapeHtml(member.global_name || '—')}</strong>
+            <span>Server Nickname</span>
+            <strong>${escapeHtml(member.server_nickname || '—')}</strong>
+            <span>Last Seen</span>
+            <strong>${escapeHtml(formatDiscordMobileLastSeen(member.last_seen))}</strong>
+          </div>
+        </div>
+      </div>
+    </details>
+  `;
+}
+
+function renderEmptyDiscordMobileMemberList() {
+  const message = discordDataLoading
+    ? 'Loading Discord member data...'
+    : 'No Discord members found.';
+
+  return `
+    <div class="discord-mobile-empty-card">
+      ${escapeHtml(message)}
+    </div>
+  `;
+}
+
+function getDiscordMobilePrimaryRole(member, linkedEsoRole = '') {
+  const roles = Array.isArray(member?.roles) ? member.roles.filter((role) => role?.role_name) : [];
+  const esoRankNames = ['Associates', 'Soldiers', 'Capo', 'CapoRegime', 'Consigliere'];
+
+  for (const rankName of esoRankNames) {
+    const match = roles.find((role) => String(role.role_name || '').trim().toLowerCase() === rankName.toLowerCase());
+    if (match) return match;
+  }
+
+  if (linkedEsoRole) {
+    return { role_name: linkedEsoRole, role_color: getDiscordMobileRankFallbackColor(linkedEsoRole) };
+  }
+
+  for (const rankName of esoRankNames) {
+    const match = roles.find((role) => String(role.role_name || '').trim().toLowerCase().includes(rankName.toLowerCase()));
+    if (match) return { ...match, role_name: rankName };
+  }
+
+  return roles[0] || { role_name: 'Associates', role_color: getDiscordMobileRankFallbackColor('Associates') };
+}
+
+function getDiscordMobileLinkedEsoRole(member) {
+  const links = getMemberLinksByDiscordUserId(member?.discord_id);
+  const preferredLink = getPreferredMemberLink(links);
+  const accountName = preferredLink?.eso_account_name || '';
+  if (!accountName) return '';
+
+  const cleanName = normalizeMemberLinkName(accountName);
+  const rosterMember = rosterMembers.find((item) => normalizeMemberLinkName(item.account_name) === cleanName);
+  return rosterMember?.rank || '';
+}
+
+function getDiscordMobileRankFallbackColor(rankName) {
+  const normalized = String(rankName || '').trim().toLowerCase();
+  if (normalized === 'consigliere') return '#a855f7';
+  if (normalized === 'caporegime') return '#06b6d4';
+  if (normalized === 'capo') return '#3b82f6';
+  if (normalized === 'soldiers') return '#22c55e';
+  if (normalized === 'associates') return '#f59e0b';
+  return '#8b5cf6';
+}
+
+function getDiscordMobileRankColor(role) {
+  const explicit = discordRoleColorToHex(role?.role_color);
+  if (explicit && explicit !== '#99aab5') return explicit;
+  return getDiscordMobileRankFallbackColor(role?.role_name);
+}
+
+function formatDiscordMobileLastSeen(value) {
+  if (!value) return '—';
+  const numeric = Number(value);
+  const date = numeric ? new Date(numeric > 9999999999 ? numeric : numeric * 1000) : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function renderDiscordMobileRolePill(role) {
+  const hexColor = discordRoleColorToHex(role.role_color);
+  const textColor = getReadableTextColor(hexColor);
+  const roleStyle = buildFilledRoleStyle(hexColor, textColor);
+
+  return `
+    <span class="discord-mobile-role-pill" style="${roleStyle}">${escapeHtml(role.role_name || 'Role')}</span>
   `;
 }
 

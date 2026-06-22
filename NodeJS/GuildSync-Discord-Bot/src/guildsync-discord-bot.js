@@ -21,7 +21,8 @@ import {
   ChannelType,
   GatewayIntentBits,
   MessageFlags,
-  Partials
+  Partials,
+  SlashCommandBuilder
 } from 'discord.js';
 
 import * as roles from './commands/roles.js';
@@ -88,8 +89,66 @@ const client = new Client({
 
 client.commands = new Collection();
 
+const gsaCommand = {
+  data: new SlashCommandBuilder()
+    .setName('gsa')
+    .setDescription('GuildSync Applications tools')
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('post')
+        .setDescription('Post a saved GuildSync application record to Discord')
+        .addStringOption((option) =>
+          option
+            .setName('name')
+            .setDescription('ESO account name from GuildSyncApplications, for example @example')
+            .setRequired(true)
+        )
+    ),
+  async execute(interaction, guildSyncSocket) {
+    const subcommand = interaction.options.getSubcommand();
+
+    if (subcommand !== 'post') {
+      await interaction.reply({
+        content: 'Unknown GSA subcommand.',
+        flags: [MessageFlags.Ephemeral]
+      });
+      return;
+    }
+
+    const name = interaction.options.getString('name', true).trim();
+
+    await interaction.deferReply({
+      flags: [MessageFlags.Ephemeral]
+    });
+
+    try {
+      const result = await emitGuildSyncWithAck(
+        guildSyncSocket,
+        'guildsync:gsa-post-application',
+        {
+          name,
+          applicant_account: name,
+          requested_by: interaction.user.id,
+          requested_by_name: interaction.user.tag
+        },
+        45000
+      );
+
+      if (!result?.ok) {
+        await interaction.editReply(result?.message || `No GuildSync application record was posted for ${name}.`);
+        return;
+      }
+
+      await interaction.editReply(result.message || `Posted GuildSync application record for ${result.applicant_account || name}.`);
+    } catch (error) {
+      await interaction.editReply(error.message || 'Failed to post GuildSync application record.');
+    }
+  }
+};
+
 const commands = [
-  roles
+  roles,
+  gsaCommand
 ];
 
 for (const command of commands) {
@@ -394,6 +453,24 @@ async function handleDiscordLiveUpdate(description, action) {
   }
 }
 
+
+function emitGuildSyncWithAck(socket, eventName, payload, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    if (!socket?.connected) {
+      reject(new Error('GuildSync websocket is not connected.'));
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      reject(new Error(`${eventName} did not respond within ${timeoutMs}ms.`));
+    }, timeoutMs);
+
+    socket.emit(eventName, payload, (response) => {
+      clearTimeout(timeout);
+      resolve(response);
+    });
+  });
+}
 
 function getUnixTimestampSeconds(dateValue = Date.now()) {
   return Math.floor(new Date(dateValue).getTime() / 1000).toString();

@@ -33,6 +33,7 @@ import {
   markDepositMailSent,
   insertBankingEntries,
   addManualBiweeklyTicketEntry,
+  moveBankingEntry,
   getAssociateTicketReport,
   getDiscordRankAuditReport,
   getRosterDataDate,
@@ -47,6 +48,7 @@ import {
   runMemberAutoLinking,
   processRosterData,
   recordGuildSyncApplications,
+  getGuildSyncApplicationByApplicantAccount,
   getPendingGuildSyncApplicationBroadcasts,
   markGuildSyncApplicationBroadcasted,
   parseGuildSyncBankingSavedVarsLua,
@@ -552,6 +554,88 @@ io.on('connection', (socket) => {
       sendSocketResponse(socket, 'guildsync:upload-savedvars-raw-result', callback, {
         ok: false,
         message: error.message || 'SavedVariables upload failed.'
+      });
+    }
+  });
+
+
+  socket.on('guildsync:gsa-post-application', async (payload = {}, callback) => {
+    if (socket.guildSyncAuthType !== 'discord-bot') {
+      sendSocketResponse(socket, 'guildsync:gsa-post-application-result', callback, {
+        ok: false,
+        message: 'Only the authenticated Discord bot can request an application repost.',
+        at: new Date().toLocaleString()
+      });
+      return;
+    }
+
+    try {
+      const applicantAccount = String(payload?.applicant_account || payload?.applicantAccount || payload?.name || '').trim();
+
+      if (!applicantAccount) {
+        throw new Error('Applicant account name is required.');
+      }
+
+      const record = await getGuildSyncApplicationByApplicantAccount(applicationDB, applicantAccount);
+
+      if (!record) {
+        sendSocketResponse(socket, 'guildsync:gsa-post-application-result', callback, {
+          ok: false,
+          message: `No GuildSync application record was found for ${applicantAccount}.`,
+          applicant_account: applicantAccount,
+          at: new Date().toLocaleString()
+        });
+        return;
+      }
+
+      const botSocket = discordBotSocketId ? io.sockets.sockets.get(discordBotSocketId) : null;
+
+      if (!botSocket?.connected) {
+        discordBotConnected = false;
+        discordBotSocketId = null;
+        throw new Error('The GuildSync Discord bot is not connected. Application was not posted.');
+      }
+
+      Log(`Manual GSA application repost requested for ${record.applicant_account} by Discord bot command.`);
+
+      const botResponse = await emitToSocketWithAck(
+        botSocket,
+        'guildsync:eso-guild-application-message',
+        {
+          source: 'guildsync-backend-server:gsa-post-command',
+          applicantAccount: record.applicant_account,
+          capturedAt: record.application_timestamp,
+          officerAccount: record.officer_processing,
+          action: record.application_action,
+          applicationText: record.application_text,
+          declineMessage: record.decline_message,
+          blacklistMessage: record.blacklist_message,
+          message: buildGuildSyncApplicationDiscordMessage(record)
+        },
+        30000
+      );
+
+      if (!botResponse?.ok) {
+        throw new Error(botResponse?.message || 'Discord bot failed to post the GuildSync application message.');
+      }
+
+      await markGuildSyncApplicationBroadcasted(applicationDB, record.applicant_account);
+
+      sendSocketResponse(socket, 'guildsync:gsa-post-application-result', callback, {
+        ok: true,
+        message: `Posted GuildSync application record for ${record.applicant_account}.`,
+        applicant_account: record.applicant_account,
+        application_action: record.application_action,
+        discord_broadcast: 1,
+        at: new Date().toLocaleString()
+      });
+    } catch (error) {
+      Log(`Manual GSA application repost failed: ${error.message}`);
+
+      sendSocketResponse(socket, 'guildsync:gsa-post-application-result', callback, {
+        ok: false,
+        message: error.message || 'Manual GSA application repost failed.',
+        at: new Date().toLocaleString()
       });
     }
   });
@@ -1591,6 +1675,54 @@ io.on('connection', (socket) => {
       };
 
       sendSocketResponse(socket, 'guildsync:manual-biweekly-ticket-result', callback, response);
+    }
+  });
+
+
+  socket.on('guildsync:move-banking-entry', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to move banking entries.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:move-banking-entry-result', callback, response);
+      return;
+    }
+
+    try {
+      const movedBy = socket.guildSyncUser.display_name
+        || socket.guildSyncUser.global_name
+        || socket.guildSyncUser.username
+        || socket.guildSyncUser.discord_user_id
+        || 'Unknown';
+
+      const result = await moveBankingEntry(applicationDB, {
+        ...payload,
+        movedBy
+      });
+
+      await broadcastBankingDataUpdate();
+
+      const response = {
+        ok: true,
+        message: 'Banking entry moved.',
+        ...result,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:move-banking-entry-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:move-banking-entry:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to move banking entry.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:move-banking-entry-result', callback, response);
     }
   });
 

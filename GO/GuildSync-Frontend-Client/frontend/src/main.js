@@ -187,12 +187,18 @@ let bankingLastRefreshValue = null;
 let bankingDataLoading = false;
 let bankingExportGridOpen = false;
 let bankingExportSection = 'biweekly';
+let bankingMoveDialogOpen = false;
+let bankingMoveSubmitting = false;
+let bankingMoveError = '';
+let bankingMoveEntry = null;
+let bankingMoveForm = { targetType: 'other', note: '', tickets: '' };
 let manualBiweeklyTicketDialogOpen = false;
 let manualBiweeklyTicketSubmitting = false;
 let manualBiweeklyTicketError = '';
 let manualBiweeklyTicketForm = { accountName: '', note: '', ticketType: 'biweekly', goldValue: '', tickets: '' };
 let manualBiweeklyTicketAccountSearchText = '';
 let manualBiweeklyTicketActiveMatchIndex = -1;
+let manualBiweeklyTicketAccountDropdownOpen = false;
 let bankingRafflePeriodOffsets = {
   biweekly: 0,
   monthly: 0
@@ -443,6 +449,7 @@ function renderGuildSyncTabContent() {
   return `
     ${content}
     ${manualBiweeklyTicketDialogOpen ? renderManualBiweeklyTicketDialog() : ''}
+    ${bankingMoveDialogOpen ? renderBankingMoveDialog() : ''}
     ${memberLinkDialogOpen ? renderMemberLinkDialog() : ''}
     ${associateTicketReportDialogOpen ? renderAssociateTicketReportDialog() : ''}
     ${discordRankAuditReportDialogOpen ? renderDiscordRankAuditReportDialog() : ''}
@@ -457,6 +464,7 @@ function isBlockingModalOpen() {
     || rosterHistoryDialogOpen
     || discordHistoryDialogOpen
     || manualBiweeklyTicketDialogOpen
+    || bankingMoveDialogOpen
     || memberLinkDialogOpen
     || associateTicketReportDialogOpen
     || discordRankAuditReportDialogOpen
@@ -489,6 +497,10 @@ function closeTopOpenModal() {
   }
   if (memberLinkDialogOpen) {
     closeMemberLinkDialog();
+    return true;
+  }
+  if (bankingMoveDialogOpen) {
+    closeBankingMoveDialog();
     return true;
   }
   if (manualBiweeklyTicketDialogOpen) {
@@ -3486,20 +3498,32 @@ async function runAssociateTicketReport() {
 
 function getManualTicketMemberMatches() {
   const query = String(manualBiweeklyTicketAccountSearchText || '').trim().toLowerCase();
+  const anonymousOption = { account_name: 'Anonymous', rank: 'Manual Entry' };
+  const seenAccountNames = new Set(['anonymous']);
 
-  if (!query) {
-    return [];
-  }
-
-  return rosterMembers
+  const matches = rosterMembers
     .filter((member) => String(member.account_name || '').trim())
-    .filter((member) => String(member.account_name || '').toLowerCase().includes(query))
+    .filter((member) => {
+      const accountName = String(member.account_name || '').trim();
+      const normalizedAccountName = accountName.toLowerCase();
+
+      if (!normalizedAccountName || seenAccountNames.has(normalizedAccountName)) {
+        return false;
+      }
+
+      if (query && !normalizedAccountName.includes(query)) {
+        return false;
+      }
+
+      seenAccountNames.add(normalizedAccountName);
+      return true;
+    })
     .slice()
     .sort((left, right) => {
       const leftName = String(left.account_name || '').toLowerCase();
       const rightName = String(right.account_name || '').toLowerCase();
-      const leftStarts = leftName.startsWith(query) ? 0 : 1;
-      const rightStarts = rightName.startsWith(query) ? 0 : 1;
+      const leftStarts = query && leftName.startsWith(query) ? 0 : 1;
+      const rightStarts = query && rightName.startsWith(query) ? 0 : 1;
 
       if (leftStarts !== rightStarts) {
         return leftStarts - rightStarts;
@@ -3507,7 +3531,50 @@ function getManualTicketMemberMatches() {
 
       return leftName.localeCompare(rightName);
     })
-    .slice(0, 20);
+    .slice(0, 19);
+
+  return [anonymousOption, ...matches];
+}
+
+function renderManualTicketMatchListHtml(memberMatches = getManualTicketMemberMatches()) {
+  const selectedAccountName = String(manualBiweeklyTicketForm.accountName || '').trim();
+
+  return memberMatches.length === 0
+    ? '<div class="roster-history-muted manual-ticket-no-matches">No matching guild members found.</div>'
+    : memberMatches.map((member, index) => `
+        <button class="roster-history-match${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? ' is-selected' : ''}" type="button" data-manual-ticket-account="${escapeAttribute(member.account_name)}" role="option" aria-selected="${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? 'true' : 'false'}">
+          <span>${escapeHtml(member.account_name)}</span>
+          <strong>${escapeHtml(member.rank || '')}</strong>
+          ${index === manualBiweeklyTicketActiveMatchIndex ? '<small>Enter</small>' : ''}
+        </button>
+      `).join('');
+}
+
+function wireManualTicketMatchList() {
+  document.querySelectorAll('[data-manual-ticket-account]').forEach((button) => {
+    button.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+
+    button.addEventListener('click', () => {
+      selectManualTicketAccount(button.dataset.manualTicketAccount || '');
+    });
+  });
+}
+
+function refreshManualTicketMatchList() {
+  const matchList = document.querySelector('#manualTicketMatchList');
+  if (!matchList) {
+    return;
+  }
+
+  const matches = getManualTicketMemberMatches();
+  if (manualBiweeklyTicketActiveMatchIndex >= matches.length) {
+    manualBiweeklyTicketActiveMatchIndex = matches.length > 0 ? matches.length - 1 : -1;
+  }
+
+  matchList.innerHTML = renderManualTicketMatchListHtml(matches);
+  wireManualTicketMatchList();
 }
 
 function selectManualTicketAccount(accountName) {
@@ -3515,9 +3582,10 @@ function selectManualTicketAccount(accountName) {
 
   manualBiweeklyTicketForm.accountName = cleanAccountName;
   manualBiweeklyTicketAccountSearchText = cleanAccountName;
+  manualBiweeklyTicketAccountDropdownOpen = false;
+  manualBiweeklyTicketActiveMatchIndex = -1;
   manualBiweeklyTicketError = '';
   renderGuildSyncTabLayout();
-  focusInputById('manualTicketAccountSearchInput');
 }
 
 function focusInputById(inputId) {
@@ -3537,7 +3605,7 @@ function focusInputById(inputId) {
 }
 
 function renderManualBiweeklyTicketDialog() {
-  const memberMatches = getManualTicketMemberMatches();
+  const memberMatches = manualBiweeklyTicketAccountDropdownOpen ? getManualTicketMemberMatches() : [];
   const selectedAccountName = String(manualBiweeklyTicketForm.accountName || '').trim();
 
   return `
@@ -3545,8 +3613,8 @@ function renderManualBiweeklyTicketDialog() {
       <div class="roster-history-dialog manual-ticket-dialog">
         <div class="roster-history-header">
           <div>
-            <h3 id="manualBiweeklyTicketTitle">Add Manual Tickets</h3>
-            <p>Add free/manual raffle tickets such as FFTG. These do not count as purchased tickets.</p>
+            <h3 id="manualBiweeklyTicketTitle">Add Manual Entry</h3>
+            <p>Add a manual banking or raffle entry such as FFTG, officer corrections, or anonymous gold.</p>
           </div>
           <button id="closeManualBiweeklyTicketButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
         </div>
@@ -3554,23 +3622,19 @@ function renderManualBiweeklyTicketDialog() {
         ${manualBiweeklyTicketError ? `<div class="discord-data-error">${escapeHtml(manualBiweeklyTicketError)}</div>` : ''}
 
         <div class="manual-ticket-form">
-          <label class="manual-ticket-member-field">
-            <input id="manualTicketAccountSearchInput" class="discord-search-input" type="search" placeholder="Start typing part of an account name..." value="${escapeAttribute(manualBiweeklyTicketAccountSearchText)}" autocomplete="off" />
-          </label>
+          <div class="manual-ticket-member-picker">
+            <label class="manual-ticket-member-field" for="manualTicketAccountSearchInput">
+              <input id="manualTicketAccountSearchInput" class="discord-search-input" type="search" placeholder="Start typing part of an account name..." value="${escapeAttribute(manualBiweeklyTicketAccountSearchText)}" autocomplete="off" />
+            </label>
 
-          ${selectedAccountName ? `<div class="roster-history-muted">Selected: ${escapeHtml(selectedAccountName)}</div>` : ''}
-
-          <div class="roster-history-match-list manual-ticket-match-list">
-            ${memberMatches.length === 0
-      ? '<div class="roster-history-muted">No matching names</div>'
-      : memberMatches.map((member, index) => `
-                <button class="roster-history-match${index === manualBiweeklyTicketActiveMatchIndex || member.account_name === selectedAccountName ? ' is-selected' : ''}" type="button" data-manual-ticket-account="${escapeAttribute(member.account_name)}">
-                  <span>${escapeHtml(member.account_name)}</span>
-                  <strong>${escapeHtml(member.rank || '')}</strong>
-                  ${index === manualBiweeklyTicketActiveMatchIndex ? '<small>Enter</small>' : ''}
-                </button>
-              `).join('')}
+            ${manualBiweeklyTicketAccountDropdownOpen ? `
+              <div id="manualTicketMatchList" class="roster-history-match-list manual-ticket-match-list" role="listbox" aria-label="Matching guild members">
+                ${renderManualTicketMatchListHtml(memberMatches)}
+              </div>
+            ` : ''}
           </div>
+
+          ${selectedAccountName ? `<div class="roster-history-muted manual-ticket-selected-member">Selected: ${escapeHtml(selectedAccountName)}</div>` : ''}
 
           <div class="manual-ticket-entry-row">
             <div class="manual-ticket-type-field" role="group" aria-label="Ticket type">
@@ -3591,7 +3655,7 @@ function renderManualBiweeklyTicketDialog() {
               </label>
               <label class="manual-ticket-count-field">
                 <div class="manual-ticket-number-wrap">
-                  <input id="manualTicketCountInput" class="discord-search-input manual-ticket-count-input" type="number" min="1" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(manualBiweeklyTicketForm.tickets)}" />
+                  <input id="manualTicketCountInput" class="discord-search-input manual-ticket-count-input" type="number" min="0" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(manualBiweeklyTicketForm.tickets)}" />
                   <div class="manual-ticket-number-buttons" aria-hidden="true">
                     <button id="manualTicketCountUpButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌃</button>
                     <button id="manualTicketCountDownButton" class="manual-ticket-number-button" type="button" tabindex="-1">⌄</button>
@@ -3601,7 +3665,7 @@ function renderManualBiweeklyTicketDialog() {
             </div>
           </div>
           <div class="manual-ticket-actions">
-            <button id="saveManualBiweeklyTicketButton" class="refresh-discord-button" type="button" ${manualBiweeklyTicketSubmitting ? 'disabled' : ''}>${manualBiweeklyTicketSubmitting ? 'Saving...' : 'Add Manual Tickets'}</button>
+            <button id="saveManualBiweeklyTicketButton" class="refresh-discord-button" type="button" ${manualBiweeklyTicketSubmitting ? 'disabled' : ''}>${manualBiweeklyTicketSubmitting ? 'Saving...' : 'Add Manual Entry'}</button>
           </div>
         </div>
       </div>
@@ -3621,15 +3685,52 @@ function wireManualBiweeklyTicketDialog() {
 
   const accountSearchInput = document.querySelector('#manualTicketAccountSearchInput');
   if (accountSearchInput) {
+    const openManualTicketDropdown = ({ rerender = false } = {}) => {
+      manualBiweeklyTicketAccountDropdownOpen = true;
+      manualBiweeklyTicketActiveMatchIndex = getManualTicketMemberMatches().length > 0 ? 0 : -1;
+
+      if (rerender) {
+        renderGuildSyncTabLayout();
+        focusInputById('manualTicketAccountSearchInput');
+        return;
+      }
+
+      refreshManualTicketMatchList();
+    };
+
+    accountSearchInput.addEventListener('focus', () => {
+      if (!manualBiweeklyTicketAccountDropdownOpen) {
+        openManualTicketDropdown({ rerender: true });
+      }
+    });
+
+    accountSearchInput.addEventListener('click', () => {
+      if (!manualBiweeklyTicketAccountDropdownOpen) {
+        openManualTicketDropdown({ rerender: true });
+      }
+    });
+
     accountSearchInput.addEventListener('input', (event) => {
       manualBiweeklyTicketAccountSearchText = event.target.value || '';
       manualBiweeklyTicketForm.accountName = '';
+      manualBiweeklyTicketAccountDropdownOpen = true;
       manualBiweeklyTicketActiveMatchIndex = getManualTicketMemberMatches().length > 0 ? 0 : -1;
-      renderGuildSyncTabLayout();
-      focusInputById('manualTicketAccountSearchInput');
+      refreshManualTicketMatchList();
     });
 
     accountSearchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        return;
+      }
+
+      if (!manualBiweeklyTicketAccountDropdownOpen) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          openManualTicketDropdown({ rerender: true });
+        }
+        return;
+      }
+
       const matches = getManualTicketMemberMatches();
 
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -3641,8 +3742,7 @@ function wireManualBiweeklyTicketDialog() {
         const direction = event.key === 'ArrowDown' ? 1 : -1;
         const currentIndex = manualBiweeklyTicketActiveMatchIndex < 0 ? 0 : manualBiweeklyTicketActiveMatchIndex;
         manualBiweeklyTicketActiveMatchIndex = (currentIndex + direction + matches.length) % matches.length;
-        renderGuildSyncTabLayout();
-        focusInputById('manualTicketAccountSearchInput');
+        refreshManualTicketMatchList();
         return;
       }
 
@@ -3658,11 +3758,7 @@ function wireManualBiweeklyTicketDialog() {
     });
   }
 
-  document.querySelectorAll('[data-manual-ticket-account]').forEach((button) => {
-    button.addEventListener('click', () => {
-      selectManualTicketAccount(button.dataset.manualTicketAccount || '');
-    });
-  });
+  wireManualTicketMatchList();
 
   document.querySelector('#manualTicketNoteInput')?.addEventListener('input', (event) => {
     manualBiweeklyTicketForm.note = event.target.value || '';
@@ -3701,7 +3797,7 @@ function wireManualBiweeklyTicketDialog() {
 
   const stepManualTicketCount = (direction) => {
     const currentValue = Number(manualBiweeklyTicketForm.tickets) || 0;
-    const nextValue = Math.max(1, currentValue + direction);
+    const nextValue = Math.max(0, currentValue + direction);
     manualBiweeklyTicketForm.tickets = String(nextValue);
     if (ticketCountInput) {
       ticketCountInput.value = manualBiweeklyTicketForm.tickets;
@@ -3730,11 +3826,19 @@ async function submitManualBiweeklyTicket() {
   const note = String(manualBiweeklyTicketForm.note || '').trim();
   const ticketType = String(manualBiweeklyTicketForm.ticketType || 'biweekly').trim().toLowerCase() === 'monthly' ? 'monthly' : 'biweekly';
   const goldValue = Number(String(manualBiweeklyTicketForm.goldValue || '').trim() || 0);
-  const tickets = Number(manualBiweeklyTicketForm.tickets);
+  const tickets = Number(String(manualBiweeklyTicketForm.tickets || '').trim() || 0);
+
+  if (manualBiweeklyTicketAccountDropdownOpen) {
+    manualBiweeklyTicketError = 'Select a matching guild member or Anonymous from the list before saving.';
+    renderGuildSyncTabLayout();
+    focusInputById('manualTicketAccountSearchInput');
+    return;
+  }
 
   if (!accountName) {
-    manualBiweeklyTicketError = 'Choose a guild member.';
+    manualBiweeklyTicketError = 'Select a matching guild member or Anonymous from the list before saving.';
     renderGuildSyncTabLayout();
+    focusInputById('manualTicketAccountSearchInput');
     return;
   }
 
@@ -3744,8 +3848,24 @@ async function submitManualBiweeklyTicket() {
     return;
   }
 
-  if (!Number.isFinite(tickets) || tickets <= 0) {
-    manualBiweeklyTicketError = 'Enter the number of tickets to add.';
+  if (!Number.isFinite(tickets) || tickets < 0) {
+    manualBiweeklyTicketError = 'Tickets must be zero or greater.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  const isAnonymousManualTicketEntry = accountName.toLowerCase() === 'anonymous';
+
+  if (isAnonymousManualTicketEntry && Math.floor(tickets) > 0) {
+    manualBiweeklyTicketError = 'Anonymous cannot be awarded tickets. Use 0 tickets and enter a gold value.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  if (Math.floor(goldValue) === 0 && Math.floor(tickets) === 0) {
+    manualBiweeklyTicketError = isAnonymousManualTicketEntry
+      ? 'Enter a gold value for Anonymous when tickets are 0.'
+      : 'Enter gold or tickets. Both cannot be zero.';
     renderGuildSyncTabLayout();
     return;
   }
@@ -3764,15 +3884,16 @@ async function submitManualBiweeklyTicket() {
     }, 30000);
 
     if (!response?.ok) {
-      throw new Error(response?.message || response?.error || 'Failed to add manual ticket entry.');
+      throw new Error(response?.message || response?.error || 'Failed to add manual entry.');
     }
 
     manualBiweeklyTicketDialogOpen = false;
     manualBiweeklyTicketForm = { accountName: '', note: '', ticketType: 'biweekly', goldValue: '', tickets: '' };
     manualBiweeklyTicketAccountSearchText = '';
     manualBiweeklyTicketActiveMatchIndex = -1;
+    manualBiweeklyTicketAccountDropdownOpen = false;
     await refreshBankingDataFromBackend({ silent: true });
-    addSystemMessage('manual-ticket-added', response.message || 'Manual ticket entry added.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    addSystemMessage('manual-ticket-added', response.message || 'Manual entry added.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } catch (error) {
     manualBiweeklyTicketError = formatError(error);
   } finally {
@@ -4753,7 +4874,7 @@ async function handleGuildSyncApplicationsSavedVarsModified(payload = {}) {
 
 function renderBankDepositsPanel() {
   const rows = getBankingRowsForSection(bankingActiveSection);
-  const totals = getBankingTotals(rows);
+  const totals = getBankingTotals(rows, bankingActiveSection);
   const showTicketColumn = bankingActiveSection !== 'other';
 
   return `
@@ -4764,9 +4885,9 @@ function renderBankDepositsPanel() {
           <p class="discord-data-subtitle">View guild bank deposits and raffle ticket allocations by raffle period.</p>
         </div>
         <div class="discord-data-actions">
-          <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button" ${isAuthenticatedSession() ? '' : 'disabled title="Login required to add manual tickets."'}>
+          <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button" ${isAuthenticatedSession() ? '' : 'disabled title="Login required to add manual entries."'}>
             <span aria-hidden="true">＋</span>
-            <span>Add Manual Tickets</span>
+            <span>Add Manual Entry</span>
           </button>
           ${renderDepositMailCheckoutButton()}
           <button class="bank-export-button" type="button" data-bank-export-section="biweekly">
@@ -4803,6 +4924,7 @@ function renderBankDepositsPanel() {
                 <th>Depositor</th>
                 <th>Amount Deposited</th>
                 ${showTicketColumn ? '<th>Tickets Awarded</th>' : ''}
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -4813,6 +4935,8 @@ function renderBankDepositsPanel() {
 
         <div class="bank-deposits-summary-row">
           <div>Total Deposits: <strong>${escapeHtml(formatGoldAmount(totals.amount))}</strong> <span aria-hidden="true">🪙</span></div>
+          ${bankingActiveSection === 'monthly' ? `<div>Raffle Pot: <strong>${escapeHtml(formatGoldAmount(Math.floor(totals.amount / 2)))}</strong> <span aria-hidden="true">🪙</span></div>` : ''}
+          ${bankingActiveSection === 'biweekly' ? `<div>Draws: <strong>${escapeHtml(String(Math.ceil(totals.amount / 200000)))}</strong></div>` : ''}
           ${showTicketColumn ? `<div>Total Tickets Awarded: <strong>${escapeHtml(formatTicketAmount(totals.tickets))}</strong> <span aria-hidden="true">🎟</span></div>` : ''}
         </div>
       </div>
@@ -5029,10 +5153,245 @@ function getUnsentDepositMailCount() {
   }).length;
 }
 
+function getBankingEntryByEventId(eventId) {
+  const cleanEventId = String(eventId || '').trim();
+  return bankingEntries.find((entry) => String(entry.eventId || '').trim() === cleanEventId) || null;
+}
+
+function getBankingMoveTargetOptions(currentType) {
+  const cleanType = String(currentType || 'other').toLowerCase();
+  return ['biweekly', 'monthly', 'other'].filter((type) => type !== cleanType);
+}
+
+function getBankingMovePreviewNote(entry = {}, targetType = 'other', moveReason = '') {
+  const currentType = String(entry.type || 'other').toLowerCase();
+  const currentLabel = getBankingSectionLabel(currentType);
+  const targetLabel = getBankingSectionLabel(targetType);
+  const movedBy = getDisplayName() || 'Unknown user';
+  const lines = [
+    `Moved from ${currentLabel} to ${targetLabel} by ${movedBy}.`,
+    `Ref ${entry.eventId || ''}`
+  ];
+  const cleanReason = String(moveReason || '').trim();
+  if (cleanReason) {
+    lines.push(`Reason: ${cleanReason}`);
+  }
+  return lines.join('\n');
+}
+
+function openBankingMoveDialog(eventId) {
+  const entry = getBankingEntryByEventId(eventId);
+  if (!entry) {
+    addSystemMessage('banking-move-missing', 'Could not find the selected banking entry.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  const currentType = String(entry.type || 'other').toLowerCase();
+  const targetOptions = getBankingMoveTargetOptions(currentType);
+  const defaultTargetType = targetOptions[0] || 'other';
+
+  bankingMoveEntry = entry;
+  bankingMoveForm = {
+    targetType: defaultTargetType,
+    note: '',
+    tickets: String(Number(entry.ticketAmount) || 0)
+  };
+  bankingMoveError = '';
+  bankingMoveSubmitting = false;
+  bankingMoveDialogOpen = true;
+  renderGuildSyncTabLayout();
+}
+
+function closeBankingMoveDialog() {
+  bankingMoveDialogOpen = false;
+  bankingMoveSubmitting = false;
+  bankingMoveError = '';
+  bankingMoveEntry = null;
+  bankingMoveForm = { targetType: 'other', note: '', tickets: '' };
+  renderGuildSyncTabLayout();
+}
+
+function renderBankingMoveDialog() {
+  const entry = bankingMoveEntry || {};
+  const currentType = String(entry.type || 'other').toLowerCase();
+  const currentLabel = getBankingSectionLabel(currentType);
+  const targetOptions = getBankingMoveTargetOptions(currentType);
+  let targetType = String(bankingMoveForm.targetType || targetOptions[0] || 'other').toLowerCase();
+  if (!targetOptions.includes(targetType)) {
+    targetType = targetOptions[0] || 'other';
+    bankingMoveForm.targetType = targetType;
+  }
+  const showTickets = targetType !== 'other';
+  const generatedNote = getBankingMovePreviewNote(entry, targetType, bankingMoveForm.note);
+
+  return `
+    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="bankingMoveDialogTitle">
+      <div class="roster-history-dialog manual-ticket-dialog banking-move-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="bankingMoveDialogTitle">Move Banking Entry</h3>
+            <p>Move this deposit to a different banking section while preserving a reference to the original event.</p>
+          </div>
+          <button id="closeBankingMoveDialogButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
+        </div>
+
+        ${bankingMoveError ? `<div class="discord-data-error">${escapeHtml(bankingMoveError)}</div>` : ''}
+
+        <div class="manual-ticket-form banking-move-form">
+          <div class="banking-move-current-entry">
+            <div><strong>Current Type:</strong> ${escapeHtml(currentLabel)}</div>
+            <div><strong>Event ID:</strong> ${escapeHtml(entry.eventId || '')}</div>
+            <div><strong>Depositor:</strong> ${escapeHtml(entry.displayName || '')}</div>
+            <div><strong>Amount:</strong> ${escapeHtml(formatGoldAmount(entry.amount))} 🪙</div>
+          </div>
+
+          <div class="banking-move-target-row banking-move-switch-row">
+            <span>Move To</span>
+            <div class="banking-move-destination-switch" role="radiogroup" aria-label="Move banking entry destination">
+              ${targetOptions.map((type, index) => `
+                <button
+                  class="banking-move-destination-option ${targetType === type ? 'selected' : ''}"
+                  type="button"
+                  role="radio"
+                  aria-checked="${targetType === type ? 'true' : 'false'}"
+                  data-banking-move-target="${escapeAttribute(type)}"
+                >${escapeHtml(getBankingSectionLabel(type))}</button>
+                ${index === 0 ? '<div class="banking-move-switch-track" aria-hidden="true"><span></span></div>' : ''}
+              `).join('')}
+            </div>
+          </div>
+
+          ${showTickets ? `
+            <label class="manual-ticket-count-field banking-move-ticket-field">
+              <span>Tickets Awarded</span>
+              <input id="bankingMoveTicketsInput" class="discord-search-input manual-ticket-count-input" type="number" min="0" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(bankingMoveForm.tickets)}" />
+            </label>
+          ` : ''}
+
+          <label class="manual-ticket-note-field banking-move-note-field">
+            <span>Move Note</span>
+            <textarea id="bankingMoveNoteInput" class="discord-search-input manual-ticket-note-input banking-move-note-input" rows="2" placeholder="Optional reason for this move">${escapeHtml(bankingMoveForm.note)}</textarea>
+          </label>
+
+          <div class="roster-history-muted banking-move-generated-note">${escapeHtml(generatedNote).replace(/\n/g, '<br>')}</div>
+
+          <div class="manual-ticket-actions banking-move-actions">
+            <button id="saveBankingMoveButton" class="refresh-discord-button banking-move-submit-button" type="button" ${bankingMoveSubmitting ? 'disabled' : ''}>${bankingMoveSubmitting ? 'MOVING...' : 'MOVE'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireBankingMoveDialog() {
+  if (!bankingMoveDialogOpen) {
+    return;
+  }
+
+  document.querySelector('#closeBankingMoveDialogButton')?.addEventListener('click', () => closeBankingMoveDialog());
+
+  document.querySelectorAll('[data-banking-move-target]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const value = String(button.dataset.bankingMoveTarget || 'other').toLowerCase();
+      const currentType = String(bankingMoveEntry?.type || 'other').toLowerCase();
+      const targetOptions = getBankingMoveTargetOptions(currentType);
+      bankingMoveForm.targetType = targetOptions.includes(value) ? value : (targetOptions[0] || 'other');
+      if (bankingMoveForm.targetType === 'other') {
+        bankingMoveForm.tickets = '0';
+      }
+      renderGuildSyncTabLayout();
+    });
+  });
+
+  document.querySelector('#bankingMoveTicketsInput')?.addEventListener('input', (event) => {
+    const numericValue = String(event.target.value || '').replace(/\D/g, '');
+    if (event.target.value !== numericValue) {
+      event.target.value = numericValue;
+    }
+    bankingMoveForm.tickets = numericValue;
+  });
+
+  document.querySelector('#bankingMoveNoteInput')?.addEventListener('input', (event) => {
+    bankingMoveForm.note = event.target.value || '';
+    const preview = document.querySelector('.banking-move-generated-note');
+    if (preview) {
+      preview.innerText = getBankingMovePreviewNote(bankingMoveEntry || {}, bankingMoveForm.targetType || 'other', bankingMoveForm.note);
+    }
+  });
+
+  document.querySelector('#saveBankingMoveButton')?.addEventListener('click', () => submitBankingMove());
+
+  const overlay = document.querySelector('.roster-history-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        closeBankingMoveDialog();
+      }
+    });
+  }
+}
+
+async function submitBankingMove() {
+  const entry = bankingMoveEntry;
+  if (!entry?.eventId) {
+    bankingMoveError = 'No banking entry is selected.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  const currentType = String(entry.type || 'other').toLowerCase();
+  const targetOptions = getBankingMoveTargetOptions(currentType);
+  const targetType = String(bankingMoveForm.targetType || targetOptions[0] || 'other').toLowerCase();
+  if (!targetOptions.includes(targetType)) {
+    bankingMoveError = 'Select a valid destination section.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  const tickets = targetType === 'other' ? 0 : Math.floor(Number(String(bankingMoveForm.tickets || '').trim() || 0));
+  if (!Number.isFinite(tickets) || tickets < 0) {
+    bankingMoveError = 'Tickets must be zero or greater.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  bankingMoveSubmitting = true;
+  bankingMoveError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:move-banking-entry', {
+      event_id: entry.eventId,
+      target_type: targetType,
+      tickets,
+      note: bankingMoveForm.note || ''
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to move banking entry.');
+    }
+
+    closeBankingMoveDialog();
+    await refreshBankingDataFromBackend({ silent: true });
+    addSystemMessage('banking-entry-moved', response.message || 'Banking entry moved.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  } catch (error) {
+    bankingMoveSubmitting = false;
+    bankingMoveError = formatError(error);
+    renderGuildSyncTabLayout();
+  }
+}
+
 function wireBankDepositsPanel() {
   if (activeGuildSyncTab !== 'more') {
     return;
   }
+
+  wireBankingMoveDialog();
+
+  document.querySelectorAll('[data-bank-entry-move]').forEach((button) => {
+    button.addEventListener('click', () => openBankingMoveDialog(button.dataset.bankEntryMove || ''));
+  });
 
   document.querySelectorAll('[data-bank-section]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -5084,12 +5443,14 @@ function wireBankDepositsPanel() {
   if (manualTicketButton) {
     manualTicketButton.addEventListener('click', async () => {
       if (!isAuthenticatedSession()) {
-        addSystemMessage('manual-ticket-login-required', 'Login required to add manual tickets.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+        addSystemMessage('manual-ticket-login-required', 'Login required to add manual entries.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
         return;
       }
       manualBiweeklyTicketDialogOpen = true;
       manualBiweeklyTicketError = '';
       manualBiweeklyTicketAccountSearchText = manualBiweeklyTicketForm.accountName || '';
+      manualBiweeklyTicketAccountDropdownOpen = false;
+      manualBiweeklyTicketActiveMatchIndex = -1;
       if (rosterMembers.length === 0 && socket?.connected && isAuthenticatedSession()) {
         await refreshRosterDataFromBackend({ silent: true });
       }
@@ -5265,10 +5626,37 @@ function getBankingRaffleWindow(section) {
   };
 }
 
-function getBankingTotals(rows) {
+function getBankingRaffleTypeMarker(section = bankingActiveSection) {
+  const cleanSection = String(section || '').toLowerCase();
+  if (cleanSection === 'monthly') {
+    return 3;
+  }
+  if (cleanSection === 'biweekly') {
+    return 1;
+  }
+  return 0;
+}
+
+function getBankingTotalDepositAmount(entry = {}, section = bankingActiveSection) {
+  const rawAmount = Number(entry.amount) || 0;
+  const markerAmount = getBankingRaffleTypeMarker(section);
+
+  // ESO raffle deposits include a small type marker on the visible deposit amount
+  // (+1 for Bi-Weekly, +3 for 50/50). Keep showing the original deposit amount
+  // in the table, but remove the marker from summary totals only when it is
+  // actually present as the final digit. Manual/moved entries that do not carry
+  // the marker should total at their entered amount.
+  if (markerAmount > 0 && rawAmount > markerAmount && Math.abs(rawAmount) % 10 === markerAmount) {
+    return rawAmount - markerAmount;
+  }
+
+  return rawAmount;
+}
+
+function getBankingTotals(rows, section = bankingActiveSection) {
   return rows.reduce(
     (totals, entry) => {
-      totals.amount += Number(entry.amount) || 0;
+      totals.amount += getBankingTotalDepositAmount(entry, section);
       totals.tickets += Number(entry.ticketAmount) || 0;
       return totals;
     },
@@ -5284,6 +5672,7 @@ function renderBankDepositRow(entry, showTicketColumn = true) {
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td><strong class="bank-gold-amount">${escapeHtml(formatGoldAmount(entry.amount))}</strong> <span aria-hidden="true">🪙</span></td>
       ${showTicketColumn ? `<td><strong class="bank-ticket-amount">${escapeHtml(formatTicketAmount(entry.ticketAmount))}</strong></td>` : ''}
+      <td><button class="bank-entry-move-button" type="button" data-bank-entry-move="${escapeAttribute(entry.eventId || '')}">Move</button></td>
     </tr>
   `;
 }
@@ -5291,7 +5680,7 @@ function renderBankDepositRow(entry, showTicketColumn = true) {
 function renderEmptyBankDepositRow(showTicketColumn = true) {
   return `
     <tr>
-      <td class="bank-empty-row" colspan="${showTicketColumn ? '5' : '4'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
+      <td class="bank-empty-row" colspan="${showTicketColumn ? '6' : '5'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
     </tr>
   `;
 }
