@@ -19,6 +19,7 @@ func supportsTray() bool {
 }
 
 func (a *App) startTray() {
+	a.markTrayReady()
 	darwinTrayMu.Lock()
 	darwinTrayApp = a
 	darwinTrayMu.Unlock()
@@ -27,6 +28,7 @@ func (a *App) startTray() {
 }
 
 func (a *App) stopTray() {
+	a.markTrayStopped()
 	C.guildsyncRemoveTray()
 
 	darwinTrayMu.Lock()

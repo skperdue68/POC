@@ -12,12 +12,13 @@ import (
 )
 
 type App struct {
-	ctx      context.Context
-	appIcon  []byte
-	trayIcon []byte
-	mu       sync.Mutex
-	quiting  bool
-	oauth    *oauthRuntimeState
+	ctx         context.Context
+	appIcon     []byte
+	trayIcon    []byte
+	mu          sync.Mutex
+	quiting     bool
+	trayIsReady bool
+	oauth       *oauthRuntimeState
 
 	fileWatcherMu        sync.Mutex
 	fileWatcherCancel    context.CancelFunc
@@ -82,9 +83,16 @@ func (a *App) ShowMainWindow() bool {
 		runtime.WindowCenter(a.ctx)
 	}
 
-	if supportsTray() && state.HiddenToTray {
+	if state.HiddenToTray && a.canHideToTray() {
 		runtime.WindowHide(a.ctx)
 		return false
+	}
+
+	if state.HiddenToTray {
+		// Safety fallback: if tray support is unavailable/not ready (common on Linux
+		// desktop environments without an AppIndicator/status notifier host), do not
+		// restore into an invisible hidden state. Show the window and clear the flag.
+		_ = a.saveWindowStateWithHiddenToTray(false)
 	}
 
 	runtime.WindowShow(a.ctx)
@@ -155,7 +163,7 @@ func (a *App) HideToTray() {
 		return
 	}
 
-	if supportsTray() {
+	if a.canHideToTray() {
 		runtime.WindowHide(a.ctx)
 		return
 	}
@@ -196,7 +204,7 @@ func (a *App) MinimizeWindow() {
 		return
 	}
 
-	if (stdRuntime.GOOS == "linux" || stdRuntime.GOOS == "darwin") && supportsTray() {
+	if (stdRuntime.GOOS == "linux" || stdRuntime.GOOS == "darwin") && a.canHideToTray() {
 		// Linux/macOS tray behavior: minimize hides GuildSync to the tray.
 		_ = a.saveWindowStateWithHiddenToTray(true)
 		runtime.WindowHide(a.ctx)
@@ -213,7 +221,7 @@ func (a *App) CloseWindow() {
 		return
 	}
 
-	if supportsTray() {
+	if a.canHideToTray() {
 		// Existing tray platforms hide to system tray on close.
 		_ = a.saveWindowStateWithHiddenToTray(true)
 		runtime.WindowHide(a.ctx)
@@ -238,6 +246,39 @@ func (a *App) QuitFromTray() {
 	if a.ctx != nil {
 		runtime.Quit(a.ctx)
 	}
+}
+
+func (a *App) markTrayReady() {
+	a.mu.Lock()
+	a.trayIsReady = true
+	a.mu.Unlock()
+}
+
+func (a *App) markTrayStopped() {
+	a.mu.Lock()
+	a.trayIsReady = false
+	a.mu.Unlock()
+}
+
+func (a *App) isTrayReady() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.trayIsReady
+}
+
+func (a *App) canHideToTray() bool {
+	if !supportsTray() {
+		return false
+	}
+
+	// On Linux, reporting compile-time tray support is not enough. Some desktop
+	// environments do not provide an AppIndicator/status notifier host, so hiding
+	// before the systray callback runs can make GuildSync appear to vanish.
+	if stdRuntime.GOOS == "linux" {
+		return a.isTrayReady()
+	}
+
+	return true
 }
 
 func (a *App) loadWindowState() WindowState {

@@ -15,10 +15,12 @@ func (a *App) startTray() {
 }
 
 func (a *App) stopTray() {
+	a.markTrayStopped()
 	systray.Quit()
 }
 
 func (a *App) trayReady() {
+	a.markTrayReady()
 	// Linux desktop environments generally expect a PNG tray icon.
 	systray.SetIcon(a.appIcon)
 	systray.SetTitle("GuildSync")
@@ -47,5 +49,5 @@ func (a *App) trayReady() {
 }
 
 func (a *App) trayExit() {
-	// Cleanup hook if needed later.
+	a.markTrayStopped()
 }
