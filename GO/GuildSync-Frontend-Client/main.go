@@ -33,8 +33,8 @@ func main() {
 		MinWidth:  900,
 		Frameless: true,
 
-		// Tray-supported platforms hide instead of closing.
-		// Windows behavior remains whatever the existing tray support provides.
+		// Windows hides instead of closing because it still supports tray.
+		// macOS and Linux return false from supportsTray(), so they quit normally.
 		HideWindowOnClose: supportsTray(),
 
 		AlwaysOnTop: true,

@@ -1,4 +1,5 @@
-//go:build darwin
+//go:build darwin && guildsync_enable_darwin_tray
+// +build darwin,guildsync_enable_darwin_tray
 
 #import <Cocoa/Cocoa.h>
 
