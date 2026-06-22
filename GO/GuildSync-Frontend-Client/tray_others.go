@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux && !darwin
 
 package main
 
@@ -7,10 +7,9 @@ func supportsTray() bool {
 }
 
 func (a *App) startTray() {
-	// Systray is intentionally disabled on macOS and Linux.
-	// Those platforms use normal Wails/native app behavior.
+	// Systray is intentionally disabled on unsupported platforms.
 }
 
 func (a *App) stopTray() {
-	// No-op on macOS and Linux.
+	// No-op on unsupported platforms.
 }

@@ -33,8 +33,8 @@ func main() {
 		MinWidth:  900,
 		Frameless: true,
 
-		// Windows uses our systray file.
-		// macOS/Linux will use normal native window behavior.
+		// Tray-supported platforms hide instead of closing.
+		// Windows behavior remains whatever the existing tray support provides.
 		HideWindowOnClose: supportsTray(),
 
 		AlwaysOnTop: true,

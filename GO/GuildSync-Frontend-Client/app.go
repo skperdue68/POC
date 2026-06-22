@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	stdRuntime "runtime"
 	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -44,8 +45,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
 	// Start tray support.
-	// On Windows this starts getlantern/systray.
-	// On macOS/Linux this is a no-op and the OS/Wails handles normal app behavior.
+	// Windows keeps its existing behavior. Linux and macOS use tray hide/show support.
 	a.startTray()
 
 	// Splash screen behavior.
@@ -192,14 +192,19 @@ func (a *App) MaximizeWindow() {
 }
 
 func (a *App) MinimizeWindow() {
-	// Minimized is not the same as hidden-to-tray.
-	// The window is still considered open.
-	_ = a.saveWindowStateWithHiddenToTray(false)
-
 	if a.ctx == nil {
 		return
 	}
 
+	if (stdRuntime.GOOS == "linux" || stdRuntime.GOOS == "darwin") && supportsTray() {
+		// Linux/macOS tray behavior: minimize hides GuildSync to the tray.
+		_ = a.saveWindowStateWithHiddenToTray(true)
+		runtime.WindowHide(a.ctx)
+		return
+	}
+
+	// Windows behavior is unchanged: minimize means the window is still open.
+	_ = a.saveWindowStateWithHiddenToTray(false)
 	runtime.WindowMinimise(a.ctx)
 }
 
@@ -209,7 +214,7 @@ func (a *App) CloseWindow() {
 	}
 
 	if supportsTray() {
-		// Windows: close button hides to system tray.
+		// Existing tray platforms hide to system tray on close.
 		_ = a.saveWindowStateWithHiddenToTray(true)
 		runtime.WindowHide(a.ctx)
 		return
@@ -217,7 +222,7 @@ func (a *App) CloseWindow() {
 
 	_ = a.saveWindowStateWithHiddenToTray(false)
 
-	// macOS/Linux: let the platform behave normally.
+	// Non-tray platforms quit normally.
 	runtime.Quit(a.ctx)
 }
 
