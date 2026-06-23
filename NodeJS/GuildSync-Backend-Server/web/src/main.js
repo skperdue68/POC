@@ -33,7 +33,7 @@ import {
 
 import { EventsOn } from './web-events.js';
 
-const GUILDSYNC_APP_VERSION = '1.1.2';
+const GUILDSYNC_APP_VERSION = '1.1.3';
 
 const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
   windows: { label: 'Windows detected', shortLabel: 'Windows', fileName: 'GuildSync-windows-amd64.zip', href: '/downloads/GuildSync-windows-amd64.zip' },
