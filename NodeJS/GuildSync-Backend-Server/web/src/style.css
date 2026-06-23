@@ -2663,6 +2663,39 @@ body {
   min-width: 180px;
 }
 
+.discord-rank-audit-table-shell {
+  overflow-x: hidden;
+}
+
+.discord-rank-audit-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.discord-rank-audit-member-col { width: 20%; }
+.discord-rank-audit-discord-col { width: 18%; }
+.discord-rank-audit-eso-account-col { width: 22%; }
+.discord-rank-audit-eso-rank-col { width: 14%; }
+.discord-rank-audit-issue-col { width: 26%; }
+
+.discord-rank-audit-table th,
+.discord-rank-audit-table td {
+  padding-left: 8px;
+  padding-right: 8px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  vertical-align: top;
+  line-height: 1.35;
+}
+
+.discord-rank-audit-issue-cell {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
 .report-section-empty {
   padding: 16px;
 }
@@ -6316,3 +6349,144 @@ body {
   padding: 0.25rem 0 0.15rem 0 !important;
   min-height: 52px !important;
 }
+/* Compact three-choice Move Banking Entry selector */
+.banking-move-dialog {
+  max-height: calc(100vh - 32px) !important;
+  overflow-y: auto !important;
+}
+
+.banking-move-slider-row {
+  display: grid !important;
+  grid-template-columns: 64px minmax(0, 1fr) !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  margin: 0.1rem 0 0.15rem 0 !important;
+}
+
+.banking-move-slider-row > span {
+  margin-top: 0 !important;
+}
+
+.banking-move-slider-control {
+  width: 100%;
+}
+
+.banking-move-slider-labels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.banking-move-slider-label {
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  background: rgba(15, 23, 42, 0.58);
+  color: rgba(245,245,255,0.82);
+  border-radius: 11px;
+  padding: 0.48rem 0.6rem;
+  min-height: 50px;
+  cursor: pointer;
+  text-align: center;
+  display: grid;
+  align-content: center;
+  gap: 0.12rem;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.banking-move-slider-label strong {
+  font-size: 0.94rem;
+  line-height: 1.05;
+}
+
+.banking-move-slider-label span {
+  margin: 0 !important;
+  color: rgba(245,245,255,0.62) !important;
+  font-size: 0.72rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.banking-move-slider-label:hover {
+  border-color: rgba(96, 165, 250, 0.75);
+  background: rgba(37, 99, 235, 0.18);
+}
+
+.banking-move-slider-label.selected {
+  border-color: rgba(96, 165, 250, 0.95);
+  background: linear-gradient(180deg, #2d6cdf 0%, #2454bd 100%);
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.22), 0 10px 24px rgba(37, 99, 235, 0.22);
+}
+
+.banking-move-slider-label.selected span {
+  color: rgba(255,255,255,0.82) !important;
+}
+
+.banking-move-slider-label.current:not(.selected) {
+  border-color: rgba(148, 163, 184, 0.38);
+  background: rgba(255,255,255,0.045);
+}
+
+.banking-move-compact-row {
+  display: grid !important;
+  grid-template-columns: 300px minmax(360px, 1fr) !important;
+  gap: 0.45rem !important;
+  align-items: center !important;
+  margin: 0.15rem 0 !important;
+}
+
+.banking-move-compact-row .banking-move-ticket-field,
+.banking-move-compact-row .banking-move-note-field {
+  display: grid !important;
+  grid-template-columns: max-content minmax(0, 1fr) !important;
+  align-items: center !important;
+  gap: 0.55rem !important;
+  margin: 0 !important;
+}
+
+.banking-move-compact-row .banking-move-ticket-field span,
+.banking-move-compact-row .banking-move-note-field span {
+  margin: 0 !important;
+  white-space: nowrap !important;
+}
+
+.banking-move-compact-row .banking-move-ticket-field input {
+  max-width: 120px !important;
+  height: 42px !important;
+}
+
+.banking-move-dialog .banking-move-note-input {
+  height: 84px !important;
+  min-height: 84px !important;
+  max-height: 140px !important;
+  resize: vertical !important;
+}
+
+@media (max-width: 900px) {
+  .banking-move-compact-row {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .banking-move-slider-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  .banking-move-slider-labels {
+    gap: 0.4rem;
+  }
+
+  .banking-move-slider-label {
+    padding: 0.42rem 0.35rem;
+    min-height: 48px;
+  }
+
+  .banking-move-compact-row .banking-move-ticket-field,
+  .banking-move-compact-row .banking-move-note-field {
+    grid-template-columns: 1fr !important;
+    align-items: stretch !important;
+  }
+}
+

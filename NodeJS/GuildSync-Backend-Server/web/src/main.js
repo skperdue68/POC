@@ -2126,6 +2126,13 @@ function renderDiscordRankAuditReportRows(rows = discordRankAuditReportRows) {
   return `
     <div class="roster-history-event-table-shell report-result-table-shell discord-rank-audit-table-shell">
       <table class="discord-member-table roster-history-event-table report-result-table discord-rank-audit-table">
+        <colgroup>
+          <col class="discord-rank-audit-member-col">
+          <col class="discord-rank-audit-discord-col">
+          <col class="discord-rank-audit-eso-account-col">
+          <col class="discord-rank-audit-eso-rank-col">
+          <col class="discord-rank-audit-issue-col">
+        </colgroup>
         <thead>
           <tr>
             <th>Discord Member</th>
@@ -2138,11 +2145,11 @@ function renderDiscordRankAuditReportRows(rows = discordRankAuditReportRows) {
         <tbody>
           ${rows.map((row) => `
             <tr>
-              <td>${escapeHtml(formatDiscordRankAuditMember(row))}</td>
-              <td>${escapeHtml(row.discord_rank || 'No matching rank role')}</td>
-              <td>${escapeHtml(row.eso_accounts || 'No linked ESO account')}</td>
-              <td>${escapeHtml(row.eso_rank || 'None')}</td>
-              <td>${escapeHtml(formatDiscordRankAuditIssue(row))}</td>
+              <td data-label="Discord Member" class="discord-rank-audit-member-cell">${escapeHtml(formatDiscordRankAuditMember(row))}</td>
+              <td data-label="Discord Rank Role" class="discord-rank-audit-discord-cell">${escapeHtml(row.discord_rank || 'No matching rank role')}</td>
+              <td data-label="Linked ESO Account(s)" class="discord-rank-audit-eso-account-cell">${escapeHtml(row.eso_accounts || 'No linked ESO account')}</td>
+              <td data-label="ESO Rank" class="discord-rank-audit-eso-rank-cell">${escapeHtml(row.eso_rank || 'None')}</td>
+              <td data-label="Issue" class="discord-rank-audit-issue-cell">${escapeHtml(formatDiscordRankAuditIssue(row))}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -5397,7 +5404,7 @@ function renderBankingExportGridRow(entry) {
   return `
     <tr>
       <td>${escapeHtml(entry.displayName || '')}</td>
-      <td>${escapeHtml(String(Number(entry.amount) || 0))}</td>
+      <td>${escapeHtml(String(getBankingTotalDepositAmount(entry, bankingExportSection)))}</td>
       <td>${escapeHtml(String(Number(entry.ticketAmount) || 0))}</td>
       <td>${escapeHtml(entry.note || '')}</td>
     </tr>
@@ -5537,7 +5544,25 @@ function getBankingEntryByEventId(eventId) {
 
 function getBankingMoveTargetOptions(currentType) {
   const cleanType = String(currentType || 'other').toLowerCase();
-  return ['biweekly', 'monthly', 'other'].filter((type) => type !== cleanType);
+  const validTypes = ['biweekly', 'monthly', 'other'];
+  const current = validTypes.includes(cleanType) ? cleanType : 'other';
+  const sideOptions = validTypes.filter((type) => type !== current);
+  return [sideOptions[0] || 'biweekly', current, sideOptions[1] || 'other'];
+}
+
+function getBankingMoveCalculatedTickets(entry = {}, targetType = 'other') {
+  const cleanTargetType = String(targetType || 'other').toLowerCase();
+  const amount = Number(entry?.amount) || 0;
+  if (cleanTargetType === String(entry?.type || '').toLowerCase()) {
+    return Number(entry?.ticketAmount) || 0;
+  }
+  if (cleanTargetType === 'biweekly') {
+    return Math.floor(amount / 500);
+  }
+  if (cleanTargetType === 'monthly') {
+    return Math.floor(amount / 2500);
+  }
+  return 0;
 }
 
 function getBankingMovePreviewNote(entry = {}, targetType = 'other', moveReason = '') {
@@ -5564,14 +5589,12 @@ function openBankingMoveDialog(eventId) {
   }
 
   const currentType = String(entry.type || 'other').toLowerCase();
-  const targetOptions = getBankingMoveTargetOptions(currentType);
-  const defaultTargetType = targetOptions[0] || 'other';
 
   bankingMoveEntry = entry;
   bankingMoveForm = {
-    targetType: defaultTargetType,
+    targetType: currentType,
     note: '',
-    tickets: String(Number(entry.ticketAmount) || 0)
+    tickets: String(getBankingMoveCalculatedTickets(entry, currentType))
   };
   bankingMoveError = '';
   bankingMoveSubmitting = false;
@@ -5598,7 +5621,6 @@ function renderBankingMoveDialog() {
     targetType = targetOptions[0] || 'other';
     bankingMoveForm.targetType = targetType;
   }
-  const showTickets = targetType !== 'other';
   const generatedNote = getBankingMovePreviewNote(entry, targetType, bankingMoveForm.note);
 
   return `
@@ -5622,38 +5644,42 @@ function renderBankingMoveDialog() {
             <div><strong>Amount:</strong> ${escapeHtml(formatGoldAmount(entry.amount))} 🪙</div>
           </div>
 
-          <div class="banking-move-target-row banking-move-switch-row">
+          <div class="banking-move-target-row banking-move-slider-row">
             <span>Move To</span>
-            <div class="banking-move-destination-switch" role="radiogroup" aria-label="Move banking entry destination">
-              ${targetOptions.map((type, index) => `
-                <button
-                  class="banking-move-destination-option ${targetType === type ? 'selected' : ''}"
-                  type="button"
-                  role="radio"
-                  aria-checked="${targetType === type ? 'true' : 'false'}"
-                  data-banking-move-target="${escapeAttribute(type)}"
-                >${escapeHtml(getBankingSectionLabel(type))}</button>
-                ${index === 0 ? '<div class="banking-move-switch-track" aria-hidden="true"><span></span></div>' : ''}
-              `).join('')}
+            <div class="banking-move-slider-control" role="radiogroup" aria-label="Move banking entry destination">
+              <div class="banking-move-slider-labels">
+                ${targetOptions.map((type) => `
+                  <button
+                    class="banking-move-slider-label ${targetType === type ? 'selected' : ''} ${type === currentType ? 'current' : ''}"
+                    type="button"
+                    role="radio"
+                    aria-checked="${targetType === type ? 'true' : 'false'}"
+                    data-banking-move-target="${escapeAttribute(type)}"
+                  >
+                    <strong>${escapeHtml(getBankingSectionLabel(type))}</strong>
+                    <span>${type === currentType ? 'Current / restore original values' : `${escapeHtml(String(getBankingMoveCalculatedTickets(entry, type)))} tickets`}</span>
+                  </button>
+                `).join('')}
+              </div>
             </div>
           </div>
 
-          ${showTickets ? `
+          <div class="banking-move-compact-row">
             <label class="manual-ticket-count-field banking-move-ticket-field">
               <span>Tickets Awarded</span>
-              <input id="bankingMoveTicketsInput" class="discord-search-input manual-ticket-count-input" type="number" min="0" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(bankingMoveForm.tickets)}" />
+              <input id="bankingMoveTicketsInput" class="discord-search-input manual-ticket-count-input" type="number" min="0" step="1" inputmode="numeric" placeholder="# Tickets" value="${escapeAttribute(bankingMoveForm.tickets)}" ${targetType === 'other' ? 'disabled' : ''} />
             </label>
-          ` : ''}
 
-          <label class="manual-ticket-note-field banking-move-note-field">
-            <span>Move Note</span>
-            <textarea id="bankingMoveNoteInput" class="discord-search-input manual-ticket-note-input banking-move-note-input" rows="2" placeholder="Optional reason for this move">${escapeHtml(bankingMoveForm.note)}</textarea>
-          </label>
+            <label class="manual-ticket-note-field banking-move-note-field">
+              <span>Move Note</span>
+              <textarea id="bankingMoveNoteInput" class="discord-search-input manual-ticket-note-input banking-move-note-input" rows="1" placeholder="Optional reason for this move">${escapeHtml(bankingMoveForm.note)}</textarea>
+            </label>
+          </div>
 
           <div class="roster-history-muted banking-move-generated-note">${escapeHtml(generatedNote).replace(/\n/g, '<br>')}</div>
 
           <div class="manual-ticket-actions banking-move-actions">
-            <button id="saveBankingMoveButton" class="refresh-discord-button banking-move-submit-button" type="button" ${bankingMoveSubmitting ? 'disabled' : ''}>${bankingMoveSubmitting ? 'MOVING...' : 'MOVE'}</button>
+            <button id="saveBankingMoveButton" class="refresh-discord-button banking-move-submit-button" type="button" ${(bankingMoveSubmitting || targetType === currentType) ? 'disabled' : ''}>${bankingMoveSubmitting ? 'MOVING...' : (targetType === currentType ? 'SELECT A SIDE TO MOVE' : 'MOVE')}</button>
           </div>
         </div>
       </div>
@@ -5668,18 +5694,19 @@ function wireBankingMoveDialog() {
 
   document.querySelector('#closeBankingMoveDialogButton')?.addEventListener('click', () => closeBankingMoveDialog());
 
+  function applyBankingMoveTarget(value) {
+    const cleanValue = String(value || 'other').toLowerCase();
+    const currentType = String(bankingMoveEntry?.type || 'other').toLowerCase();
+    const targetOptions = getBankingMoveTargetOptions(currentType);
+    bankingMoveForm.targetType = targetOptions.includes(cleanValue) ? cleanValue : currentType;
+    bankingMoveForm.tickets = String(getBankingMoveCalculatedTickets(bankingMoveEntry || {}, bankingMoveForm.targetType));
+    renderGuildSyncTabLayout();
+  }
+
   document.querySelectorAll('[data-banking-move-target]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const value = String(button.dataset.bankingMoveTarget || 'other').toLowerCase();
-      const currentType = String(bankingMoveEntry?.type || 'other').toLowerCase();
-      const targetOptions = getBankingMoveTargetOptions(currentType);
-      bankingMoveForm.targetType = targetOptions.includes(value) ? value : (targetOptions[0] || 'other');
-      if (bankingMoveForm.targetType === 'other') {
-        bankingMoveForm.tickets = '0';
-      }
-      renderGuildSyncTabLayout();
-    });
+    button.addEventListener('click', () => applyBankingMoveTarget(button.dataset.bankingMoveTarget));
   });
+
 
   document.querySelector('#bankingMoveTicketsInput')?.addEventListener('input', (event) => {
     const numericValue = String(event.target.value || '').replace(/\D/g, '');
@@ -5720,8 +5747,8 @@ async function submitBankingMove() {
   const currentType = String(entry.type || 'other').toLowerCase();
   const targetOptions = getBankingMoveTargetOptions(currentType);
   const targetType = String(bankingMoveForm.targetType || targetOptions[0] || 'other').toLowerCase();
-  if (!targetOptions.includes(targetType)) {
-    bankingMoveError = 'Select a valid destination section.';
+  if (!targetOptions.includes(targetType) || targetType === currentType) {
+    bankingMoveError = 'Select one of the side destinations before moving this entry.';
     renderGuildSyncTabLayout();
     return;
   }
@@ -5862,7 +5889,7 @@ function getBankingExportTsv(rows) {
   for (const entry of rows) {
     lines.push([
       entry.displayName || '',
-      String(Number(entry.amount) || 0),
+      String(getBankingTotalDepositAmount(entry, bankingExportSection)),
       String(Number(entry.ticketAmount) || 0),
       entry.note || ''
     ]);
