@@ -107,6 +107,7 @@ let desktopClientUpdateInfo = {
 let socket = null;
 
 let discordMembers = [];
+let discordRoles = [];
 let discordLastRefreshValue = null;
 let discordDataLoading = false;
 let discordRefreshRequestRunning = false;
@@ -1054,8 +1055,7 @@ function renderEmptyEsoRosterRow() {
 }
 
 function getEsoRosterRankColor(rankName) {
-  const cleanRankName = String(rankName || '').trim();
-  const matchingDiscordRole = findRoleByName(cleanRankName);
+  const matchingDiscordRole = findRoleByRosterRankName(rankName);
   return discordRoleColorToHex(matchingDiscordRole?.role_color);
 }
 
@@ -1225,7 +1225,7 @@ function getAllRosterRankNames() {
 }
 
 function renderRosterRankFilterChip(rankName) {
-  const role = findRoleByName(rankName);
+  const role = findRoleByRosterRankName(rankName);
   const hexColor = discordRoleColorToHex(role?.role_color);
   const textColor = getReadableTextColor(hexColor);
   const roleStyle = buildFilledRoleStyle(hexColor, textColor);
@@ -3929,6 +3929,7 @@ async function runDiscordLastSeenReport() {
     if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to load Discord roster data.');
 
     discordMembers = normalizeDiscordMembers(response.members);
+    discordRoles = normalizeDiscordRoles(response.roles);
     discordLastSeenReportRows = [...discordMembers];
   } catch (error) {
     discordLastSeenReportError = formatError(error);
@@ -7084,6 +7085,7 @@ async function handleDiscordMemberDataUpdated(payload = {}) {
   }
 
   discordMembers = normalizeDiscordMembers(payload.members);
+  discordRoles = normalizeDiscordRoles(payload.roles);
 
   if (payload.last_refresh) {
     discordLastRefreshValue = payload.last_refresh;
@@ -7133,6 +7135,7 @@ async function refreshDiscordData(options = {}) {
 
     discordLastRefreshValue = dateResponse.value || null;
     discordMembers = normalizeDiscordMembers(memberResponse.members);
+    discordRoles = normalizeDiscordRoles(memberResponse.roles);
 
     if (!silent) {
       addSystemMessage('discord-data', `Loaded ${discordMembers.length} Discord member record${discordMembers.length === 1 ? '' : 's'}.`, {
@@ -7197,6 +7200,29 @@ function normalizeDiscordMembers(members) {
     }))
     .filter((member) => member.discord_id || member.username || member.global_name || member.server_nickname)
     .sort((a, b) => getMemberSortName(a).localeCompare(getMemberSortName(b), undefined, { sensitivity: 'base' }));
+}
+
+function normalizeDiscordRoles(roles) {
+  if (!Array.isArray(roles)) {
+    return [];
+  }
+
+  const byRoleKey = new Map();
+
+  for (const role of roles) {
+    const normalizedRole = normalizeDiscordRole(role);
+    if (!normalizedRole) {
+      continue;
+    }
+
+    const key = normalizedRole.role_id || normalizeDiscordRoleName(normalizedRole.role_name);
+    if (key && !byRoleKey.has(key)) {
+      byRoleKey.set(key, normalizedRole);
+    }
+  }
+
+  return Array.from(byRoleKey.values())
+    .sort((a, b) => String(a.role_name || '').localeCompare(String(b.role_name || ''), undefined, { sensitivity: 'base' }));
 }
 
 function normalizeDiscordRole(role) {
@@ -7466,9 +7492,65 @@ function renderRoleFilterChip(roleName) {
   `;
 }
 
+function findRoleByRosterRankName(rankName) {
+  const candidateNames = getDiscordRoleNamesForRosterRank(rankName);
+
+  for (const candidateName of candidateNames) {
+    const role = findRoleByName(candidateName);
+    if (role) {
+      return role;
+    }
+  }
+
+  return null;
+}
+
+function getDiscordRoleNamesForRosterRank(rankName) {
+  const cleanRankName = String(rankName || '').trim();
+
+  if (!cleanRankName) {
+    return [];
+  }
+
+  const normalizedRankName = normalizeDiscordRoleName(cleanRankName);
+  const rankAliases = {
+    associate: ['Associates', 'Associate'],
+    associates: ['Associates', 'Associate'],
+    soldier: ['Soldiers', 'Soldier'],
+    soldiers: ['Soldiers', 'Soldier'],
+    capo: ['Capo'],
+    capos: ['Capo', 'Capos'],
+    caporegime: ['CapoRegime', 'Capo Regime', 'Capo Regimes'],
+    consiglieres: ['Consigliere', 'Consiglieres'],
+    consigliere: ['Consigliere', 'Consiglieres']
+  };
+
+  const candidates = rankAliases[normalizedRankName] || [cleanRankName];
+
+  return Array.from(new Set([cleanRankName, ...candidates].filter(Boolean)));
+}
+
+function normalizeDiscordRoleName(roleName) {
+  return String(roleName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
 function findRoleByName(roleName) {
+  const normalizedRoleName = normalizeDiscordRoleName(roleName);
+
+  if (!normalizedRoleName) {
+    return null;
+  }
+
+  const directRole = discordRoles.find((item) => normalizeDiscordRoleName(item.role_name) === normalizedRoleName);
+  if (directRole) {
+    return directRole;
+  }
+
   for (const member of discordMembers) {
-    const role = member.roles.find((item) => item.role_name === roleName);
+    const role = member.roles.find((item) => normalizeDiscordRoleName(item.role_name) === normalizedRoleName);
     if (role) {
       return role;
     }

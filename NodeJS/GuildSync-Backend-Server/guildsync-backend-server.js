@@ -26,6 +26,7 @@ import {
   markDiscordHistoricalScanComplete,
   getDiscordDataDate,
   getDiscordMemberDataJSON,
+  getDiscordRoleDataJSON,
   getBankingDataDate,
   getBankingDataJSON,
   checkoutDepositMail,
@@ -2240,12 +2241,16 @@ io.on('connection', (socket) => {
 
   socket.on('guildsync:request-discord-member-dataJSON', async (payload = {}, callback) => {
     try {
-      const members = await getDiscordMemberDataJSON(applicationDB);
+      const [members, roles] = await Promise.all([
+        getDiscordMemberDataJSON(applicationDB),
+        getDiscordRoleDataJSON(applicationDB)
+      ]);
 
       const response = {
         ok: true,
         message: 'Discord member data retrieved.',
         members,
+        roles,
         members_returned: members.length,
         at: new Date().toLocaleString()
       };
@@ -2458,8 +2463,9 @@ async function broadcastRosterDataUpdate() {
 
 async function broadcastDiscordMemberDataUpdate() {
   try {
-    const [members, refreshDate] = await Promise.all([
+    const [members, roles, refreshDate] = await Promise.all([
       getDiscordMemberDataJSON(applicationDB),
+      getDiscordRoleDataJSON(applicationDB),
       getDiscordDataDate(applicationDB)
     ]);
 
@@ -2467,6 +2473,7 @@ async function broadcastDiscordMemberDataUpdate() {
       ok: true,
       message: 'Discord member data updated.',
       members,
+      roles,
       members_returned: members.length,
       last_refresh: refreshDate?.value || null,
       at: new Date().toLocaleString()

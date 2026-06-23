@@ -1571,6 +1571,19 @@ export async function getDiscordMemberDataJSON(applicationDB) {
 
 
 
+export async function getDiscordRoleDataJSON(applicationDB) {
+  const [rows] = await applicationDB.execute(`
+    SELECT
+      role_id,
+      role_name,
+      role_color
+    FROM discord_roles
+    ORDER BY role_name
+  `);
+
+  return rows;
+}
+
 export async function getDiscordMemberHistoryMatches(applicationDB, query = '') {
   const search = String(query || '').trim();
 
