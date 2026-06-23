@@ -6663,3 +6663,134 @@ body {
   border-color: rgba(96, 165, 250, 0.75);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
 }
+
+.banking-history-button {
+  white-space: nowrap;
+}
+
+.banking-history-dialog {
+  max-width: calc(100vw - 56px);
+  max-height: calc(100vh - 56px);
+  width: min(1280px, calc(100vw - 56px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.banking-history-header {
+  align-items: flex-start;
+}
+
+.banking-history-search-block {
+  position: relative;
+  padding: 18px 24px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.banking-history-search-field {
+  max-width: 620px;
+  width: min(620px, 100%);
+}
+
+.banking-history-autocomplete {
+  width: min(620px, 100%);
+  margin-top: 8px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.32);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.banking-history-autocomplete-option {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: transparent;
+  color: #dbeafe;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.banking-history-autocomplete-option:last-child {
+  border-bottom: 0;
+}
+
+.banking-history-autocomplete-option:hover,
+.banking-history-autocomplete-option.is-selected {
+  background: rgba(37, 99, 235, 0.32);
+}
+
+.banking-history-autocomplete-option small,
+.banking-history-autocomplete-empty {
+  color: #a7b7d8;
+  font-size: 0.82rem;
+}
+
+.banking-history-autocomplete-empty {
+  padding: 10px 14px;
+}
+
+.banking-history-results {
+  padding: 18px 24px 24px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.banking-history-count {
+  float: right;
+  color: #60a5fa;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.banking-history-table-shell {
+  flex: 1 1 auto !important;
+  min-height: 180px !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  border-radius: 12px;
+  scrollbar-gutter: stable;
+}
+
+.banking-history-table-shell .banking-history-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.banking-history-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.banking-history-table th,
+.banking-history-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  vertical-align: top;
+}
+
+.banking-history-date-column {
+  width: 190px;
+}
+
+.banking-history-notes-column {
+  width: 44%;
+}
+
+.banking-history-note-cell {
+  line-height: 1.35;
+}

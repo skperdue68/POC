@@ -29,6 +29,8 @@ import {
   getDiscordRoleDataJSON,
   getBankingDataDate,
   getBankingDataJSON,
+  getBankingHistoryMatches,
+  getBankingHistoryForAccount,
   checkoutDepositMail,
   markDepositMailWrittenToESO,
   markDepositMailSent,
@@ -1951,6 +1953,88 @@ io.on('connection', (socket) => {
     }
   });
 
+
+  socket.on('guildsync:request-banking-history-matches', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to search banking history.',
+        matches: [],
+        matches_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-history-matches-result', callback, response);
+      return;
+    }
+
+    try {
+      const matches = await getBankingHistoryMatches(applicationDB, payload?.query || '');
+      const response = {
+        ok: true,
+        message: 'Banking history search complete.',
+        matches,
+        matches_returned: matches.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-history-matches-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-banking-history-matches:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to search banking history.',
+        matches: [],
+        matches_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-history-matches-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:request-banking-history-records', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to retrieve banking history.',
+        records: [],
+        records_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-history-records-result', callback, response);
+      return;
+    }
+
+    try {
+      const records = await getBankingHistoryForAccount(applicationDB, payload?.account_name || payload?.accountName || '');
+      const response = {
+        ok: true,
+        message: 'Banking history loaded.',
+        account_name: payload?.account_name || payload?.accountName || '',
+        records,
+        records_returned: records.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-history-records-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-banking-history-records:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to retrieve banking history.',
+        account_name: String(payload?.account_name || payload?.accountName || '').trim(),
+        records: [],
+        records_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:banking-history-records-result', callback, response);
+    }
+  });
 
   socket.on('guildsync:request-roster-rank-history', async (payload = {}, callback) => {
     if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {

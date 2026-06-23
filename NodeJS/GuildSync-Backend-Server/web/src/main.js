@@ -215,6 +215,15 @@ let bankingMoveSubmitting = false;
 let bankingMoveError = '';
 let bankingMoveEntry = null;
 let bankingMoveForm = { targetType: 'other', note: '', tickets: '' };
+let bankingHistoryDialogOpen = false;
+let bankingHistorySearchText = '';
+let bankingHistoryMatches = [];
+let bankingHistoryRecords = [];
+let bankingHistorySelectedAccount = '';
+let bankingHistoryLoading = false;
+let bankingHistoryError = '';
+let bankingHistorySearchTimer = null;
+let bankingHistoryActiveMatchIndex = -1;
 let manualBiweeklyTicketDialogOpen = false;
 let manualBiweeklyTicketSubmitting = false;
 let manualBiweeklyTicketError = '';
@@ -526,6 +535,7 @@ function renderGuildSyncTabContent() {
     ${content}
     ${manualBiweeklyTicketDialogOpen ? renderManualBiweeklyTicketDialog() : ''}
     ${bankingMoveDialogOpen ? renderBankingMoveDialog() : ''}
+    ${bankingHistoryDialogOpen ? renderBankingHistoryDialog() : ''}
     ${memberLinkDialogOpen ? renderMemberLinkDialog() : ''}
     ${associateTicketReportDialogOpen ? renderAssociateTicketReportDialog() : ''}
     ${discordRankAuditReportDialogOpen ? renderDiscordRankAuditReportDialog() : ''}
@@ -541,6 +551,7 @@ function isBlockingModalOpen() {
     || discordHistoryDialogOpen
     || manualBiweeklyTicketDialogOpen
     || bankingMoveDialogOpen
+    || bankingHistoryDialogOpen
     || memberLinkDialogOpen
     || rosterNotesDialogOpen
     || associateTicketReportDialogOpen
@@ -582,6 +593,11 @@ function closeTopOpenModal() {
   }
   if (bankingMoveDialogOpen) {
     closeBankingMoveDialog();
+    return true;
+  }
+  if (bankingHistoryDialogOpen) {
+    closeBankingHistoryDialog();
+    renderGuildSyncTabLayout();
     return true;
   }
   if (manualBiweeklyTicketDialogOpen) {
@@ -5623,6 +5639,10 @@ function renderBankDepositsPanel() {
           <p class="discord-data-subtitle">View guild bank deposits and raffle ticket allocations by raffle period.</p>
         </div>
         <div class="discord-data-actions">
+          <button id="openBankingHistoryButton" class="refresh-discord-button banking-history-button" type="button" ${isAuthenticatedSession() ? '' : 'disabled title="Login required to lookup banking history."'}>
+            <span aria-hidden="true">⌕</span>
+            <span>Lookup Banking History</span>
+          </button>
           <button id="openManualBiweeklyTicketButton" class="bank-export-button" type="button" ${isAuthenticatedSession() ? '' : 'disabled title="Login required to add manual entries."'}>
             <span aria-hidden="true">＋</span>
             <span>Add Manual Entry</span>
@@ -5680,6 +5700,106 @@ function renderBankDepositsPanel() {
         </div>
       </div>
       ${bankingExportGridOpen ? renderBankingExportGrid(getBankingRowsForSection(bankingExportSection)) : ''}
+    </div>
+  `;
+}
+
+function renderBankingHistoryDialog() {
+  return `
+    <div class="roster-history-overlay" role="dialog" aria-modal="true" aria-labelledby="bankingHistoryTitle">
+      <div class="roster-history-dialog banking-history-dialog">
+        <div class="roster-history-header banking-history-header">
+          <div>
+            <h3 id="bankingHistoryTitle">Banking History Lookup</h3>
+            <p>Search prior banking records for a guild member.</p>
+          </div>
+        </div>
+
+        <div class="banking-history-search-block">
+          <label class="manual-ticket-field banking-history-search-field">
+            <span>Search Member</span>
+            <input id="bankingHistorySearchInput" class="discord-search-input roster-history-search-input" type="search" autocomplete="off" placeholder="Start typing part of an account name..." value="${escapeAttribute(bankingHistorySearchText)}" />
+          </label>
+          ${renderBankingHistoryMatches()}
+        </div>
+
+        ${bankingHistoryError ? `<div class="discord-data-error">${escapeHtml(bankingHistoryError)}</div>` : ''}
+
+        <div class="banking-history-results">
+          <div class="roster-history-section-title">Banking History${bankingHistorySelectedAccount ? `: ${escapeHtml(bankingHistorySelectedAccount)}` : ''}${bankingHistorySelectedAccount ? `<span class="banking-history-count">${escapeHtml(String(bankingHistoryRecords.length))} record${bankingHistoryRecords.length === 1 ? '' : 's'} found</span>` : ''}</div>
+          ${renderBankingHistoryRecords()}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderBankingHistoryMatches() {
+  if (!bankingHistorySearchText.trim()) {
+    return '';
+  }
+
+  if (bankingHistoryLoading && bankingHistoryMatches.length === 0 && !bankingHistorySelectedAccount) {
+    return '<div class="banking-history-autocomplete"><div class="banking-history-autocomplete-empty">Searching...</div></div>';
+  }
+
+  if (bankingHistoryMatches.length === 0 && !bankingHistorySelectedAccount) {
+    return '<div class="banking-history-autocomplete"><div class="banking-history-autocomplete-empty">No matching banking names found.</div></div>';
+  }
+
+  if (bankingHistoryMatches.length === 0) {
+    return '';
+  }
+
+  return `
+    <div class="banking-history-autocomplete" role="listbox" aria-label="Banking history matches">
+      ${bankingHistoryMatches.map((match, index) => `
+        <button class="banking-history-autocomplete-option${index === bankingHistoryActiveMatchIndex ? ' is-selected' : ''}" type="button" data-banking-history-account="${escapeAttribute(match.account_name)}">
+          <span>${escapeHtml(match.account_name)}</span>
+          <small>${escapeHtml(String(Number(match.record_count || match.recordCount || 0) || 0))} record${Number(match.record_count || match.recordCount || 0) === 1 ? '' : 's'}</small>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderBankingHistoryRecords() {
+  if (!bankingHistorySelectedAccount) {
+    return '<div class="roster-history-muted">Choose a matching account to see banking history.</div>';
+  }
+
+  if (bankingHistoryLoading && bankingHistoryRecords.length === 0) {
+    return '<div class="roster-history-muted">Loading banking history...</div>';
+  }
+
+  if (bankingHistoryRecords.length === 0) {
+    return '<div class="roster-history-muted">No banking history found for this account.</div>';
+  }
+
+  return `
+    <div class="roster-history-event-table-shell banking-history-table-shell">
+      <table class="discord-member-table roster-history-event-table banking-history-table">
+        <thead>
+          <tr>
+            <th class="banking-history-date-column">Date / Time (Local)</th>
+            <th>Type</th>
+            <th>Amount</th>
+            <th>Tickets</th>
+            <th class="banking-history-notes-column">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${bankingHistoryRecords.map((record) => `
+            <tr>
+              <td>${escapeHtml(formatBankingHistoryTimestamp(record.event_timestamp ?? record.eventTimestamp ?? record.time ?? ''))}</td>
+              <td>${escapeHtml(formatBankingHistoryType(record.transaction_type || record.type || ''))}</td>
+              <td>${escapeHtml(formatBankingHistoryAmount(record.deposit_amount ?? record.depositAmount ?? record.amount))}</td>
+              <td>${escapeHtml(formatBankingHistoryTickets(record.ticket_quantity ?? record.ticketQuantity ?? record.ticketAmount))}</td>
+              <td class="banking-history-note-cell">${escapeHtml(record.note || '')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
     </div>
   `;
 }
@@ -6109,12 +6229,266 @@ async function submitBankingMove() {
   }
 }
 
+function openBankingHistoryDialog() {
+  if (!isAuthenticatedSession()) {
+    addSystemMessage('banking-history-login-required', 'Login required to lookup banking history.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return;
+  }
+
+  bankingHistoryDialogOpen = true;
+  bankingHistorySearchText = '';
+  bankingHistoryMatches = [];
+  bankingHistoryRecords = [];
+  bankingHistorySelectedAccount = '';
+  bankingHistoryLoading = false;
+  bankingHistoryError = '';
+  bankingHistoryActiveMatchIndex = -1;
+  clearTimeout(bankingHistorySearchTimer);
+  renderGuildSyncTabLayout();
+  focusInputById('bankingHistorySearchInput');
+}
+
+function closeBankingHistoryDialog() {
+  bankingHistoryDialogOpen = false;
+  bankingHistoryLoading = false;
+  bankingHistoryError = '';
+  clearTimeout(bankingHistorySearchTimer);
+}
+
+function wireBankingHistoryDialog() {
+  if (!bankingHistoryDialogOpen) {
+    return;
+  }
+
+  const searchInput = document.querySelector('#bankingHistorySearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', (event) => {
+      bankingHistorySearchText = event.target.value || '';
+      bankingHistoryActiveMatchIndex = -1;
+      bankingHistorySelectedAccount = '';
+      bankingHistoryRecords = [];
+
+      if (!bankingHistorySearchText.trim()) {
+        clearTimeout(bankingHistorySearchTimer);
+        bankingHistoryError = '';
+        bankingHistoryMatches = [];
+        bankingHistoryLoading = false;
+        renderGuildSyncTabLayout();
+        focusInputById('bankingHistorySearchInput');
+        return;
+      }
+
+      clearTimeout(bankingHistorySearchTimer);
+      bankingHistorySearchTimer = setTimeout(() => {
+        searchBankingHistoryMatches({ keepFocus: true });
+      }, 250);
+    });
+
+    searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (bankingHistoryMatches.length === 0) {
+          return;
+        }
+
+        event.preventDefault();
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        const currentIndex = bankingHistoryActiveMatchIndex < 0 ? 0 : bankingHistoryActiveMatchIndex;
+        bankingHistoryActiveMatchIndex = (currentIndex + direction + bankingHistoryMatches.length) % bankingHistoryMatches.length;
+        renderGuildSyncTabLayout();
+        focusInputById('bankingHistorySearchInput');
+        return;
+      }
+
+      if (event.key !== 'Enter') {
+        return;
+      }
+
+      event.preventDefault();
+      const selectedMatch = bankingHistoryMatches[bankingHistoryActiveMatchIndex >= 0 ? bankingHistoryActiveMatchIndex : 0];
+      if (selectedMatch?.account_name) {
+        loadBankingHistoryRecords(selectedMatch.account_name);
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-banking-history-account]').forEach((button) => {
+    button.addEventListener('click', () => {
+      loadBankingHistoryRecords(button.dataset.bankingHistoryAccount || '');
+    });
+  });
+}
+
+async function searchBankingHistoryMatches(options = {}) {
+  const query = bankingHistorySearchText.trim();
+
+  if (!query) {
+    bankingHistoryError = '';
+    bankingHistoryMatches = [];
+    bankingHistoryActiveMatchIndex = -1;
+    bankingHistorySelectedAccount = '';
+    bankingHistoryRecords = [];
+    bankingHistoryLoading = false;
+    renderGuildSyncTabLayout();
+    if (options.keepFocus) {
+      focusInputById('bankingHistorySearchInput');
+    }
+    return;
+  }
+
+  bankingHistoryLoading = true;
+  bankingHistoryError = '';
+  bankingHistoryMatches = [];
+  bankingHistoryActiveMatchIndex = -1;
+  renderGuildSyncTabLayout();
+  if (options.keepFocus) {
+    focusInputById('bankingHistorySearchInput');
+  }
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-banking-history-matches', { query }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to search banking history.');
+    }
+
+    bankingHistoryMatches = normalizeBankingHistoryMatches(response.matches);
+    bankingHistoryActiveMatchIndex = bankingHistoryMatches.length > 0 ? 0 : -1;
+  } catch (error) {
+    bankingHistoryError = formatError(error);
+  } finally {
+    bankingHistoryLoading = false;
+    renderGuildSyncTabLayout();
+    if (options.keepFocus) {
+      focusInputById('bankingHistorySearchInput');
+    }
+  }
+}
+
+async function loadBankingHistoryRecords(accountName) {
+  const cleanAccountName = String(accountName || '').trim();
+
+  if (!cleanAccountName) {
+    return;
+  }
+
+  clearTimeout(bankingHistorySearchTimer);
+  bankingHistorySelectedAccount = cleanAccountName;
+  bankingHistorySearchText = cleanAccountName;
+  bankingHistoryMatches = [];
+  bankingHistoryRecords = [];
+  bankingHistoryLoading = true;
+  bankingHistoryError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-banking-history-records', { account_name: cleanAccountName }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to load banking history.');
+    }
+
+    bankingHistoryRecords = normalizeBankingHistoryRecords(response.records);
+  } catch (error) {
+    bankingHistoryError = formatError(error);
+  } finally {
+    bankingHistoryLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+function normalizeBankingHistoryMatches(matches) {
+  return Array.isArray(matches)
+    ? matches
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        account_name: String(item.account_name || item.accountName || '').trim(),
+        record_count: Number(item.record_count ?? item.recordCount ?? 0) || 0,
+        last_event_timestamp: item.last_event_timestamp ?? item.lastEventTimestamp ?? ''
+      }))
+      .filter((item) => item.account_name)
+    : [];
+}
+
+function normalizeBankingHistoryRecords(records) {
+  return Array.isArray(records)
+    ? records
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        event_id: String(item.event_id || item.eventId || '').trim(),
+        transaction_type: String(item.transaction_type || item.transactionType || item.type || '').trim(),
+        event_timestamp: item.event_timestamp ?? item.eventTimestamp ?? item.time ?? '',
+        deposit_amount: item.deposit_amount ?? item.depositAmount ?? item.amount ?? '',
+        ticket_quantity: item.ticket_quantity ?? item.ticketQuantity ?? item.ticketAmount ?? '',
+        note: String(item.note || '').trim()
+      }))
+      .sort((left, right) => {
+        const leftTime = Number(left.event_timestamp) || 0;
+        const rightTime = Number(right.event_timestamp) || 0;
+        if (leftTime !== rightTime) {
+          return leftTime - rightTime;
+        }
+        return String(left.event_id).localeCompare(String(right.event_id), undefined, { numeric: true });
+      })
+    : [];
+}
+
+function formatBankingHistoryTimestamp(value) {
+  const numeric = Number(value);
+  if (!numeric) {
+    return '';
+  }
+
+  const date = new Date(numeric * 1000);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const yyyy = String(date.getFullYear());
+  const hh = String(date.getHours()).padStart(2, '0');
+  const ii = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${mm}/${dd}/${yyyy} ${hh}:${ii}:${ss}`;
+}
+
+function formatBankingHistoryType(value) {
+  const cleanValue = String(value || '').trim().toLowerCase();
+  if (cleanValue === 'monthly') {
+    return '50/50';
+  }
+  if (cleanValue === 'biweekly') {
+    return 'Bi-Weekly';
+  }
+  if (cleanValue === 'other') {
+    return 'Other';
+  }
+  return cleanValue ? cleanValue.replace(/\b\w/g, (letter) => letter.toUpperCase()) : '';
+}
+
+function formatBankingHistoryAmount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '';
+  }
+  return formatGoldAmount(numeric);
+}
+
+function formatBankingHistoryTickets(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '';
+  }
+  return formatTicketAmount(numeric);
+}
+
 function wireBankDepositsPanel() {
   if (activeGuildSyncTab !== 'more') {
     return;
   }
 
   wireBankingMoveDialog();
+  wireBankingHistoryDialog();
 
   document.querySelectorAll('[data-bank-entry-move]').forEach((button) => {
     button.addEventListener('click', () => openBankingMoveDialog(button.dataset.bankEntryMove || ''));
@@ -6164,6 +6538,11 @@ function wireBankDepositsPanel() {
         renderGuildSyncTabLayout();
       }
     });
+  }
+
+  const bankingHistoryButton = document.querySelector('#openBankingHistoryButton');
+  if (bankingHistoryButton) {
+    bankingHistoryButton.addEventListener('click', () => openBankingHistoryDialog());
   }
 
   const manualTicketButton = document.querySelector('#openManualBiweeklyTicketButton');

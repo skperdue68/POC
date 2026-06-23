@@ -1680,6 +1680,63 @@ export async function getDiscordMemberHistoryForMember(applicationDB, discordID)
   return rows;
 }
 
+
+export async function getBankingHistoryMatches(applicationDB, query = '') {
+  const cleanQuery = String(query || '').trim();
+
+  if (!cleanQuery) {
+    return [];
+  }
+
+  const like = `%${cleanQuery}%`;
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        account_name,
+        COUNT(*) AS record_count,
+        MAX(CAST(event_timestamp AS UNSIGNED)) AS last_event_timestamp
+      FROM guildsync_banking_entries
+      WHERE account_name LIKE ?
+      GROUP BY account_name
+      ORDER BY LOWER(account_name) ASC
+      LIMIT 50
+    `,
+    [like]
+  );
+
+  return rows;
+}
+
+export async function getBankingHistoryForAccount(applicationDB, accountName = '') {
+  const cleanAccountName = String(accountName || '').trim();
+
+  if (!cleanAccountName) {
+    return [];
+  }
+
+  const [rows] = await applicationDB.execute(
+    `
+      SELECT
+        event_id,
+        transaction_type,
+        account_name,
+        event_timestamp,
+        event_datetime,
+        deposit_amount,
+        COALESCE(ticket_quantity, 0) AS ticket_quantity,
+        data_source,
+        note
+      FROM guildsync_banking_entries
+      WHERE LOWER(account_name) = LOWER(?)
+      ORDER BY CAST(event_timestamp AS UNSIGNED) ASC, CAST(event_id AS UNSIGNED) ASC
+      LIMIT 500
+    `,
+    [cleanAccountName]
+  );
+
+  return rows;
+}
+
 export async function getBankingDataDate(applicationDB) {
   const [rows] = await applicationDB.execute(`
     SELECT
