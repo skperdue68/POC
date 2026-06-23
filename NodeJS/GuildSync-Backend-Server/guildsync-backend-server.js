@@ -39,6 +39,8 @@ import {
   getDiscordRankAuditReport,
   getRosterDataDate,
   getRosterDataJSON,
+  getRosterMemberNotes,
+  addRosterMemberNote,
   getRosterRankHistoryMatches,
   getRosterStreamHistoryForAccount,
   getMemberLinks,
@@ -1866,6 +1868,90 @@ io.on('connection', (socket) => {
   });
 
 
+  socket.on('guildsync:request-roster-member-notes', async (payload = {}, callback) => {
+    try {
+      const accountName = String(payload.account_name || payload.accountName || '').trim();
+      const notes = await getRosterMemberNotes(applicationDB, accountName);
+
+      const response = {
+        ok: true,
+        message: 'Roster member notes retrieved.',
+        account_name: accountName,
+        notes,
+        notes_returned: notes.length,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-member-notes-result', callback, response);
+    } catch (error) {
+      Log('Failed to process guildsync:request-roster-member-notes:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to retrieve roster member notes.',
+        account_name: String(payload.account_name || payload.accountName || '').trim(),
+        notes: [],
+        notes_returned: 0,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-member-notes-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:add-roster-member-note', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      const response = {
+        ok: false,
+        message: 'You must be logged in to add roster member notes.',
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-member-note-added', callback, response);
+      return;
+    }
+
+    try {
+      const officerName = String(
+        socket.guildSyncUser.display_name ||
+        socket.guildSyncUser.username ||
+        socket.guildSyncUser.discord_user_id ||
+        payload.officer_name ||
+        payload.officerName ||
+        ''
+      ).trim();
+
+      const note = await addRosterMemberNote(applicationDB, {
+        accountName: payload.account_name || payload.accountName || '',
+        officerName,
+        note: payload.note || payload.note_text || payload.noteText || ''
+      });
+
+      const response = {
+        ok: true,
+        message: 'Roster member note saved.',
+        account_name: note.account_name,
+        note,
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-member-note-added', callback, response);
+      await broadcastRosterDataUpdate();
+    } catch (error) {
+      Log('Failed to process guildsync:add-roster-member-note:', error);
+
+      const response = {
+        ok: false,
+        message: error.message || 'Failed to save roster member note.',
+        account_name: String(payload.account_name || payload.accountName || '').trim(),
+        at: new Date().toLocaleString()
+      };
+
+      sendSocketResponse(socket, 'guildsync:roster-member-note-added', callback, response);
+    }
+  });
+
+
   socket.on('guildsync:request-roster-rank-history', async (payload = {}, callback) => {
     if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
       const response = {
@@ -2263,6 +2349,7 @@ io.on('connection', (socket) => {
         ok: false,
         message: error.message || 'Failed to retrieve Discord member data.',
         members: [],
+        roles: [],
         members_returned: 0,
         at: new Date().toLocaleString()
       };

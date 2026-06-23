@@ -126,6 +126,13 @@ let rosterHistoryLoading = false;
 let rosterHistoryError = '';
 let rosterHistorySearchTimer = null;
 let rosterHistoryActiveMatchIndex = -1;
+let rosterNotesDialogOpen = false;
+let rosterNotesDialogAccountName = '';
+let rosterNotesDialogNotes = [];
+let rosterNotesDialogLoading = false;
+let rosterNotesDialogSaving = false;
+let rosterNotesDialogError = '';
+let rosterNotesDialogNewNote = '';
 let discordHistoryDialogOpen = false;
 let discordHistorySearchText = '';
 let discordHistoryMatches = [];
@@ -467,6 +474,7 @@ function isBlockingModalOpen() {
     || manualBiweeklyTicketDialogOpen
     || bankingMoveDialogOpen
     || memberLinkDialogOpen
+    || rosterNotesDialogOpen
     || associateTicketReportDialogOpen
     || discordRankAuditReportDialogOpen
     || discordLastSeenReportDialogOpen
@@ -498,6 +506,10 @@ function closeTopOpenModal() {
   }
   if (memberLinkDialogOpen) {
     closeMemberLinkDialog();
+    return true;
+  }
+  if (rosterNotesDialogOpen) {
+    closeRosterNotesDialog();
     return true;
   }
   if (bankingMoveDialogOpen) {
@@ -944,6 +956,7 @@ function renderEsoRosterPanel() {
                 ${renderRosterSortableHeader('account_name', 'Account Name')}
                 ${renderRosterSortableHeader('rank', 'Rank')}
                 ${renderRosterSortableHeader('joined', 'Joined')}
+                ${renderRosterSortableHeader('notes', 'Notes', 'roster-notes-header')}
                 ${renderRosterSortableHeader('linked', 'Discord Account Linked', 'member-link-action-header')}
               </tr>
             </thead>
@@ -954,6 +967,7 @@ function renderEsoRosterPanel() {
         </div>
       </div>
       ${rosterHistoryDialogOpen ? renderRosterHistoryDialog() : ''}
+      ${rosterNotesDialogOpen ? renderRosterNotesDialog() : ''}
     </div>
   `;
 }
@@ -969,9 +983,116 @@ function renderEsoRosterRow(member, index = -1) {
       <td>${escapeHtml(member.account_name || '')}</td>
       <td>${renderEsoRosterRank(member.rank || '')}</td>
       <td>${escapeHtml(formatRosterJoinedDate(member.joined))}</td>
+      <td class="roster-notes-cell">${renderRosterNotesButton(member)}</td>
       <td class="member-link-action-cell">${renderMemberLinkStatusButton({ mode: 'eso-to-discord', esoAccountName: member.account_name })}</td>
     </tr>
   `;
+}
+
+function renderRosterNotesButton(member) {
+  const accountName = String(member?.account_name || '').trim();
+  const noteCount = Number(member?.note_count || 0);
+  const hasNotes = noteCount > 0;
+  const title = hasNotes
+    ? `${noteCount} roster note${noteCount === 1 ? '' : 's'} for ${accountName}`
+    : `No roster notes for ${accountName}`;
+
+  return `
+    <button
+      class="roster-notes-button${hasNotes ? ' has-notes' : ''}"
+      type="button"
+      data-open-roster-notes="${escapeAttribute(accountName)}"
+      title="${escapeAttribute(title)}"
+      aria-label="${escapeAttribute(title)}"
+    >
+      <svg class="roster-notes-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 5.25c0-.69.56-1.25 1.25-1.25h5.1c.89 0 1.72.34 2.35.95A3.28 3.28 0 0 1 15.55 4h2.7c.69 0 1.25.56 1.25 1.25v13.5c0 .69-.56 1.25-1.25 1.25h-4.6c-.75 0-1.45.29-1.98.82a.95.95 0 0 1-1.34 0A2.8 2.8 0 0 0 8.35 20h-2.6c-.69 0-1.25-.56-1.25-1.25V5.25Zm7.25 1.6A1.28 1.28 0 0 0 10.85 6H6.5v12h1.85c1.14 0 2.24.35 3.15 1V7.1c0-.09.01-.17.25-.25Zm1.75 12.15a6.32 6.32 0 0 1 3.15-1h.85V6h-1.95c-.73 0-1.4.29-1.9.8l-.15.15V19Z"/></svg>
+      ${hasNotes ? `<span class="roster-notes-count" aria-hidden="true">${noteCount}</span>` : ''}
+    </button>
+  `;
+}
+
+function renderRosterNotesDialog() {
+  const accountName = rosterNotesDialogAccountName || '';
+  const canAddNote = Boolean(guildSyncSession?.logged_in && guildSyncSession?.allowed);
+
+  return `
+    <div class="roster-history-overlay roster-notes-overlay" role="dialog" aria-modal="true" aria-labelledby="rosterNotesTitle">
+      <div class="roster-history-dialog roster-notes-dialog">
+        <div class="roster-history-header">
+          <div>
+            <h3 id="rosterNotesTitle">Roster Notes</h3>
+            <p>${escapeHtml(accountName)}</p>
+          </div>
+          <button id="closeRosterNotesButton" class="roster-history-close" type="button" aria-label="Close roster notes">×</button>
+        </div>
+        <div class="roster-notes-body">
+          ${rosterNotesDialogError ? `<div class="discord-data-error">${escapeHtml(rosterNotesDialogError)}</div>` : ''}
+          <div class="roster-notes-table-shell">
+            <table class="discord-member-table roster-notes-table">
+              <thead>
+                <tr>
+                  <th>Date/Time</th>
+                  <th>Officer</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${renderRosterNotesRows()}
+              </tbody>
+            </table>
+          </div>
+          ${canAddNote ? renderRosterNotesForm() : '<div class="roster-history-muted">Log in to add a new note.</div>'}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderRosterNotesRows() {
+  if (rosterNotesDialogLoading) {
+    return '<tr><td class="bank-empty-row" colspan="3">Loading notes...</td></tr>';
+  }
+
+  if (!Array.isArray(rosterNotesDialogNotes) || rosterNotesDialogNotes.length === 0) {
+    return '<tr><td class="bank-empty-row" colspan="3">No notes recorded for this member.</td></tr>';
+  }
+
+  return rosterNotesDialogNotes
+    .map((note) => `
+      <tr>
+        <td class="roster-notes-when-cell">${escapeHtml(formatRosterNoteTimestamp(note.timestamp))}</td>
+        <td class="roster-notes-officer-cell">${escapeHtml(note.officer || '')}</td>
+        <td class="roster-notes-note-cell">${escapeHtml(note.note || '')}</td>
+      </tr>
+    `)
+    .join('');
+}
+
+function renderRosterNotesForm() {
+  return `
+    <div class="roster-notes-form">
+      <label for="rosterNotesNewNote">Add Note</label>
+      <textarea
+        id="rosterNotesNewNote"
+        class="roster-notes-textarea"
+        rows="4"
+        placeholder="Enter a new roster note..."
+        ${rosterNotesDialogSaving ? 'disabled' : ''}
+      >${escapeHtml(rosterNotesDialogNewNote)}</textarea>
+      <button id="saveRosterNoteButton" class="refresh-discord-button" type="button" ${rosterNotesDialogSaving ? 'disabled' : ''}>
+        ${rosterNotesDialogSaving ? 'Saving...' : 'Save Note'}
+      </button>
+    </div>
+  `;
+}
+
+function formatRosterNoteTimestamp(value) {
+  const timestamp = Number(value || 0);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '';
+  }
+
+  return new Date(timestamp * 1000).toLocaleString();
 }
 
 function renderEmptyEsoRosterRow() {
@@ -981,12 +1102,13 @@ function renderEmptyEsoRosterRow() {
 
   return `
     <tr>
-      <td class="bank-empty-row" colspan="4">${escapeHtml(message)}</td>
+      <td class="bank-empty-row" colspan="5">${escapeHtml(message)}</td>
     </tr>
   `;
 }
 
 function getEsoRosterRankColor(rankName) {
+  const cleanRankName = String(rankName || '').trim();
   const matchingDiscordRole = findRoleByRosterRankName(rankName);
   return discordRoleColorToHex(matchingDiscordRole?.role_color);
 }
@@ -1083,6 +1205,10 @@ function getRosterSortValue(member, column) {
       : '';
   }
 
+  if (column === 'notes') {
+    return String(Number(member.note_count || 0)).padStart(8, '0');
+  }
+
   if (column === 'linked') {
     const status = getRosterMemberLinkFilterStatus(member);
     const statusOrder = {
@@ -1100,7 +1226,7 @@ function getRosterSortValue(member, column) {
 }
 
 function setRosterSort(column) {
-  const allowedColumns = new Set(['account_name', 'rank', 'joined', 'linked']);
+  const allowedColumns = new Set(['account_name', 'rank', 'joined', 'notes', 'linked']);
   const nextColumn = allowedColumns.has(column) ? column : 'account_name';
 
   if (rosterSortColumn !== nextColumn) {
@@ -1157,7 +1283,7 @@ function getAllRosterRankNames() {
 }
 
 function renderRosterRankFilterChip(rankName) {
-  const role = findRoleByRosterRankName(rankName);
+  const role = findRoleByName(rankName);
   const hexColor = discordRoleColorToHex(role?.role_color);
   const textColor = getReadableTextColor(hexColor);
   const roleStyle = buildFilledRoleStyle(hexColor, textColor);
@@ -3994,6 +4120,111 @@ async function submitManualBiweeklyTicket() {
   }
 }
 
+async function openRosterNotesDialog(accountName = '') {
+  const cleanAccountName = String(accountName || '').trim();
+  if (!cleanAccountName) return;
+
+  rosterNotesDialogOpen = true;
+  rosterNotesDialogAccountName = cleanAccountName;
+  rosterNotesDialogNotes = [];
+  rosterNotesDialogLoading = true;
+  rosterNotesDialogSaving = false;
+  rosterNotesDialogError = '';
+  rosterNotesDialogNewNote = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:request-roster-member-notes', {
+      account_name: cleanAccountName
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to load roster notes.');
+    }
+
+    rosterNotesDialogNotes = Array.isArray(response.notes) ? response.notes : [];
+  } catch (error) {
+    rosterNotesDialogError = formatError(error);
+  } finally {
+    rosterNotesDialogLoading = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
+function closeRosterNotesDialog() {
+  rosterNotesDialogOpen = false;
+  rosterNotesDialogAccountName = '';
+  rosterNotesDialogNotes = [];
+  rosterNotesDialogLoading = false;
+  rosterNotesDialogSaving = false;
+  rosterNotesDialogError = '';
+  rosterNotesDialogNewNote = '';
+  renderGuildSyncTabLayout();
+}
+
+function wireRosterNotesDialog() {
+  if (!rosterNotesDialogOpen) return;
+
+  document.querySelector('#closeRosterNotesButton')?.addEventListener('click', closeRosterNotesDialog);
+
+  const textarea = document.querySelector('#rosterNotesNewNote');
+  if (textarea) {
+    textarea.addEventListener('input', (event) => {
+      rosterNotesDialogNewNote = event.target.value || '';
+    });
+  }
+
+  document.querySelector('#saveRosterNoteButton')?.addEventListener('click', () => submitRosterMemberNote());
+
+  const overlay = document.querySelector('.roster-notes-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        closeRosterNotesDialog();
+      }
+    });
+  }
+}
+
+async function submitRosterMemberNote() {
+  const note = String(rosterNotesDialogNewNote || '').trim();
+  if (!note) {
+    rosterNotesDialogError = 'Enter a note before saving.';
+    renderGuildSyncTabLayout();
+    return;
+  }
+
+  rosterNotesDialogSaving = true;
+  rosterNotesDialogError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:add-roster-member-note', {
+      account_name: rosterNotesDialogAccountName,
+      note
+    }, 30000);
+
+    if (!response?.ok) {
+      throw new Error(response?.message || response?.error || 'Failed to save roster note.');
+    }
+
+    if (response.note) {
+      rosterNotesDialogNotes = [...rosterNotesDialogNotes, response.note];
+    }
+
+    rosterNotesDialogNewNote = '';
+    const rosterMember = rosterMembers.find((member) => normalizeMemberLinkName(member.account_name) === normalizeMemberLinkName(rosterNotesDialogAccountName));
+    if (rosterMember) {
+      rosterMember.note_count = Number(rosterMember.note_count || 0) + 1;
+    }
+  } catch (error) {
+    rosterNotesDialogError = formatError(error);
+  } finally {
+    rosterNotesDialogSaving = false;
+    renderGuildSyncTabLayout();
+  }
+}
+
 function wireEsoRosterPanel() {
   const refreshButton = document.querySelector('#refreshRosterDataButton');
   if (refreshButton) {
@@ -4073,6 +4304,12 @@ function wireEsoRosterPanel() {
   document.querySelectorAll('[data-open-member-link-dialog]').forEach((button) => {
     button.addEventListener('click', () => openMemberLinkDialog(button.dataset.openMemberLinkDialog || '', button.dataset.memberLinkValue || ''));
   });
+
+  document.querySelectorAll('[data-open-roster-notes]').forEach((button) => {
+    button.addEventListener('click', () => openRosterNotesDialog(button.dataset.openRosterNotes || ''));
+  });
+
+  wireRosterNotesDialog();
 
   const clearButton = document.querySelector('#clearRosterFiltersButton');
   if (clearButton) {
@@ -4510,7 +4747,8 @@ function normalizeRosterMembers(members) {
       .map((member) => ({
         account_name: String(member.account_name || member.accountName || '').trim(),
         rank: String(member.rank || member.rankName || '').trim(),
-        joined: member.joined ?? ''
+        joined: member.joined ?? '',
+        note_count: Number(member.note_count ?? member.noteCount ?? 0) || 0
       }))
       .sort((left, right) => left.account_name.localeCompare(right.account_name))
     : [];

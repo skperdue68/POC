@@ -6523,3 +6523,145 @@ body {
   white-space: pre-line;
   line-height: 1.35;
 }
+
+/* Guild roster notes */
+.roster-notes-header,
+.roster-notes-cell {
+  width: 72px;
+  min-width: 72px;
+  max-width: 72px;
+  text-align: center;
+}
+
+.roster-notes-button {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.65);
+  color: #94A3B8;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.roster-notes-button.has-notes {
+  color: #FBBF24;
+  border-color: rgba(251, 191, 36, 0.75);
+  background: rgba(251, 191, 36, 0.13);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.18);
+}
+
+.roster-notes-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(96, 165, 250, 0.9);
+}
+
+.roster-notes-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  display: block;
+}
+
+.roster-notes-count {
+  position: absolute;
+  right: -5px;
+  top: -6px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #FBBF24;
+  color: #111827;
+  border: 1px solid rgba(17, 24, 39, 0.85);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 14px;
+  text-align: center;
+}
+
+
+.roster-notes-dialog {
+  width: min(1180px, calc(100% - 96px));
+}
+
+.roster-notes-body {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 22px 22px;
+  overflow: hidden;
+}
+
+.roster-notes-table-shell {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.roster-notes-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.roster-notes-table th,
+.roster-notes-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  vertical-align: top;
+}
+
+.roster-notes-when-cell {
+  width: 180px;
+}
+
+.roster-notes-officer-cell {
+  width: 180px;
+}
+
+.roster-notes-note-cell {
+  min-width: 0;
+}
+
+.roster-notes-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 12px;
+  align-items: end;
+  padding-top: 4px;
+}
+
+.roster-notes-form label {
+  grid-column: 1 / -1;
+  color: #E5E7EB;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.roster-notes-textarea {
+  min-height: 92px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #E5E7EB;
+  outline: none;
+}
+
+.roster-notes-textarea:focus {
+  border-color: rgba(96, 165, 250, 0.75);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}

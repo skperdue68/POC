@@ -525,6 +525,21 @@ async function initializeSchema(db) {
     COLLATE utf8mb4_unicode_ci
   `);
 
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS guildsync_roster_member_notes (
+      note_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      account_name VARCHAR(64) NOT NULL,
+      officer_name VARCHAR(255) NOT NULL,
+      note_text TEXT NOT NULL,
+      note_timestamp VARCHAR(32) NOT NULL,
+      PRIMARY KEY (note_id),
+      INDEX idx_guildsync_roster_member_notes_account_name (account_name),
+      INDEX idx_guildsync_roster_member_notes_timestamp (note_timestamp)
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
 
 
   await db.query(`
@@ -2305,6 +2320,28 @@ export async function getRosterDataDate(applicationDB) {
   };
 }
 
+async function ensureRosterMemberNotesTable(applicationDB) {
+  await applicationDB.query(`
+    CREATE TABLE IF NOT EXISTS guildsync_roster_member_notes (
+      note_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      account_name VARCHAR(64) NOT NULL,
+      officer_name VARCHAR(255) NOT NULL,
+      note_text TEXT NOT NULL,
+      note_timestamp VARCHAR(32) NOT NULL,
+      PRIMARY KEY (note_id),
+      INDEX idx_guildsync_roster_member_notes_account_name (account_name),
+      INDEX idx_guildsync_roster_member_notes_timestamp (note_timestamp)
+    )
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci
+  `);
+
+  await applicationDB.query(`
+    ALTER TABLE guildsync_roster_member_notes
+      MODIFY COLUMN note_timestamp VARCHAR(32) NOT NULL
+  `);
+}
+
 export async function getRosterDataJSON(applicationDB) {
   const [rows] = await applicationDB.execute(`
     SELECT JSON_ARRAYAGG(
@@ -2333,11 +2370,107 @@ export async function getRosterDataJSON(applicationDB) {
     return [];
   }
 
-  if (typeof rosterJson === 'string') {
-    return JSON.parse(rosterJson);
+  const rosterMembers = typeof rosterJson === 'string'
+    ? JSON.parse(rosterJson)
+    : rosterJson;
+
+  if (!Array.isArray(rosterMembers) || rosterMembers.length === 0) {
+    return [];
   }
 
-  return rosterJson;
+  try {
+    await ensureRosterMemberNotesTable(applicationDB);
+    const [noteRows] = await applicationDB.execute(`
+      SELECT
+        LOWER(account_name) AS account_key,
+        COUNT(*) AS note_count
+      FROM guildsync_roster_member_notes
+      GROUP BY LOWER(account_name)
+    `);
+
+    const noteCountsByAccount = new Map(
+      noteRows.map((row) => [String(row.account_key || '').trim(), Number(row.note_count || 0)])
+    );
+
+    return rosterMembers.map((member) => ({
+      ...member,
+      note_count: noteCountsByAccount.get(String(member.account_name || '').trim().toLowerCase()) || 0
+    }));
+  } catch (error) {
+    console.warn('Unable to load roster member note counts; roster data will be returned without note counts.', error?.message || error);
+    return rosterMembers.map((member) => ({
+      ...member,
+      note_count: 0
+    }));
+  }
+}
+
+export async function getRosterMemberNotes(applicationDB, accountName = '') {
+  const cleanAccountName = normalizeRosterAccountName(accountName);
+
+  if (!cleanAccountName) {
+    return [];
+  }
+
+  await ensureRosterMemberNotesTable(applicationDB);
+
+  const [rows] = await applicationDB.execute(`
+    SELECT
+      note_id,
+      account_name,
+      officer_name,
+      note_text,
+      note_timestamp
+    FROM guildsync_roster_member_notes
+    WHERE LOWER(account_name) = LOWER(?)
+    ORDER BY note_timestamp ASC, note_id ASC
+  `, [cleanAccountName]);
+
+  return rows.map((row) => ({
+    note_id: row.note_id,
+    account_name: row.account_name,
+    officer: row.officer_name,
+    note: row.note_text,
+    timestamp: Number(row.note_timestamp || 0)
+  }));
+}
+
+export async function addRosterMemberNote(applicationDB, { accountName = '', officerName = '', note = '' } = {}) {
+  const cleanAccountName = normalizeRosterAccountName(accountName);
+  const cleanOfficerName = String(officerName || '').trim();
+  const cleanNote = String(note || '').trim();
+
+  if (!cleanAccountName) {
+    throw new Error('ESO account name is required.');
+  }
+
+  if (!cleanOfficerName) {
+    throw new Error('Officer name is required.');
+  }
+
+  if (!cleanNote) {
+    throw new Error('Note is required.');
+  }
+
+  await ensureRosterMemberNotesTable(applicationDB);
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const [result] = await applicationDB.execute(`
+    INSERT INTO guildsync_roster_member_notes (
+      account_name,
+      officer_name,
+      note_text,
+      note_timestamp
+    ) VALUES (?, ?, ?, ?)
+  `, [cleanAccountName, cleanOfficerName, cleanNote, timestamp]);
+
+  return {
+    note_id: result.insertId,
+    account_name: cleanAccountName,
+    officer: cleanOfficerName,
+    note: cleanNote,
+    timestamp
+  };
 }
 export async function getRosterRankHistoryMatches(applicationDB, query = '') {
   const cleanQuery = normalizeRosterAccountName(query);
