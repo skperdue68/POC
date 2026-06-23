@@ -1609,6 +1609,7 @@ function renderAssociateTicketReportRows(rows = associateTicketReportRows) {
             <th>Rank</th>
             <th>Joined</th>
             <th>Purchased Tickets</th>
+            <th>Earliest Deposit / Raffle</th>
             <th>Discord Link</th>
           </tr>
         </thead>
@@ -1619,6 +1620,7 @@ function renderAssociateTicketReportRows(rows = associateTicketReportRows) {
               <td>${renderEsoRosterRank(row.rank || '')}</td>
               <td>${escapeHtml(formatRosterJoinedDate(row.joined))}</td>
               <td>${escapeHtml(formatTicketAmount(row.purchased_tickets || 0))}</td>
+              <td class="associate-earliest-deposit-cell">${escapeHtml(formatAssociateReportEarliestDeposit(row))}</td>
               <td>${escapeHtml(formatAssociateReportDiscordLink(row))}</td>
             </tr>
           `).join('')}
@@ -1626,6 +1628,15 @@ function renderAssociateTicketReportRows(rows = associateTicketReportRows) {
       </table>
     </div>
   `;
+}
+
+function formatAssociateReportEarliestDeposit(row) {
+  const summary = String(row?.earliest_deposit_summary || '').trim();
+  if (summary) return summary;
+
+  const depositDate = String(row?.earliest_deposit_date || '').trim();
+  const rafflePeriod = String(row?.earliest_deposit_raffle_period || '').trim();
+  return [depositDate, rafflePeriod].filter(Boolean).join(' | ');
 }
 
 function formatAssociateReportDiscordLink(row) {
@@ -1637,7 +1648,7 @@ function formatAssociateReportDiscordLink(row) {
 }
 
 function getAssociateTicketReportTsv() {
-  const lines = [['Section', 'Account Name', 'Rank', 'Joined', 'Purchased Tickets', 'Discord Link']];
+  const lines = [['Section', 'Account Name', 'Rank', 'Joined', 'Purchased Tickets', 'Earliest Deposit / Raffle', 'Discord Link']];
   for (const row of associateTicketReportRows) {
     const group = String(row.report_group || row.eligibility_group || '').toLowerCase() === 'eligible' ? 'Eligible' : 'Eligible if Linked';
     lines.push([
@@ -1646,6 +1657,7 @@ function getAssociateTicketReportTsv() {
       row.rank || '',
       formatRosterJoinedDate(row.joined),
       formatTicketAmount(row.purchased_tickets || 0),
+      formatAssociateReportEarliestDeposit(row),
       formatAssociateReportDiscordLink(row)
     ]);
   }
@@ -2257,6 +2269,7 @@ function renderMemberLinksReportDialog() {
             <option value="" ${memberLinksReportActionFilter === '' ? 'selected' : ''}>All actions</option>
             <option value="needs-link" ${memberLinksReportActionFilter === 'needs-link' ? 'selected' : ''}>Link Available</option>
             <option value="can-unlink" ${memberLinksReportActionFilter === 'can-unlink' ? 'selected' : ''}>Unlink Available</option>
+            <option value="can-unblock" ${memberLinksReportActionFilter === 'can-unblock' ? 'selected' : ''}>Unblock Available</option>
           </select>
         </div>
 
@@ -2294,6 +2307,9 @@ function wireMemberLinksReportDialog() {
   });
   document.querySelectorAll('[data-unlink-member-link]').forEach((button) => {
     button.addEventListener('click', () => unlinkMemberLink(button.dataset.unlinkMemberLink || '', button.dataset.unlinkMemberLinkDiscordId || ''));
+  });
+  document.querySelectorAll('[data-unblock-member-auto-link]').forEach((button) => {
+    button.addEventListener('click', () => unblockMemberAutoLink(button.dataset.unblockMemberAutoLink || '', button.dataset.unblockMemberAutoLinkDiscordId || ''));
   });
 
   const overlay = document.querySelector('.member-links-report-overlay');
@@ -2405,16 +2421,17 @@ function renderMemberLinksRows() {
                 data-member-links-report-search="${escapeAttribute(getMemberLinksReportSearchText(link))}"
                 data-member-links-report-status="${escapeAttribute(status)}"
                 data-member-links-report-method="${escapeAttribute(method)}"
-                data-member-links-report-action="${escapeAttribute(status === 'linked' ? 'can-unlink' : (status === 'candidate' ? 'needs-link' : ''))}"
+                data-member-links-report-action="${escapeAttribute(Number(link.locked || 0) === 1 || status === 'blocked' ? 'can-unblock' : (status === 'linked' ? 'can-unlink' : (status === 'candidate' ? 'needs-link' : '')))}"
               >
                 <td>${escapeHtml(link.eso_account_name || '')}</td>
                 <td>${discordMatchLabel}</td>
-                <td class="member-links-status-col">${escapeHtml(status || '')}</td>
+                <td class="member-links-status-col">${escapeHtml((Number(link.locked || 0) === 1 || status === 'blocked') ? 'blocked' : (status || ''))}</td>
                 <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
                 <td class="member-links-action-col">
                   <div class="member-link-actions">
                     ${status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
                     ${status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Unlink this ESO/Discord pair" title="Unlink this ESO/Discord pair">🗑</button>` : ''}
+                    ${(Number(link.locked || 0) === 1 || status === 'blocked') ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
                   </div>
                 </td>
                 <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
@@ -2579,6 +2596,51 @@ async function acceptMemberLinkCandidate(esoAccountName, discordUserId = '') {
   } catch (error) {
     memberLinksError = formatError(error);
     addSystemMessage('member-link-accept-error', memberLinksError, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  }
+}
+
+
+async function unblockMemberAutoLink(esoAccountName, discordUserId = '') {
+  const confirmed = await openGuildSyncConfirmDialog({
+    title: 'Remove Auto-Link Block?',
+    message: `Remove the blocked auto-match record between ${esoAccountName} and this Discord account? Auto-linking will run immediately and this screen will refresh to show whether the pair linked again.`,
+    confirmLabel: 'Unblock',
+    cancelLabel: 'Cancel',
+    confirmClass: 'danger',
+  });
+  if (!confirmed) return false;
+
+  memberLinksLoading = true;
+  memberLinksError = '';
+  renderGuildSyncTabLayout();
+
+  try {
+    const response = await emitSocketWithAck('guildsync:unblock-member-auto-link', { esoAccountName, discordUserId }, 30000);
+    if (!response?.ok) throw new Error(response?.message || response?.error || 'Failed to remove auto-link block.');
+    memberLinks = Array.isArray(response.links) ? response.links : memberLinks;
+
+    const normalizedEso = normalizeMemberLinkName(esoAccountName);
+    const normalizedDiscordId = String(discordUserId || '').trim();
+    const refreshedPair = response.refreshedPair || memberLinks.find((link) => (
+      normalizeMemberLinkName(link.eso_account_name) === normalizedEso
+      && String(link.discord_user_id || '').trim() === normalizedDiscordId
+    ));
+    const refreshedStatus = String(refreshedPair?.link_status || '').trim().toLowerCase();
+    const followup = refreshedStatus === 'linked'
+      ? ' It linked again automatically.'
+      : refreshedStatus === 'candidate'
+        ? ' It is now showing as a candidate.'
+        : ' No automatic link was recreated.';
+
+    addSystemMessage('member-link-unblocked', `${response.message || 'Auto-link block removed.'}${followup}`, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return true;
+  } catch (error) {
+    memberLinksError = formatError(error);
+    addSystemMessage('member-link-unblock-error', memberLinksError, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    return false;
+  } finally {
+    memberLinksLoading = false;
+    renderGuildSyncTabLayout();
   }
 }
 
@@ -2927,7 +2989,17 @@ function renderMemberLinkCurrentCard(link) {
           data-accept-dialog-member-candidate="${escapeAttribute(link.eso_account_name || '')}"
           data-accept-dialog-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
         >✓</button>`
-      : '';
+      : (Number(link.locked || 0) === 1 || status === 'blocked')
+        ? `<button
+            class="member-link-approve-button member-link-unblock-button"
+            type="button"
+            aria-label="Remove auto-link block"
+            title="Remove auto-link block"
+            data-unblock-dialog-member-auto-link
+            data-unblock-eso-account="${escapeAttribute(link.eso_account_name || '')}"
+            data-unblock-discord-user-id="${escapeAttribute(link.discord_user_id || '')}"
+          >↺</button>`
+        : '';
 
   return `
     <div class="member-link-current-card">
@@ -3282,6 +3354,14 @@ async function unlinkMemberLinkFromDialog(esoAccountName = '', discordUserId = '
 }
 
 
+async function unblockMemberAutoLinkFromDialog(esoAccountName = '', discordUserId = '') {
+  const unblocked = await unblockMemberAutoLink(esoAccountName, discordUserId);
+  if (unblocked) {
+    await reloadMemberLinkDialogOptions();
+  }
+}
+
+
 function wireMemberLinkDialog() {
   if (!memberLinkDialogOpen) return;
 
@@ -3299,6 +3379,10 @@ function wireMemberLinkDialog() {
 
   document.querySelectorAll('[data-unlink-dialog-member-link]').forEach((button) => {
     button.addEventListener('click', () => unlinkMemberLinkFromDialog(button.dataset.unlinkEsoAccount || '', button.dataset.unlinkDiscordUserId || ''));
+  });
+
+  document.querySelectorAll('[data-unblock-dialog-member-auto-link]').forEach((button) => {
+    button.addEventListener('click', () => unblockMemberAutoLinkFromDialog(button.dataset.unblockEsoAccount || '', button.dataset.unblockDiscordUserId || ''));
   });
 
   document.querySelectorAll('[data-member-link-option-value]').forEach((button) => {

@@ -6491,3 +6491,35 @@ body {
   }
 }
 
+
+
+.associate-ticket-report-dialog .report-result-table-shell {
+  overflow-x: visible;
+}
+
+.associate-ticket-report-dialog .report-result-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.associate-ticket-report-dialog .report-result-table th,
+.associate-ticket-report-dialog .report-result-table td {
+  padding-left: 8px;
+  padding-right: 8px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  vertical-align: top;
+}
+
+.associate-ticket-report-dialog .report-result-table th:nth-child(1) { width: 18%; }
+.associate-ticket-report-dialog .report-result-table th:nth-child(2) { width: 12%; }
+.associate-ticket-report-dialog .report-result-table th:nth-child(3) { width: 12%; }
+.associate-ticket-report-dialog .report-result-table th:nth-child(4) { width: 12%; }
+.associate-ticket-report-dialog .report-result-table th:nth-child(5) { width: 25%; }
+.associate-ticket-report-dialog .report-result-table th:nth-child(6) { width: 21%; }
+
+.associate-earliest-deposit-cell {
+  white-space: pre-line;
+  line-height: 1.35;
+}

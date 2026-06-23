@@ -2697,6 +2697,12 @@ export async function getAssociateTicketReport(applicationDB) {
         roster.rank_name AS rank,
         roster.joined_timestamp AS joined,
         COALESCE(SUM(COALESCE(bank.ticket_quantity, 0)), 0) AS purchased_tickets,
+        MIN(CAST(bank.event_timestamp AS UNSIGNED)) AS earliest_deposit_timestamp,
+        SUBSTRING_INDEX(
+          GROUP_CONCAT(bank.transaction_type ORDER BY CAST(bank.event_timestamp AS UNSIGNED) ASC, bank.event_id ASC SEPARATOR '||'),
+          '||',
+          1
+        ) AS earliest_deposit_type,
         links.discord_user_id,
         links.discord_username,
         links.discord_display_name,
@@ -2743,7 +2749,18 @@ export async function getAssociateTicketReport(applicationDB) {
     [twoWeeksAgo]
   );
 
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    earliest_deposit_date: formatAssociateTicketReportDateEastern(row.earliest_deposit_timestamp),
+    earliest_deposit_raffle_period: formatAssociateTicketReportRafflePeriod({
+      earliest_deposit_timestamp: row.earliest_deposit_timestamp,
+      earliest_deposit_type: row.earliest_deposit_type
+    }),
+    earliest_deposit_summary: formatAssociateTicketReportEarliestDeposit({
+      earliest_deposit_timestamp: row.earliest_deposit_timestamp,
+      earliest_deposit_type: row.earliest_deposit_type
+    })
+  }));
 }
 
 
@@ -4346,6 +4363,29 @@ export async function manualLinkMember(applicationDB, payload = {}) {
   });
 }
 
+
+export async function unblockMemberAutoLink(applicationDB, payload = {}) {
+  const esoAccountName = String(payload.esoAccountName || payload.eso_account_name || '').trim().replace(/^@+/, '');
+  const discordUserId = String(payload.discordUserId || payload.discord_user_id || '').trim();
+
+  if (!esoAccountName || !discordUserId) {
+    throw new Error('ESO account and Discord user are required to remove an auto-link block.');
+  }
+
+  const [result] = await applicationDB.execute(`
+    DELETE FROM guildsync_member_links
+    WHERE LOWER(eso_account_name) = LOWER(?)
+      AND discord_user_id = ?
+      AND (
+        auto_link_blocked = 1
+        OR link_status = 'blocked'
+        OR link_method = 'manual_unlink'
+      )
+  `, [esoAccountName, discordUserId]);
+
+  return { removed: Number(result?.affectedRows || 0) };
+}
+
 export async function manualUnlinkMember(applicationDB, payload = {}) {
   const esoAccountName = String(payload.esoAccountName || payload.eso_account_name || '').trim().replace(/^@+/, '');
   const discordUserId = String(payload.discordUserId || payload.discord_user_id || '').trim();
@@ -4395,3 +4435,82 @@ export async function manualUnlinkMember(applicationDB, payload = {}) {
 
   return { unlinked: 1, blocked: false };
 }
+function formatAssociateTicketReportDateEastern(timestamp) {
+  const numeric = Number(timestamp || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+
+  const date = new Date(numeric * 1000);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  }).format(date);
+}
+
+function formatAssociateTicketReportShortDateEastern(timestamp) {
+  const numeric = Number(timestamp || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+
+  const date = new Date(numeric * 1000);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+}
+
+function getAssociateTicketReportRaffleWindow(row = {}) {
+  const type = normalizeDepositMailTicketType(row.transaction_type || row.earliest_deposit_type || row.ticket_type || row.type);
+  if (type !== 'monthly' && type !== 'biweekly') return null;
+
+  const eventTimestamp = Number(row.event_timestamp || row.earliest_deposit_timestamp || row.time || 0);
+  if (!Number.isFinite(eventTimestamp) || eventTimestamp <= 0) return null;
+
+  const salesEnd = type === 'monthly'
+    ? getDepositMailMonthlySalesEndAtOrAfter(eventTimestamp)
+    : getDepositMailBiweeklySalesEndAtOrAfter(eventTimestamp);
+
+  const previousSalesEnd = type === 'monthly'
+    ? getDepositMailPreviousMonthlySalesEnd(salesEnd)
+    : salesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS;
+
+  return {
+    type,
+    label: getDepositMailTicketTypeLabel(type),
+    salesStart: previousSalesEnd + 1,
+    salesEnd,
+    raffleTime: salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS
+  };
+}
+
+function getDepositMailPreviousMonthlySalesEnd(currentSalesEnd) {
+  let salesEnd = currentSalesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS;
+
+  while (!isDepositMailLastRaffleSalesEndInEasternMonth(salesEnd)) {
+    salesEnd -= BANKING_BIWEEKLY_INTERVAL_SECONDS;
+  }
+
+  return salesEnd;
+}
+
+function formatAssociateTicketReportRafflePeriod(row = {}) {
+  const windowInfo = getAssociateTicketReportRaffleWindow(row);
+  if (!windowInfo) return '';
+
+  const raffleDate = formatAssociateTicketReportShortDateEastern(windowInfo.raffleTime);
+  return [windowInfo.label, raffleDate ? `Raffle ${raffleDate}` : ''].filter(Boolean).join(' | ');
+}
+
+function formatAssociateTicketReportEarliestDeposit(row = {}) {
+  const depositDate = formatAssociateTicketReportShortDateEastern(row.earliest_deposit_timestamp);
+  const rafflePeriod = formatAssociateTicketReportRafflePeriod(row);
+  return [depositDate, rafflePeriod].filter(Boolean).join(' | ');
+}
+
+

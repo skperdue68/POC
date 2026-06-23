@@ -45,6 +45,7 @@ import {
   acceptMemberLinkCandidate,
   manualLinkMember,
   manualUnlinkMember,
+  unblockMemberAutoLink,
   runMemberAutoLinking,
   processRosterData,
   recordGuildSyncApplications,
@@ -2166,6 +2167,41 @@ io.on('connection', (socket) => {
       sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
         ok: false,
         message: error.message || 'Failed to unlink members.',
+        at: new Date().toLocaleString()
+      });
+    }
+  });
+
+
+  socket.on('guildsync:unblock-member-auto-link', async (payload = {}, callback) => {
+    if (!socket.guildSyncAuthenticated || !socket.guildSyncUser) {
+      sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
+        ok: false,
+        message: 'You must be logged in to unblock member auto-link matches.',
+        at: new Date().toLocaleString()
+      });
+      return;
+    }
+
+    try {
+      const unblockResult = await unblockMemberAutoLink(applicationDB, payload || {});
+      const autoLinkResult = await runMemberAutoLinking(applicationDB);
+      const links = await getMemberLinks(applicationDB);
+      await broadcastMemberLinksUpdate(links);
+      sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
+        ok: true,
+        message: unblockResult?.removed
+          ? 'Auto-link block removed. The blocked record was deleted and auto-linking was refreshed.'
+          : 'No blocked auto-link record was found for that ESO/Discord pair.',
+        result: { ...unblockResult, autoLink: autoLinkResult },
+        links,
+        at: new Date().toLocaleString()
+      });
+    } catch (error) {
+      Log('Failed to process guildsync:unblock-member-auto-link:', error);
+      sendSocketResponse(socket, 'guildsync:member-link-update-result', callback, {
+        ok: false,
+        message: error.message || 'Failed to remove auto-link block.',
         at: new Date().toLocaleString()
       });
     }
