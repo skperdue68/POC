@@ -36,7 +36,7 @@ import { EventsOn } from './web-events.js';
 const GUILDSYNC_APP_VERSION = '1.1.3';
 
 const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
-  windows: { label: 'Windows detected', shortLabel: 'Windows', fileName: 'GuildSync-windows-amd64.zip', href: '/downloads/GuildSync-windows-amd64.zip' },
+  windows: { label: 'Windows detected', shortLabel: 'Windows', fileName: 'GuildSync-Setup-Windows.zip', href: '/downloads/GuildSync-Setup-Windows.zip' },
   macos: { label: 'macOS detected', shortLabel: 'macOS', fileName: 'GuildSync-macos.zip', href: '/downloads/GuildSync-macos.zip' },
   linux: { label: 'Linux detected', shortLabel: 'Linux', fileName: 'GuildSync-linux-amd64.zip', href: '/downloads/GuildSync-linux-amd64.zip' }
 };
@@ -8803,16 +8803,17 @@ function renderDesktopUpdateArea() {
   container.innerHTML = `
     <button
       id="desktopUpdateDownloadButton"
-      class="desktop-update-download-button"
+      class="desktop-client-download-button"
       type="button"
       title="Download ${escapeAttribute(fileName)}"
       aria-label="Download GuildSync ${escapeAttribute(latestVersion)} for ${escapeAttribute(platformLabel)}"
     >
-      <span class="desktop-update-download-icon" aria-hidden="true">⬇</span>
-      <span class="desktop-update-download-copy">
-        <span class="desktop-update-download-title">Update Available</span>
-        <span class="desktop-update-download-subtitle">${escapeHtml(platformLabel)} · ${escapeHtml(latestVersion)}</span>
+      <span class="desktop-client-download-icon" aria-hidden="true">⬇</span>
+      <span class="desktop-client-download-copy">
+        <span class="desktop-client-download-title">Download Update</span>
+        <span class="desktop-client-download-subtitle">${escapeHtml(platformLabel)} detected · ${escapeHtml(latestVersion)}</span>
       </span>
+      <span class="desktop-client-download-caret" aria-hidden="true">▼</span>
     </button>
   `;
 

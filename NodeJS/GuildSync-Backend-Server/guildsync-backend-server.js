@@ -85,7 +85,7 @@ const GUILDSYNC_APPLICATIONS_GUILD_ID = String(process.env.GUILDSYNC_APPLICATION
 
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
 const GUILDSYNC_CLIENT_DOWNLOAD_FILES = {
-  windows: 'GuildSync-windows-amd64.zip',
+  windows: 'GuildSync-Setup-Windows.zip',
   macos: 'GuildSync-macos.zip',
   linux: 'GuildSync-linux-amd64.zip'
 };

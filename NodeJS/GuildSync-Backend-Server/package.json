@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node guildsync-backend-server.js",
     "start": "node guildsync-backend-server.js",
-    "build:web": "cd web && npm install && npm run build && node -e \"const fs=require('fs'); fs.rmSync('../public',{recursive:true,force:true}); fs.cpSync('dist','../public',{recursive:true});\""
+    "build:web": "cd web && npm install && npm run build && node -e \"const fs=require('fs'); fs.rmSync('../public/assets',{recursive:true,force:true}); fs.cpSync('dist','../public',{recursive:true});\""
   },
   "dependencies": {
     "cors": "^2.8.5",

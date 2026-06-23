@@ -293,8 +293,10 @@ function showMainWindow() {
               <div class="compact-brand-version">Version ${escapeHtml(GUILDSYNC_APP_VERSION)}</div>
             </div>
           </div>
-          <div id="desktopUpdateArea" class="desktop-update-area"></div>
-          <div id="discordArea" class="discord-area"></div>
+          <div class="compact-header-actions">
+            <div id="desktopUpdateArea" class="desktop-update-area"></div>
+            <div id="discordArea" class="discord-area"></div>
+          </div>
         </div>
 
         <nav class="guildsync-tabs" aria-label="GuildSync sections">
@@ -8428,16 +8430,17 @@ function renderDesktopUpdateArea() {
   container.innerHTML = `
     <button
       id="desktopUpdateDownloadButton"
-      class="desktop-update-download-button"
+      class="desktop-client-download-button"
       type="button"
       title="Download ${escapeAttribute(fileName)}"
       aria-label="Download GuildSync ${escapeAttribute(latestVersion)} for ${escapeAttribute(platformLabel)}"
     >
-      <span class="desktop-update-download-icon" aria-hidden="true">⬇</span>
-      <span class="desktop-update-download-copy">
-        <span class="desktop-update-download-title">Update Available</span>
-        <span class="desktop-update-download-subtitle">${escapeHtml(platformLabel)} · ${escapeHtml(latestVersion)}</span>
+      <span class="desktop-client-download-icon" aria-hidden="true">⬇</span>
+      <span class="desktop-client-download-copy">
+        <span class="desktop-client-download-title">Download Update</span>
+        <span class="desktop-client-download-subtitle">${escapeHtml(platformLabel)} detected · ${escapeHtml(latestVersion)}</span>
       </span>
+      <span class="desktop-client-download-caret" aria-hidden="true">▾</span>
     </button>
   `;
 
