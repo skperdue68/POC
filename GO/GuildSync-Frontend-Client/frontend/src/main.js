@@ -303,7 +303,7 @@ function showMainWindow() {
           ${renderGuildSyncTabs()}
         </nav>
 
-        <section id="guildSyncTabContent" class="guildsync-tab-content" aria-live="polite">
+        <section id="guildSyncTabContent" class="guildsync-tab-content web-upload-banner-dismissed" aria-live="polite">
           ${renderGuildSyncTabContent()}
         </section>
 
