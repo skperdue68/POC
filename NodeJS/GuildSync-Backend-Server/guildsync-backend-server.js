@@ -87,7 +87,7 @@ const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION')
 const GUILDSYNC_CLIENT_DOWNLOAD_FILES = {
   windows: 'GuildSync-Setup-Windows.zip',
   macos: 'GuildSync-macos.zip',
-  linux: 'GuildSync-linux-amd64.zip'
+  linux: 'GuildSync-Linux-Installer-x86_64.AppImage'
 };
 
 let loginDB;

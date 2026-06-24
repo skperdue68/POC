@@ -682,7 +682,7 @@ function GSA:CreateWelcomeEmail()
   self:SetEditorSelection("email", "draft", self:CountPendingNewDrafts("email"))
   self:RefreshSettingsPanel()
   Chat(
-  "|c66ff66GuildSyncApplications:|r new welcome email editor opened. Enter a name, subject, and body, then click Save.")
+    "|c66ff66GuildSyncApplications:|r new welcome email editor opened. Enter a name, subject, and body, then click Save.")
 end
 
 function GSA:SaveNewWelcomeMessage(draftIndex)
@@ -1148,11 +1148,11 @@ function GSA:GetWelcomeEditorStatusText(kind)
 
   local label = selection.mode == "draft" and "Unsaved draft" or "Saved entry"
   local enabledText = draft.enabled == false and
-  "|c999999Disabled: this entry will not be used until enabled and saved.|r" or
-  "Enabled: this entry can be used once saved."
+      "|c999999Disabled: this entry will not be used until enabled and saved.|r" or
+      "Enabled: this entry can be used once saved."
   local dirtyText = draft.dirty and " | |cffff66Unsaved changes|r" or ""
   return label ..
-  " " .. SafeText(selection.index) .. " of " .. SafeText(draftCount + savedCount) .. dirtyText .. "\n" .. enabledText
+      " " .. SafeText(selection.index) .. " of " .. SafeText(draftCount + savedCount) .. dirtyText .. "\n" .. enabledText
 end
 
 function GSA:GetWelcomeEditorActiveTitle(kind)
@@ -1176,7 +1176,7 @@ end
 
 function GSA:BuildWelcomeEditorCustomControl(parent, kind)
   local container = WINDOW_MANAGER:CreateControl(
-  self.name .. "Welcome" .. (kind == "message" and "Message" or "Email") .. "CustomContainer", parent, CT_CONTROL)
+    self.name .. "Welcome" .. (kind == "message" and "Message" or "Email") .. "CustomContainer", parent, CT_CONTROL)
   container:SetDimensions(700, 90)
 
   container.gsaKind = kind
@@ -1229,7 +1229,7 @@ function GSA:BuildWelcomeEditorCustomControl(parent, kind)
     if selection and selection.mode == "saved" and entry then
       entry.enabled = newEnabled
       Chat("|c66ff66GuildSyncApplications:|r " ..
-      (kind == "message" and "welcome message" or "welcome email") .. " " .. (newEnabled and "enabled." or "disabled."))
+        (kind == "message" and "welcome message" or "welcome email") .. " " .. (newEnabled and "enabled." or "disabled."))
     end
 
     GSA:RefreshSettingsPanel()
@@ -1341,7 +1341,7 @@ function GSA:RefreshWelcomeEditorCustomControl(control, kind)
   end
 
   control.selectedTitle:SetText((kind == "message" and "Selected Message: " or "Selected Email: ") ..
-  self:GetWelcomeEditorActiveTitle(kind))
+    self:GetWelcomeEditorActiveTitle(kind))
   Place(control.selectedTitle, x, y, fieldWidth, lineHeight)
   y = y + lineHeight + 6
 
@@ -1393,7 +1393,7 @@ function GSA:RefreshWelcomeEditorCustomControl(control, kind)
   -- Save and Delete/Cancel are on the same left-aligned row.
   Place(control.saveButton, x, y, buttonWidth, 28)
   control.deleteButton:SetText(selection.mode == "draft" and "Cancel Draft" or
-  (kind == "message" and "Delete Message" or "Delete Email"))
+    (kind == "message" and "Delete Message" or "Delete Email"))
   Place(control.deleteButton, x + buttonWidth + buttonGap, y, buttonWidth, 28)
   y = y + 38
 
@@ -1539,6 +1539,28 @@ local function IsAccountOnlineInGuild(guildId, accountName)
   return false
 end
 
+local function IsAccountMemberInGuild(guildId, accountName)
+  accountName = SafeText(accountName)
+
+  if accountName == "" then
+    return false
+  end
+
+  if not guildId or not GetNumGuildMembers or not GetGuildMemberInfo then
+    return false
+  end
+
+  for memberIndex = 1, GetNumGuildMembers(guildId) do
+    local displayName = GetGuildMemberInfo(guildId, memberIndex)
+
+    if SafeText(displayName) == accountName then
+      return true
+    end
+  end
+
+  return false
+end
+
 function GSA:PopulateOfficerWelcomeMessage(applicantAccount)
   local guildIndex, guildId = GetGuildIndexByName(WELCOME_GUILD_NAME)
 
@@ -1638,6 +1660,24 @@ function GSA:GetApplicationDataFromArgs(guildId, index)
   return data
 end
 
+function GSA:SaveApplicationRecord(record, applicantKey)
+  self.saved.records = self.saved.records or {}
+
+  self.saved.records[applicantKey] = record
+
+  Chat(string.format(
+    "|c66ff66GuildSyncApplications:|r captured %s application for %s",
+    record.action,
+    record.applicantAccount ~= "" and record.applicantAccount or "unknown applicant"
+  ))
+end
+
+function GSA:RemoveApplicationRecord(applicantKey)
+  if self.saved and self.saved.records and applicantKey and applicantKey ~= "" then
+    self.saved.records[applicantKey] = nil
+  end
+end
+
 function GSA:SaveApplicationDecision(action, guildId, index, declineMessage, blacklistApplicant, blacklistMessage)
   self.saved.records = self.saved.records or {}
 
@@ -1678,18 +1718,27 @@ function GSA:SaveApplicationDecision(action, guildId, index, declineMessage, bla
     applicantKey = "unknown_" .. SafeText(capturedAt)
   end
 
-  self.saved.records[applicantKey] = record
+  if action ~= "accepted" then
+    self:SaveApplicationRecord(record, applicantKey)
+    return
+  end
 
-  Chat(string.format(
-    "|c66ff66GuildSyncApplications:|r captured %s application for %s",
-    action,
-    record.applicantAccount ~= "" and record.applicantAccount or "unknown applicant"
-  ))
+  -- Accept hooks run before ESO completes the accept action. Wait briefly, then
+  -- confirm the applicant actually became a guild member before persisting the
+  -- application record or triggering welcome chat/mail side effects.
+  zo_callLater(function()
+    if not IsAccountMemberInGuild(record.guildId, record.applicantAccount) then
+      GSA:RemoveApplicationRecord(applicantKey)
+      Chat("|cffff66GuildSyncApplications:|r accepted application for " ..
+        (record.applicantAccount ~= "" and record.applicantAccount or "unknown applicant") ..
+        " was not confirmed in the guild roster after 2 seconds. Record removed and welcome actions skipped.")
+      return
+    end
 
-  if action == "accepted" then
+    GSA:SaveApplicationRecord(record, applicantKey)
     SendWelcomeMail(record.applicantAccount)
     QueueOfficerWelcomeMessage(record.applicantAccount)
-  end
+  end, 2000)
 end
 
 function GSA:HookGlobalFunction(functionName, action)
@@ -1779,7 +1828,7 @@ function GSA:Initialize()
 
   if math.randomseed then
     math.randomseed((GetTimeStamp and GetTimeStamp() or os.time()) +
-    (GetFrameTimeMilliseconds and GetFrameTimeMilliseconds() or 0))
+      (GetFrameTimeMilliseconds and GetFrameTimeMilliseconds() or 0))
     math.random()
     math.random()
     math.random()

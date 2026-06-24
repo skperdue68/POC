@@ -33,12 +33,12 @@ import {
 
 import { EventsOn } from './web-events.js';
 
-const GUILDSYNC_APP_VERSION = '1.1.3';
+const GUILDSYNC_APP_VERSION = '1.1.4';
 
 const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
   windows: { label: 'Windows detected', shortLabel: 'Windows', fileName: 'GuildSync-Setup-Windows.zip', href: '/downloads/GuildSync-Setup-Windows.zip' },
   macos: { label: 'macOS detected', shortLabel: 'macOS', fileName: 'GuildSync-macos.zip', href: '/downloads/GuildSync-macos.zip' },
-  linux: { label: 'Linux detected', shortLabel: 'Linux', fileName: 'GuildSync-linux-amd64.zip', href: '/downloads/GuildSync-linux-amd64.zip' }
+  linux: { label: 'Linux detected', shortLabel: 'Linux', fileName: 'GuildSync-Linux-Installer-x86_64.AppImage', href: '/downloads/GuildSync-Linux-Installer-x86_64.AppImage' }
 };
 const WEB_SAVEDVARS_UPLOAD_BANNER_DISMISSED_STORAGE_KEY = 'guildsync-web-savedvars-upload-banner-dismissed';
 const WEB_SAVEDVARS_ALLOWED_FILES = new Map([
