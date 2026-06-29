@@ -7,6 +7,8 @@ on:
   push:
     branches:
       - master
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - master
@@ -31,14 +33,17 @@ jobs:
             os: windows-latest
             artifact_name: GuildSync-windows-amd64
             wails_args: ''
+            installer_kind: windows
           - name: macos-universal
             os: macos-latest
             artifact_name: GuildSync-macos
             wails_args: ''
+            installer_kind: macos
           - name: linux-amd64
             os: ubuntu-24.04
             artifact_name: GuildSync-linux-amd64
             wails_args: '-tags webkit2_41'
+            installer_kind: linux
 
     defaults:
       run:
@@ -65,7 +70,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libgl1-mesa-dev xorg-dev zenity
         working-directory: .
 
       - name: Install Wails CLI
@@ -83,35 +88,108 @@ jobs:
         run: |
           wails build -clean ${{ matrix.wails_args }}
 
-      - name: Package optional env example
+      - name: Prepare GuildSync payload
         shell: bash
         run: |
-          cp .env.example build/bin/.env.example
-          cp -r ../../ESO build/bin/ESO
+          set -euo pipefail
 
-      - name: Upload build artifact
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            VERSION="dev-${GITHUB_RUN_NUMBER}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "GUILDSYNC_VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+          rm -rf release
+          mkdir -p release/GuildSync
+
+          cp -a build/bin/. release/GuildSync/
+
+          # Hidden/default config, visible user-editable settings, and example config.
+          if [[ -f .env ]]; then cp -a .env release/GuildSync/.env; fi
+          if [[ -f .env.example ]]; then cp -a .env.example release/GuildSync/.env.example; fi
+          cp -a GuildSyncSettings.txt release/GuildSync/GuildSyncSettings.txt
+
+          # ESO add-ons are included in every payload so installers can copy them
+          # to the user's selected ESO AddOns folder.
+          cp -a ../../ESO release/GuildSync/ESO
+
+      - name: Create payload zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          version = os.environ['GUILDSYNC_VERSION']
+          artifact = os.environ['MATRIX_ARTIFACT_NAME']
+          root = Path('release/GuildSync')
+          out = Path('release') / f'{artifact}-{version}.zip'
+
+          with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
+              for path in root.rglob('*'):
+                  if path.is_file():
+                      zf.write(path, path.relative_to(root.parent))
+          PY
+        env:
+          MATRIX_ARTIFACT_NAME: ${{ matrix.artifact_name }}
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+        working-directory: .
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) {
+            $iscc = Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'
+          }
+          & $iscc `
+            "../../Installer/Windows/GuildSyncInstaller.iss" `
+            "/DMyAppVersion=$env:GUILDSYNC_VERSION" `
+            "/DSourceRoot=$((Resolve-Path 'release/GuildSync').Path)" `
+            "/DOutputRoot=$((Resolve-Path 'release').Path)"
+
+      - name: Build macOS installer
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ../../Installer/Mac/make-macos-installer.sh \
+            "release/GuildSync" \
+            "release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.command" \
+            "${GUILDSYNC_VERSION}"
+
+      - name: Build Linux installer
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ../../Installer/Linux/make-linux-fyne-appimage.sh \
+            "release/GuildSync" \
+            "release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.AppImage" \
+            "${GUILDSYNC_VERSION}"
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: GO/GuildSync-Frontend-Client/build/bin/**
+          name: ${{ matrix.artifact_name }}-${{ env.GUILDSYNC_VERSION }}
+          path: |
+            GO/GuildSync-Frontend-Client/release/*.zip
+            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-*
           include-hidden-files: true
           if-no-files-found: error
 
-      # after wails build
-      - name: Package GuildSync Windows release
-        shell: pwsh
-        working-directory: GO/GuildSync-Frontend-Client
-        run: |
-          New-Item -ItemType Directory -Force -Path "release/GuildSync" | Out-Null
-
-          Copy-Item "build/bin/*" "release/GuildSync/" -Recurse -Force
-          Copy-Item ".env.example" "release/GuildSync/.env.example" -Force
-          Copy-Item "../../ESO" "release/GuildSync/ESO" -Recurse -Force
-
-          Compress-Archive -Path "release/GuildSync/*" -DestinationPath "GuildSync-Windows-${{ github.ref_name }}.zip" -Force
-
-      - name: Upload compiled release asset
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: GO/GuildSync-Frontend-Client/GuildSync-Windows-${{ github.ref_name }}.zip
+          files: |
+            GO/GuildSync-Frontend-Client/release/*.zip
+            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-*

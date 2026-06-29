@@ -1,0 +1,17 @@
+# GuildSync user settings
+#
+# Lines starting with # are comments.
+# Use KEY=value format.
+#
+# Settings in this file override matching settings from the hidden .env file.
+
+# ESO SavedVariables directory.
+# Windows example:
+# SAVED_VARS_DIR=C:\Users\YourName\Documents\Elder Scrolls Online\live\SavedVariables
+# Linux Steam/Proton example:
+# SAVED_VARS_DIR=~/.local/share/Steam/steamapps/compatdata/306130/pfx/drive_c/users/steamuser/Documents/Elder Scrolls Online/live/SavedVariables
+# macOS example:
+# SAVED_VARS_DIR=~/Documents/Elder Scrolls Online/live/SavedVariables
+
+
+#SAVED_VARS_DIR=

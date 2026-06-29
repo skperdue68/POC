@@ -20,32 +20,62 @@ type GuildSyncSavedVarsWatchFile struct {
 	Enabled  bool   `json:"enabled"`
 }
 
-func findEnvFile() string {
+func findEnvSearchDirs() []string {
+	seen := map[string]bool{}
+	dirs := []string{}
+
+	addDir := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+
+		cleanDir, err := filepath.Abs(dir)
+		if err == nil {
+			dir = cleanDir
+		}
+
+		key := strings.ToLower(filepath.Clean(dir))
+		if seen[key] {
+			return
+		}
+
+		seen[key] = true
+		dirs = append(dirs, dir)
+	}
+
 	// Release/build behavior: check beside the executable first.
 	if exePath, err := os.Executable(); err == nil {
-		envPath := filepath.Join(filepath.Dir(exePath), ".env")
-		if _, err := os.Stat(envPath); err == nil {
-			return envPath
-		}
+		addDir(filepath.Dir(exePath))
 	}
 
 	// Development behavior: check the current working directory.
 	if workingDir, err := os.Getwd(); err == nil {
-		envPath := filepath.Join(workingDir, ".env")
-		if _, err := os.Stat(envPath); err == nil {
-			return envPath
+		addDir(workingDir)
+	}
+
+	return dirs
+}
+
+func findEnvFiles() []string {
+	files := []string{}
+
+	// Load hidden/default values first, then the visible user-editable settings.
+	// Later files may override earlier file-provided values, but real OS
+	// environment variables still win over both files.
+	for _, dir := range findEnvSearchDirs() {
+		for _, fileName := range []string{".env", "GuildSyncSettings.txt"} {
+			path := filepath.Join(dir, fileName)
+			if _, err := os.Stat(path); err == nil {
+				files = append(files, path)
+			}
 		}
 	}
 
-	return ""
+	return files
 }
 
-func loadOptionalEnvFile() {
-	envPath := findEnvFile()
-	if envPath == "" {
-		return
-	}
-
+func readEnvFile(envPath string, protectedKeys map[string]bool) {
 	file, err := os.Open(envPath)
 	if err != nil {
 		return
@@ -80,10 +110,25 @@ func loadOptionalEnvFile() {
 			}
 		}
 
-		// Do not overwrite real environment variables.
-		if _, exists := os.LookupEnv(key); !exists {
+		// Protect variables that came from the real OS environment before files
+		// were loaded. File values may override earlier file values, which lets
+		// GuildSyncSettings.txt override .env.
+		if !protectedKeys[key] {
 			os.Setenv(key, value)
 		}
+	}
+}
+
+func loadOptionalEnvFile() {
+	protectedKeys := map[string]bool{}
+	for _, item := range os.Environ() {
+		if equalsIndex := strings.Index(item, "="); equalsIndex > 0 {
+			protectedKeys[item[:equalsIndex]] = true
+		}
+	}
+
+	for _, envPath := range findEnvFiles() {
+		readEnvFile(envPath, protectedKeys)
 	}
 }
 
