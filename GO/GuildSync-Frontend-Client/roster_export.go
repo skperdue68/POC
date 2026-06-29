@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type GuildSyncRosterDataResult struct {
@@ -185,8 +184,8 @@ func (a *App) CommitGuildSyncRosterData(filePath string, fileName string) GuildS
 
 	originalText := string(originalBytes)
 
-	backupPath := fmt.Sprintf("%s.backup-%d", filePath, time.Now().UnixMilli())
-	if err := os.WriteFile(backupPath, originalBytes, 0644); err != nil {
+	backupPath, err := createGuildSyncSavedVarsBackup(filePath, originalBytes)
+	if err != nil {
 		baseResult.Message = fmt.Sprintf("Roster backend ACK received, but backup file could not be written: %v", err)
 		return baseResult
 	}

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
@@ -79,6 +80,7 @@ const GUILDSYNC_TOKEN_TTL_SECONDS = Number(process.env.GUILDSYNC_TOKEN_TTL_SECON
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WEB_DIST_DIR = process.env.GUILDSYNC_WEB_DIST_DIR || path.join(__dirname, 'public');
+const GUILDSYNC_DOWNLOADS_DIR = process.env.GUILDSYNC_DOWNLOADS_DIR || path.join(__dirname, 'public', 'downloads');
 
 const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 const GUILDSYNC_APPLICATIONS_GUILD_ID = String(process.env.GUILDSYNC_APPLICATIONS_GUILD_ID || '761817').trim();
@@ -86,7 +88,7 @@ const GUILDSYNC_APPLICATIONS_GUILD_ID = String(process.env.GUILDSYNC_APPLICATION
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
 const GUILDSYNC_CLIENT_DOWNLOAD_FILES = {
   windows: 'GuildSync-Setup-Windows.zip',
-  macos: 'GuildSync-macos.zip',
+  macos: 'GuildSync-Setup-macOS.zip',
   linux: 'GuildSync-Linux-Installer-x86_64.AppImage'
 };
 
@@ -340,7 +342,7 @@ app.post('/api/guildsync/upload-savedvars/:kind', requireGuildSyncWebUser, async
   }
 });
 
-app.use('/downloads', express.static(path.join(__dirname, 'public', 'downloads'), {
+app.use('/downloads', express.static(GUILDSYNC_DOWNLOADS_DIR, {
   fallthrough: false,
   index: false
 }));
@@ -2916,7 +2918,9 @@ function normalizeClientPlatform(value) {
 
 function getGuildSyncClientDownload(platform) {
   const normalizedPlatform = normalizeClientPlatform(platform);
-  const fileName = GUILDSYNC_CLIENT_DOWNLOAD_FILES[normalizedPlatform] || GUILDSYNC_CLIENT_DOWNLOAD_FILES.windows;
+  const fileName = findLatestGuildSyncClientDownloadFile(normalizedPlatform)
+    || GUILDSYNC_CLIENT_DOWNLOAD_FILES[normalizedPlatform]
+    || GUILDSYNC_CLIENT_DOWNLOAD_FILES.windows;
   const labelMap = {
     windows: 'Windows',
     macos: 'macOS',
@@ -2929,6 +2933,75 @@ function getGuildSyncClientDownload(platform) {
     file_name: fileName,
     url: buildPublicDownloadUrl(`/downloads/${fileName}`)
   };
+}
+
+function findLatestGuildSyncClientDownloadFile(platform) {
+  const normalizedPlatform = normalizeClientPlatform(platform);
+  const patterns = {
+    // Example: GuildSync-Setup-1.1.6-Windows.zip
+    windows: /^GuildSync-Setup-(\d+(?:\.\d+){1,3})-Windows\.zip$/i,
+    // Example: GuildSync-Setup-1.1.6-Linux-x86_64.zip
+    linux: /^GuildSync-Setup-(\d+(?:\.\d+){1,3})-Linux-x86_64\.zip$/i,
+    // Example: GuildSync-Setup-1.1.6-macOS.zip
+    macos: /^GuildSync-Setup-(\d+(?:\.\d+){1,3})-macOS\.zip$/i
+  };
+  const pattern = patterns[normalizedPlatform];
+
+  if (!pattern) {
+    return null;
+  }
+
+  let entries;
+  try {
+    entries = fs.readdirSync(GUILDSYNC_DOWNLOADS_DIR, { withFileTypes: true });
+  } catch (error) {
+    Log(`Download directory unavailable (${GUILDSYNC_DOWNLOADS_DIR}): ${error.message}`);
+    return null;
+  }
+
+  let latest = null;
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    const match = entry.name.match(pattern);
+    if (!match) {
+      continue;
+    }
+
+    const version = match[1];
+    if (!latest || compareVersionStrings(version, latest.version) > 0) {
+      latest = {
+        fileName: entry.name,
+        version
+      };
+    }
+  }
+
+  return latest ? latest.fileName : null;
+}
+
+function compareVersionStrings(a, b) {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  const length = Math.max(left.length, right.length);
+
+  for (let i = 0; i < length; i += 1) {
+    const leftPart = left[i] || 0;
+    const rightPart = right[i] || 0;
+
+    if (leftPart > rightPart) {
+      return 1;
+    }
+
+    if (leftPart < rightPart) {
+      return -1;
+    }
+  }
+
+  return 0;
 }
 
 function buildPublicDownloadUrl(downloadPath) {

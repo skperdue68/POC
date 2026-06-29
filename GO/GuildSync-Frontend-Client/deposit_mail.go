@@ -144,8 +144,8 @@ func (a *App) WriteDepositMailToGuildSyncBanking(records []map[string]interface{
 
 	accountWide["mailQueue"] = mailQueue
 
-	backupPath := fmt.Sprintf("%s.backup-%d", filePath, time.Now().UnixMilli())
-	if err := os.WriteFile(backupPath, originalBytes, 0644); err != nil {
+	backupPath, err := createGuildSyncSavedVarsBackup(filePath, originalBytes)
+	if err != nil {
 		result.Message = fmt.Sprintf("Deposit mail was not written because backup file could not be created: %v", err)
 		return result
 	}
@@ -713,8 +713,8 @@ func removeDepositMailAckIDsFromFile(filePath string, fileName string, ids []str
 	}
 	accountWide["mailAck"] = mailAck
 
-	backupPath := fmt.Sprintf("%s.backup-%d", filePath, time.Now().UnixMilli())
-	if err := os.WriteFile(backupPath, originalBytes, 0644); err != nil {
+	backupPath, err := createGuildSyncSavedVarsBackup(filePath, originalBytes)
+	if err != nil {
 		result.Message = fmt.Sprintf("Mail acknowledgement cleanup could not create a backup file: %v", err)
 		return result
 	}

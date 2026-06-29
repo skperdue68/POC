@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type GuildSyncBankingDataResult struct {
@@ -245,8 +244,8 @@ func (a *App) CommitGuildSyncBankingData(filePath string, fileName string) Guild
 		return baseResult
 	}
 
-	backupPath := fmt.Sprintf("%s.backup-%d", filePath, time.Now().UnixMilli())
-	if err := os.WriteFile(backupPath, originalBytes, 0644); err != nil {
+	backupPath, err := createGuildSyncSavedVarsBackup(filePath, originalBytes)
+	if err != nil {
 		baseResult.Message = fmt.Sprintf("Banking backend ACK received, but backup file could not be written: %v", err)
 		return baseResult
 	}

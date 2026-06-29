@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 type GuildSyncApplicationsDataResult struct {
@@ -173,8 +172,8 @@ func (a *App) CommitGuildSyncApplicationsData(filePath string, fileName string) 
 
 	originalText := string(originalBytes)
 
-	backupPath := fmt.Sprintf("%s.backup-%d", filePath, time.Now().UnixMilli())
-	if err := os.WriteFile(backupPath, originalBytes, 0644); err != nil {
+	backupPath, err := createGuildSyncSavedVarsBackup(filePath, originalBytes)
+	if err != nil {
 		baseResult.Message = fmt.Sprintf("Applications backend ACK received, but backup file could not be written: %v", err)
 		return baseResult
 	}

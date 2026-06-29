@@ -225,6 +225,14 @@ func copyDir(src, dst string, skipTopLevel map[string]bool) error {
 			}
 		}
 		target := filepath.Join(dst, rel)
+		if rel == "GuildSyncSettings.txt" {
+			if _, err := os.Stat(target); err == nil {
+				// Preserve the user's editable settings file during upgrades.
+				return nil
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err

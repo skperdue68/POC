@@ -41,7 +41,15 @@ ARCHIVE_LINE=$(awk '/^__GUILDSYNC_PAYLOAD_BELOW__$/ { print NR + 1; exit 0; }' "
 tail -n +"$ARCHIVE_LINE" "$0" | tar -xz -C "$TMP_DIR"
 
 mkdir -p "$INSTALL_DIR" "$ADDONS_DIR"
+PRESERVED_SETTINGS=""
+if [ -f "$INSTALL_DIR/GuildSyncSettings.txt" ]; then
+  PRESERVED_SETTINGS="$TMP_DIR/.GuildSyncSettings.txt.existing"
+  cp "$INSTALL_DIR/GuildSyncSettings.txt" "$PRESERVED_SETTINGS"
+fi
 cp -a "$TMP_DIR"/. "$INSTALL_DIR"/
+if [ -n "$PRESERVED_SETTINGS" ] && [ -f "$PRESERVED_SETTINGS" ]; then
+  cp "$PRESERVED_SETTINGS" "$INSTALL_DIR/GuildSyncSettings.txt"
+fi
 
 if [ -d "$TMP_DIR/ESO" ]; then
   cp -a "$TMP_DIR/ESO/GuildSyncBanking" "$ADDONS_DIR/" 2>/dev/null || true
