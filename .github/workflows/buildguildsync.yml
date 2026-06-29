@@ -229,9 +229,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          APPIMAGE_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.AppImage"
+          ZIP_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.zip"
+
+          rm -f "$APPIMAGE_PATH" "$ZIP_PATH"
+
           bash ../../Installer/Linux/make-linux-fyne-appimage.sh \
             "release/GuildSync" \
-            "release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.zip" \
+            "$APPIMAGE_PATH" \
             "${GUILDSYNC_VERSION}"
 
           python - <<'PY'
@@ -240,12 +245,16 @@ jobs:
           from pathlib import Path
 
           version = os.environ["GUILDSYNC_VERSION"]
-          out = Path("release") / f"GuildSync-Setup-{version}-Linux-x86_64.zip"
+          appimage = Path("release") / f"GuildSync-Setup-{version}-Linux-x86_64.AppImage"
+          zip_path = Path("release") / f"GuildSync-Setup-{version}-Linux-x86_64.zip"
 
-          if not out.exists():
-              raise FileNotFoundError(f"Expected Linux installer ZIP was not created: {out}")
+          if not appimage.exists():
+              raise FileNotFoundError(f"Expected AppImage was not created: {appimage}")
 
-          with zipfile.ZipFile(out, "r") as zf:
+          with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+              zf.write(appimage, appimage.name)
+
+          with zipfile.ZipFile(zip_path, "r") as zf:
               for name in zf.namelist():
                   if (
                       name == "."
@@ -256,7 +265,7 @@ jobs:
                   ):
                       raise RuntimeError(f"Unsafe path in Linux installer ZIP: {name}")
 
-          print(f"Verified safe Linux installer ZIP: {out}")
+          print(f"Created safe Linux installer ZIP: {zip_path}")
           PY
 
       - name: Upload build artifacts
