@@ -6,7 +6,17 @@ OUT_FILE="${2:?output installer path required}"
 APP_VERSION="${3:-0.0.0}"
 TMP_TAR="$(mktemp)"
 
-tar -C "$PAYLOAD_DIR" -czf "$TMP_TAR" .
+(
+  cd "$PAYLOAD_DIR"
+  tar --sort=name \
+    --owner=0 --group=0 --numeric-owner \
+    --format=gnu \
+    -czf "$TMP_TAR" \
+    GuildSync \
+    GuildSyncSettings.txt \
+    .env.example \
+    ESO
+)
 cat > "$OUT_FILE" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -45,11 +55,26 @@ mkdir -p "$INSTALL_DIR" "$ADDONS_DIR"
 PRESERVED_SETTINGS=""
 if [ -f "$INSTALL_DIR/GuildSyncSettings.txt" ]; then
   PRESERVED_SETTINGS="$TMP_DIR/.GuildSyncSettings.txt.existing"
-  cp "$INSTALL_DIR/GuildSyncSettings.txt" "$PRESERVED_SETTINGS"
+  if ! cp "$INSTALL_DIR/GuildSyncSettings.txt" "$PRESERVED_SETTINGS"; then
+    echo "GuildSync could not preserve the existing GuildSyncSettings.txt before installing."
+    echo
+    echo "Please make sure the file is not open in another program and that you have write permission to the GuildSync installation folder, then run the installer again."
+    exit 1
+  fi
+
+  # Do not let the payload copy overwrite the user's existing settings file.
+  rm -f "$TMP_DIR/GuildSyncSettings.txt"
 fi
+
 cp -a "$TMP_DIR"/. "$INSTALL_DIR"/
+
 if [ -n "$PRESERVED_SETTINGS" ] && [ -f "$PRESERVED_SETTINGS" ]; then
-  cp "$PRESERVED_SETTINGS" "$INSTALL_DIR/GuildSyncSettings.txt"
+  if ! cp "$PRESERVED_SETTINGS" "$INSTALL_DIR/GuildSyncSettings.txt"; then
+    echo "GuildSync could not restore your existing GuildSyncSettings.txt after installing."
+    echo
+    echo "Please make sure you have write permission to the GuildSync installation folder."
+    exit 1
+  fi
 fi
 
 if [ -d "$TMP_DIR/ESO" ]; then

@@ -48,6 +48,7 @@ Filename: "{cmd}"; Parameters: "/C if not exist ""{app}\.env"" if exist ""{app}\
 [Code]
 var
   ESOAddonPage: TInputDirWizardPage;
+  PreservedSettingsPath: String;
 
 procedure InitializeWizard;
 begin
@@ -71,4 +72,62 @@ end;
 function GetESOAddonDir(Param: String): String;
 begin
   Result := ESOAddonPage.Values[0];
+end;
+
+procedure PreserveGuildSyncSettings;
+var
+  ExistingSettingsPath: String;
+begin
+  PreservedSettingsPath := '';
+  ExistingSettingsPath := ExpandConstant('{app}\GuildSyncSettings.txt');
+
+  if FileExists(ExistingSettingsPath) then
+  begin
+    PreservedSettingsPath := ExpandConstant('{tmp}\GuildSyncSettings.txt.preserved');
+
+    if not FileCopy(ExistingSettingsPath, PreservedSettingsPath, False) then
+    begin
+      PreservedSettingsPath := '';
+      MsgBox(
+        'GuildSync could not preserve the existing GuildSyncSettings.txt before installing.' #13#10 #13#10 +
+        'Please make sure the file is not open in another program and that you have write permission to the GuildSync installation folder, then run the installer again.',
+        mbError,
+        MB_OK
+      );
+      Abort;
+    end;
+  end;
+end;
+
+procedure RestoreGuildSyncSettings;
+var
+  ExistingSettingsPath: String;
+begin
+  if (PreservedSettingsPath <> '') and FileExists(PreservedSettingsPath) then
+  begin
+    ExistingSettingsPath := ExpandConstant('{app}\GuildSyncSettings.txt');
+
+    if not FileCopy(PreservedSettingsPath, ExistingSettingsPath, False) then
+    begin
+      MsgBox(
+        'GuildSync could not restore your existing GuildSyncSettings.txt after installing.' #13#10 #13#10 +
+        'Please make sure you have write permission to the GuildSync installation folder.',
+        mbError,
+        MB_OK
+      );
+      Abort;
+    end;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+  begin
+    PreserveGuildSyncSettings;
+  end
+  else if CurStep = ssPostInstall then
+  begin
+    RestoreGuildSyncSettings;
+  end;
 end;
