@@ -35,10 +35,10 @@ import { EventsOn } from './web-events.js';
 
 const GUILDSYNC_APP_VERSION = '1.1.4';
 
-const GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS = {
-  windows: { label: 'Windows detected', shortLabel: 'Windows', fileName: 'GuildSync-Setup-Windows.zip', href: '/downloads/GuildSync-Setup-Windows.zip' },
-  macos: { label: 'macOS detected', shortLabel: 'macOS', fileName: 'GuildSync-macos.zip', href: '/downloads/GuildSync-macos.zip' },
-  linux: { label: 'Linux detected', shortLabel: 'Linux', fileName: 'GuildSync-Linux-Installer-x86_64.AppImage', href: '/downloads/GuildSync-Linux-Installer-x86_64.AppImage' }
+const GUILDSYNC_DESKTOP_CLIENT_PLATFORM_LABELS = {
+  windows: { label: 'Windows detected', shortLabel: 'Windows' },
+  macos: { label: 'macOS detected', shortLabel: 'macOS' },
+  linux: { label: 'Linux detected', shortLabel: 'Linux' }
 };
 const WEB_SAVEDVARS_UPLOAD_BANNER_DISMISSED_STORAGE_KEY = 'guildsync-web-savedvars-upload-banner-dismissed';
 const WEB_SAVEDVARS_ALLOWED_FILES = new Map([
@@ -103,6 +103,9 @@ let desktopClientUpdateInfo = {
   fileName: '',
   platformLabel: ''
 };
+
+let latestDesktopClientDownloadInfo = null;
+let latestDesktopClientDownloadError = '';
 
 let socket = null;
 
@@ -262,6 +265,7 @@ function showSplash() {
     await ShowMainWindow();
     await loadExistingSession();
     showMainWindow();
+    fetchLatestDesktopClientDownload();
     connectSocket();
     await syncGuildSyncFileWatcherWithAuthState();
   }, 5000);
@@ -420,30 +424,112 @@ function renderGuildSyncTabs() {
 }
 
 function getDetectedDesktopClientDownload() {
-  const userAgentDataPlatform = navigator.userAgentData?.platform || '';
-  const platform = `${userAgentDataPlatform} ${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+  const detectedPlatform = getGuildSyncClientPlatform();
+  const platformLabels = GUILDSYNC_DESKTOP_CLIENT_PLATFORM_LABELS[detectedPlatform] || {
+    label: 'Desktop client',
+    shortLabel: 'Desktop'
+  };
 
-  if (platform.includes('win')) {
-    return GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS.windows;
-  }
-
-  if (platform.includes('mac') || platform.includes('darwin')) {
-    return GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS.macos;
-  }
-
-  if (platform.includes('linux') || platform.includes('x11')) {
-    return GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS.linux;
+  if (latestDesktopClientDownloadInfo && latestDesktopClientDownloadInfo.platform === detectedPlatform) {
+    return {
+      available: true,
+      label: `${latestDesktopClientDownloadInfo.label || platformLabels.shortLabel} detected`,
+      shortLabel: latestDesktopClientDownloadInfo.label || platformLabels.shortLabel,
+      fileName: latestDesktopClientDownloadInfo.fileName,
+      href: latestDesktopClientDownloadInfo.url
+    };
   }
 
   return {
-    ...GUILDSYNC_DESKTOP_CLIENT_DOWNLOADS.windows,
-    label: 'Desktop client',
-    shortLabel: 'Windows'
+    available: false,
+    label: platformLabels.label,
+    shortLabel: platformLabels.shortLabel,
+    fileName: '',
+    href: '',
+    error: latestDesktopClientDownloadError
   };
+}
+
+async function fetchLatestDesktopClientDownload() {
+  const platform = getGuildSyncClientPlatform();
+  latestDesktopClientDownloadError = '';
+
+  try {
+    const response = await fetch(`/api/client-download?platform=${encodeURIComponent(platform)}`, {
+      headers: { Accept: 'application/json' }
+    });
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (jsonError) {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      throw new Error(payload?.error || `Download lookup failed with HTTP ${response.status}.`);
+    }
+
+    const download = payload.download && typeof payload.download === 'object' ? payload.download : {};
+    const fileName = String(payload.download_file_name || download.file_name || '').trim();
+    const url = String(payload.download_url || download.url || '').trim();
+
+    if (!payload.ok || !fileName || !url) {
+      throw new Error(payload.error || 'Download lookup did not return a usable file.');
+    }
+
+    latestDesktopClientDownloadInfo = {
+      platform: String(download.platform || payload.platform || platform).trim(),
+      label: String(download.label || '').trim(),
+      fileName,
+      url
+    };
+  } catch (error) {
+    latestDesktopClientDownloadInfo = null;
+    latestDesktopClientDownloadError = error?.message || 'No GuildSync desktop client download is currently available.';
+    const platformLabel = (GUILDSYNC_DESKTOP_CLIENT_PLATFORM_LABELS[platform] || {}).shortLabel || 'Desktop';
+    addSystemMessage('desktop-client-download-unavailable', `No ${platformLabel} client is currently available for download.`, {
+      tone: 'warning',
+      ttl: MESSAGE_VISIBLE_MS
+    });
+    console.warn('GuildSync desktop client download lookup failed.', error);
+  }
+
+  updateDesktopClientDownloadButton();
+}
+
+function updateDesktopClientDownloadButton() {
+  const existingButton = document.querySelector('.compact-header-actions .desktop-client-download-button');
+
+  if (!existingButton) {
+    return;
+  }
+
+  existingButton.outerHTML = renderDesktopClientDownloadButton();
 }
 
 function renderDesktopClientDownloadButton() {
   const download = getDetectedDesktopClientDownload();
+
+  if (!download.available) {
+    const message = download.error || 'Looking for latest download...';
+    return `
+      <button
+        class="desktop-client-download-button"
+        type="button"
+        disabled
+        title="${escapeAttribute(message)}"
+        aria-label="${escapeAttribute(message)}"
+      >
+        <span class="desktop-client-download-icon" aria-hidden="true">⬇</span>
+        <span class="desktop-client-download-copy">
+          <span class="desktop-client-download-title">Download Desktop Client</span>
+          <span class="desktop-client-download-subtitle">${escapeHtml(download.label)} · ${escapeHtml(message)}</span>
+        </span>
+        <span class="desktop-client-download-caret" aria-hidden="true">▾</span>
+      </button>
+    `;
+  }
 
   return `
     <a
@@ -462,7 +548,6 @@ function renderDesktopClientDownloadButton() {
     </a>
   `;
 }
-
 
 
 function getBankingMailAttentionCount() {

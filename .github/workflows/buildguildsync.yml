@@ -86,10 +86,10 @@ jobs:
 
       - name: Install Linux Wails dependencies
         if: runner.os == 'Linux'
+        working-directory: .
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libgl1-mesa-dev xorg-dev zenity
-        working-directory: .
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libgl1-mesa-dev xorg-dev zenity zip
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
@@ -111,20 +111,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${GUILDSYNC_VERSION}"
-
           rm -rf release
           mkdir -p release/GuildSync
 
           cp -a build/bin/. release/GuildSync/
 
-          # Hidden/default config, visible user-editable settings, and example config.
           if [[ -f .env ]]; then cp -a .env release/GuildSync/.env; fi
           if [[ -f .env.example ]]; then cp -a .env.example release/GuildSync/.env.example; fi
           cp -a GuildSyncSettings.txt release/GuildSync/GuildSyncSettings.txt
 
-          # ESO add-ons are included in every payload so installers can copy them
-          # to the user's selected ESO AddOns folder.
           cp -a ../../ESO release/GuildSync/ESO
 
       - name: Create payload zip
@@ -152,8 +147,8 @@ jobs:
       - name: Install Inno Setup
         if: runner.os == 'Windows'
         shell: pwsh
-        run: choco install innosetup --yes --no-progress
         working-directory: .
+        run: choco install innosetup --yes --no-progress
 
       - name: Build Windows installer
         if: runner.os == 'Windows'
@@ -179,15 +174,36 @@ jobs:
             "release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.command" \
             "${GUILDSYNC_VERSION}"
 
-      - name: Build Linux installer
+      - name: Build Linux Fyne installer ZIP
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
+
           bash ../../Installer/Linux/make-linux-fyne-appimage.sh \
             "release/GuildSync" \
-            "release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.AppImage" \
+            "release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.zip" \
             "${GUILDSYNC_VERSION}"
+
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          out = Path("release") / f"GuildSync-Setup-{Path.cwd() and __import__('os').environ['GUILDSYNC_VERSION']}-Linux-x86_64.zip"
+
+          with zipfile.ZipFile(out, "r") as zf:
+              for name in zf.namelist():
+                  if (
+                      name == "."
+                      or name == "./"
+                      or name.startswith("./")
+                      or name.startswith("/")
+                      or ".." in Path(name).parts
+                  ):
+                      raise RuntimeError(f"Unsafe path in Linux installer ZIP: {name}")
+
+          print(f"Verified safe Linux installer ZIP: {out}")
+          PY
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

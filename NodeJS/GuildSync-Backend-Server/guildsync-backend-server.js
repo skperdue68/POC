@@ -86,12 +86,6 @@ const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 const GUILDSYNC_APPLICATIONS_GUILD_ID = String(process.env.GUILDSYNC_APPLICATIONS_GUILD_ID || '761817').trim();
 
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
-const GUILDSYNC_CLIENT_DOWNLOAD_FILES = {
-  windows: 'GuildSync-Setup-Windows.zip',
-  macos: 'GuildSync-Setup-macOS.zip',
-  linux: 'GuildSync-Linux-Installer-x86_64.AppImage'
-};
-
 let loginDB;
 let applicationDB;
 
@@ -259,6 +253,29 @@ app.get('/api/auth/discord/web-callback', async (req, res) => {
       ok: false,
       message: error.message || 'Discord web authentication failed.'
     }));
+  }
+});
+
+app.get('/api/client-download', (req, res) => {
+  const platform = normalizeClientPlatform(req.query.platform || req.query.os || req.query.operating_system);
+
+  try {
+    const download = getGuildSyncClientDownload(platform);
+
+    return res.json({
+      ok: true,
+      platform,
+      download,
+      download_url: download.url,
+      download_file_name: download.file_name
+    });
+  } catch (error) {
+    Log(`Client download lookup failed for ${platform}: ${error.message}`);
+    return res.status(404).json({
+      ok: false,
+      platform,
+      error: error.message || `No ${platform} GuildSync client download file was found.`
+    });
   }
 });
 
@@ -2918,9 +2935,12 @@ function normalizeClientPlatform(value) {
 
 function getGuildSyncClientDownload(platform) {
   const normalizedPlatform = normalizeClientPlatform(platform);
-  const fileName = findLatestGuildSyncClientDownloadFile(normalizedPlatform)
-    || GUILDSYNC_CLIENT_DOWNLOAD_FILES[normalizedPlatform]
-    || GUILDSYNC_CLIENT_DOWNLOAD_FILES.windows;
+  const fileName = findLatestGuildSyncClientDownloadFile(normalizedPlatform);
+
+  if (!fileName) {
+    throw new Error(`No ${normalizedPlatform} GuildSync client download file was found in ${GUILDSYNC_DOWNLOADS_DIR}.`);
+  }
+
   const labelMap = {
     windows: 'Windows',
     macos: 'macOS',
