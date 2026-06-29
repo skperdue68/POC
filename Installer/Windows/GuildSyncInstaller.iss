@@ -18,6 +18,7 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 DefaultDirName={autopf}\GuildSync
 DisableDirPage=no
+DisableWelcomePage=no
 DefaultGroupName=GuildSync
 OutputDir={#OutputRoot}
 OutputBaseFilename=GuildSync-Setup-{#MyAppVersion}-Windows
