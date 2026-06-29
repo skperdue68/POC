@@ -35,7 +35,7 @@ VersionInfoProductName=GuildSync
 
 
 [Files]
-Source: "{#SourceRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "ESO\*,GuildSyncSettings.txt"
+Source: "{#SourceRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion; Excludes: "ESO\*,GuildSyncSettings.txt"
 Source: "{#SourceRoot}\GuildSyncSettings.txt"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist uninsneveruninstall
 Source: "{#SourceRoot}\ESO\GuildSyncBanking\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncBanking"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourceRoot}\ESO\GuildSyncRoster\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncRoster"; Flags: recursesubdirs createallsubdirs ignoreversion
