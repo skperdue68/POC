@@ -174,7 +174,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ../../Installer/Mac/make-macos-installer.sh \
+          bash ../../Installer/Mac/make-macos-installer.sh \
             "release/GuildSync" \
             "release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.command" \
             "${GUILDSYNC_VERSION}"
@@ -184,7 +184,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ../../Installer/Linux/make-linux-fyne-appimage.sh \
+          bash ../../Installer/Linux/make-linux-fyne-appimage.sh \
             "release/GuildSync" \
             "release/GuildSync-Setup-${GUILDSYNC_VERSION}-Linux-x86_64.AppImage" \
             "${GUILDSYNC_VERSION}"
