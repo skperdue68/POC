@@ -20,8 +20,12 @@ cp -a "$SRC_DIR" "$WORK_DIR/FyneInstaller"
 tar -C "$PAYLOAD_DIR" -czf "$WORK_DIR/FyneInstaller/payload.tar.gz" .
 
 pushd "$WORK_DIR/FyneInstaller" >/dev/null
+# The installer is copied to a temporary build directory, so it is safe for Go
+# to generate/update go.sum here. This avoids release failures when the checked-in
+# Fyne installer module does not already have all dependency checksums.
+go mod tidy
 go mod download
-go build -trimpath -ldflags "-s -w -X main.installerVersion=$APP_VERSION" -o "$WORK_DIR/GuildSync-Linux-Installer"
+go build -mod=mod -trimpath -ldflags "-s -w -X main.installerVersion=$APP_VERSION" -o "$WORK_DIR/GuildSync-Linux-Installer"
 popd >/dev/null
 
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
