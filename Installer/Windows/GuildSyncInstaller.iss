@@ -27,6 +27,12 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayIcon={app}\{#MyAppExeName}
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoCompany=evainefaye
+VersionInfoDescription=GuildSync Installer
+VersionInfoProductName=GuildSync
+
 
 [Files]
 Source: "{#SourceRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "ESO\*;GuildSyncSettings.txt"
