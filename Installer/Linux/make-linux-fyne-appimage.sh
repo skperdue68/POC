@@ -8,6 +8,15 @@ VERSION="${3:?Missing version}"
 SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
 OUTPUT_APPIMAGE="$(realpath -m "$OUTPUT_APPIMAGE")"
 
+case "$OUTPUT_APPIMAGE" in
+  *.AppImage) ;;
+  *)
+    echo "Output filename must end with .AppImage"
+    echo "Got: $OUTPUT_APPIMAGE"
+    exit 1
+    ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FYNE_INSTALLER_SOURCE="$SCRIPT_DIR/FyneInstaller"
 
