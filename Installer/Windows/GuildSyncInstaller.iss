@@ -30,7 +30,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
 Source: "{#SourceRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "ESO\*;GuildSyncSettings.txt"
-Source: "{#SourceRoot}\GuildSyncSettings.txt"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+Source: "{#SourceRoot}\GuildSyncSettings.txt"; DestDir: "{tmp}"; DestName: "GuildSyncSettings.default.txt"; Flags: ignoreversion deleteafterinstall
 Source: "{#SourceRoot}\ESO\GuildSyncBanking\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncBanking"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourceRoot}\ESO\GuildSyncRoster\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncRoster"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourceRoot}\ESO\GuildSyncApplications\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncApplications"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -48,7 +48,6 @@ Filename: "{cmd}"; Parameters: "/C if not exist ""{app}\.env"" if exist ""{app}\
 [Code]
 var
   ESOAddonPage: TInputDirWizardPage;
-  PreservedSettingsPath: String;
 
 procedure InitializeWizard;
 begin
@@ -74,43 +73,26 @@ begin
   Result := ESOAddonPage.Values[0];
 end;
 
-procedure PreserveGuildSyncSettings;
+procedure InstallGuildSyncSettingsIfMissing;
 var
   ExistingSettingsPath: String;
+  DefaultSettingsPath: String;
 begin
-  PreservedSettingsPath := '';
   ExistingSettingsPath := ExpandConstant('{app}\GuildSyncSettings.txt');
+  DefaultSettingsPath := ExpandConstant('{tmp}\GuildSyncSettings.default.txt');
 
   if FileExists(ExistingSettingsPath) then
   begin
-    PreservedSettingsPath := ExpandConstant('{tmp}\GuildSyncSettings.txt.preserved');
-
-    if not FileCopy(ExistingSettingsPath, PreservedSettingsPath, False) then
-    begin
-      PreservedSettingsPath := '';
-      MsgBox(
-        'GuildSync could not preserve the existing GuildSyncSettings.txt before installing.' #13#10 #13#10 +
-        'Please make sure the file is not open in another program and that you have write permission to the GuildSync installation folder, then run the installer again.',
-        mbError,
-        MB_OK
-      );
-      Abort;
-    end;
+    Log('Preserving existing GuildSyncSettings.txt');
+    exit;
   end;
-end;
 
-procedure RestoreGuildSyncSettings;
-var
-  ExistingSettingsPath: String;
-begin
-  if (PreservedSettingsPath <> '') and FileExists(PreservedSettingsPath) then
+  if FileExists(DefaultSettingsPath) then
   begin
-    ExistingSettingsPath := ExpandConstant('{app}\GuildSyncSettings.txt');
-
-    if not FileCopy(PreservedSettingsPath, ExistingSettingsPath, False) then
+    if not FileCopy(DefaultSettingsPath, ExistingSettingsPath, False) then
     begin
       MsgBox(
-        'GuildSync could not restore your existing GuildSyncSettings.txt after installing.' #13#10 #13#10 +
+        'GuildSync could not create GuildSyncSettings.txt.' #13#10 #13#10 +
         'Please make sure you have write permission to the GuildSync installation folder.',
         mbError,
         MB_OK
@@ -122,12 +104,8 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssInstall then
+  if CurStep = ssPostInstall then
   begin
-    PreserveGuildSyncSettings;
-  end
-  else if CurStep = ssPostInstall then
-  begin
-    RestoreGuildSyncSettings;
+    InstallGuildSyncSettingsIfMissing;
   end;
 end;
