@@ -15,6 +15,7 @@
 AppId={{8E7D5F38-9F0E-4D2A-A95A-8A6C5B8D1001}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion}
 DefaultDirName={autopf}\GuildSync
 DisableDirPage=no
 DefaultGroupName=GuildSync
@@ -50,6 +51,7 @@ var
 
 procedure InitializeWizard;
 begin
+  WizardForm.WelcomeLabel2.Caption := 'This installer will install GuildSync version {#MyAppVersion} on your computer.';
   ESOAddonPage :=
     CreateInputDirPage(
       wpSelectDir,

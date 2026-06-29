@@ -26,11 +26,11 @@ var payloadFS embed.FS
 
 const appName = "GuildSync"
 
-var installerVersion = "dev"
+var installerVersion = "0.0.0"
 
 func main() {
 	a := app.NewWithID("me.perdues.guildsync.installer")
-	w := a.NewWindow("GuildSync Linux Installer")
+	w := a.NewWindow(fmt.Sprintf("GuildSync Linux Installer v%s", installerVersion))
 	w.Resize(fyne.NewSize(720, 360))
 
 	home, _ := os.UserHomeDir()
@@ -42,7 +42,7 @@ func main() {
 	addonsEntry := widget.NewEntry()
 	addonsEntry.SetText(defaultAddons)
 
-	status := widget.NewLabel("Choose where to install GuildSync and where your ESO AddOns folder is located.")
+	status := widget.NewLabel(fmt.Sprintf("Installing GuildSync version %s. Choose where to install GuildSync and where your ESO AddOns folder is located.", installerVersion))
 	status.Wrapping = fyne.TextWrapWord
 
 	browseInstall := widget.NewButton("Browse...", func() {
@@ -68,11 +68,11 @@ func main() {
 		}
 
 		status.SetText("Installation complete.")
-		dialog.ShowInformation("GuildSync Installed", fmt.Sprintf("GuildSync was installed to:\n%s\n\nESO add-ons were copied to:\n%s", installDir, addonsDir), w)
+		dialog.ShowInformation("GuildSync Installed", fmt.Sprintf("GuildSync version %s was installed to:\n%s\n\nESO add-ons were copied to:\n%s", installerVersion, installDir, addonsDir), w)
 	})
 
 	form := container.NewVBox(
-		widget.NewRichTextFromMarkdown(fmt.Sprintf("## GuildSync Installer %s", installerVersion)),
+		widget.NewRichTextFromMarkdown(fmt.Sprintf("## GuildSync Installer\n\n**Version:** %s", installerVersion)),
 		status,
 		widget.NewLabel("GuildSync application install folder:"),
 		container.NewBorder(nil, nil, nil, browseInstall, installEntry),

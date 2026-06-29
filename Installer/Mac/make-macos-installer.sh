@@ -10,6 +10,7 @@ tar -C "$PAYLOAD_DIR" -czf "$TMP_TAR" .
 cat > "$OUT_FILE" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
+APP_VERSION="__GUILDSYNC_APP_VERSION__"
 DEFAULT_INSTALL_DIR="$HOME/Applications/GuildSync"
 DEFAULT_ADDONS_DIR="$HOME/Documents/Elder Scrolls Online/live/AddOns"
 
@@ -32,8 +33,8 @@ ask_dir() {
 }
 
 mkdir -p "$HOME/Applications" "$DEFAULT_ADDONS_DIR" 2>/dev/null || true
-INSTALL_DIR="$(ask_dir "Where should GuildSync be installed?" "$DEFAULT_INSTALL_DIR")"
-ADDONS_DIR="$(ask_dir "Where is your ESO AddOns directory?" "$DEFAULT_ADDONS_DIR")"
+INSTALL_DIR="$(ask_dir "Where should GuildSync version $APP_VERSION be installed?" "$DEFAULT_INSTALL_DIR")"
+ADDONS_DIR="$(ask_dir "Where is your ESO AddOns directory for GuildSync version $APP_VERSION?" "$DEFAULT_ADDONS_DIR")"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -63,11 +64,11 @@ if [ -n "$APP_PATH" ] && [ -d "$HOME/Desktop" ]; then
 fi
 
 if command -v osascript >/dev/null 2>&1; then
-  osascript -e 'display dialog "GuildSync installation is complete." buttons {"OK"} default button "OK"' >/dev/null 2>&1 || true
+  osascript -e 'display dialog "GuildSync version '"$APP_VERSION"' installation is complete." buttons {"OK"} default button "OK"' >/dev/null 2>&1 || true
 fi
-printf '\nGuildSync installed to: %s\nESO add-ons copied to: %s\n\n' "$INSTALL_DIR" "$ADDONS_DIR"
+printf '\nGuildSync version %s installed to: %s\nESO add-ons copied to: %s\n\n' "$APP_VERSION" "$INSTALL_DIR" "$ADDONS_DIR"
 SCRIPT
-printf 'APP_VERSION=%q\n' "$APP_VERSION" >> "$OUT_FILE"
+perl -0pi -e "s/__GUILDSYNC_APP_VERSION__/\Q$APP_VERSION\E/g" "$OUT_FILE"
 echo "exit 0" >> "$OUT_FILE"
 echo "__GUILDSYNC_PAYLOAD_BELOW__" >> "$OUT_FILE"
 cat "$TMP_TAR" >> "$OUT_FILE"

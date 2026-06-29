@@ -89,7 +89,7 @@ fi
 cd "$INSTALLER_DIR"
 
 go mod tidy
-go build -o GuildSync-Linux-Installer .
+go build -ldflags "-X main.installerVersion=${VERSION}" -o GuildSync-Linux-Installer .
 
 APPDIR="$TMP_DIR/AppDir"
 mkdir -p "$APPDIR/usr/bin"
