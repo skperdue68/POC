@@ -35,8 +35,8 @@ VersionInfoProductName=GuildSync
 
 
 [Files]
-Source: "{#SourceRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "ESO\*;GuildSyncSettings.txt"
-Source: "{#SourceRoot}\GuildSyncSettings.txt"; DestDir: "{tmp}"; DestName: "GuildSyncSettings.default.txt"; Flags: ignoreversion deleteafterinstall
+Source: "{#SourceRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: "ESO\*,GuildSyncSettings.txt"
+Source: "{#SourceRoot}\GuildSyncSettings.txt"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist uninsneveruninstall
 Source: "{#SourceRoot}\ESO\GuildSyncBanking\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncBanking"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourceRoot}\ESO\GuildSyncRoster\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncRoster"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourceRoot}\ESO\GuildSyncApplications\*"; DestDir: "{code:GetESOAddonDir}\GuildSyncApplications"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -77,41 +77,4 @@ end;
 function GetESOAddonDir(Param: String): String;
 begin
   Result := ESOAddonPage.Values[0];
-end;
-
-procedure InstallGuildSyncSettingsIfMissing;
-var
-  ExistingSettingsPath: String;
-  DefaultSettingsPath: String;
-begin
-  ExistingSettingsPath := ExpandConstant('{app}\GuildSyncSettings.txt');
-  DefaultSettingsPath := ExpandConstant('{tmp}\GuildSyncSettings.default.txt');
-
-  if FileExists(ExistingSettingsPath) then
-  begin
-    Log('Preserving existing GuildSyncSettings.txt');
-    exit;
-  end;
-
-  if FileExists(DefaultSettingsPath) then
-  begin
-    if not FileCopy(DefaultSettingsPath, ExistingSettingsPath, False) then
-    begin
-      MsgBox(
-        'GuildSync could not create GuildSyncSettings.txt.' #13#10 #13#10 +
-        'Please make sure you have write permission to the GuildSync installation folder.',
-        mbError,
-        MB_OK
-      );
-      Abort;
-    end;
-  end;
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-  begin
-    InstallGuildSyncSettingsIfMissing;
-  end;
 end;
