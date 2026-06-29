@@ -150,7 +150,7 @@ jobs:
         working-directory: .
         run: choco install innosetup --yes --no-progress
 
-      - name: Build Windows installer
+      - name: Build Windows installer ZIP
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -158,21 +158,70 @@ jobs:
           if (!(Test-Path $iscc)) {
             $iscc = Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'
           }
+
           & $iscc `
             "../../Installer/Windows/GuildSyncInstaller.iss" `
             "/DMyAppVersion=$env:GUILDSYNC_VERSION" `
             "/DSourceRoot=$((Resolve-Path 'release/GuildSync').Path)" `
             "/DOutputRoot=$((Resolve-Path 'release').Path)"
 
-      - name: Build macOS installer
+          $zipPath = "release/GuildSync-Setup-$env:GUILDSYNC_VERSION-Windows.zip"
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+
+          $installer = Get-ChildItem "release" -File |
+            Where-Object {
+              $_.Name -like "GuildSync-Setup-*.exe" -or
+              $_.Name -like "GuildSyncInstaller*.exe"
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $installer) {
+            throw "Could not find generated Windows installer EXE in release folder."
+          }
+
+          Compress-Archive `
+            -Path $installer.FullName `
+            -DestinationPath $zipPath `
+            -Force
+
+          Write-Host "Created $zipPath containing $($installer.Name)"
+
+      - name: Build macOS installer ZIP
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
+
+          DMG_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.dmg"
+          ZIP_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.zip"
+
           bash ../../Installer/Mac/make-macos-installer.sh \
             "release/GuildSync" \
-            "release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.command" \
+            "$DMG_PATH" \
             "${GUILDSYNC_VERSION}"
+
+          rm -f "$ZIP_PATH"
+
+          python - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
+
+          version = os.environ["GUILDSYNC_VERSION"]
+          dmg = Path("release") / f"GuildSync-Setup-{version}-macOS.dmg"
+          zip_path = Path("release") / f"GuildSync-Setup-{version}-macOS.zip"
+
+          if not dmg.exists():
+              raise FileNotFoundError(f"Expected DMG was not created: {dmg}")
+
+          with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+              zf.write(dmg, dmg.name)
+
+          print(f"Created {zip_path}")
+          PY
 
       - name: Build Linux Fyne installer ZIP
         if: runner.os == 'Linux'
@@ -186,10 +235,15 @@ jobs:
             "${GUILDSYNC_VERSION}"
 
           python - <<'PY'
+          import os
           import zipfile
           from pathlib import Path
 
-          out = Path("release") / f"GuildSync-Setup-{Path.cwd() and __import__('os').environ['GUILDSYNC_VERSION']}-Linux-x86_64.zip"
+          version = os.environ["GUILDSYNC_VERSION"]
+          out = Path("release") / f"GuildSync-Setup-{version}-Linux-x86_64.zip"
+
+          if not out.exists():
+              raise FileNotFoundError(f"Expected Linux installer ZIP was not created: {out}")
 
           with zipfile.ZipFile(out, "r") as zf:
               for name in zf.namelist():
@@ -208,17 +262,19 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}-${{ env.GUILDSYNC_VERSION }}
+          name: GuildSync-installers-${{ env.GUILDSYNC_VERSION }}-${{ matrix.installer_kind }}
           path: |
-            GO/GuildSync-Frontend-Client/release/*.zip
-            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-*
+            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Windows.zip
+            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-macOS.zip
+            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Linux-x86_64.zip
           include-hidden-files: true
-          if-no-files-found: error
+          if-no-files-found: ignore
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            GO/GuildSync-Frontend-Client/release/*.zip
-            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-*
+            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Windows.zip
+            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-macOS.zip
+            GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Linux-x86_64.zip
