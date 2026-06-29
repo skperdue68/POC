@@ -15,7 +15,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 INSTALLER_DIR="$TMP_DIR/installer"
-PAYLOAD_ZIP="$INSTALLER_DIR/payload.zip"
+PAYLOAD_TAR="$INSTALLER_DIR/payload.tar.gz"
 
 mkdir -p "$INSTALLER_DIR"
 
@@ -24,9 +24,12 @@ echo "Creating safe installer payload..."
 (
   cd "$SOURCE_DIR"
 
-  rm -f "$PAYLOAD_ZIP"
+  rm -f "$PAYLOAD_TAR"
 
-  zip -r "$PAYLOAD_ZIP" \
+  tar --sort=name \
+    --owner=0 --group=0 --numeric-owner \
+    --format=gnu \
+    -czf "$PAYLOAD_TAR" \
     GuildSync \
     GuildSyncSettings.txt \
     .env.example \
@@ -34,13 +37,14 @@ echo "Creating safe installer payload..."
 )
 
 python3 - <<PY
-import zipfile
+import tarfile
 from pathlib import Path
 
-payload = Path("$PAYLOAD_ZIP")
+payload = Path("$PAYLOAD_TAR")
 
-with zipfile.ZipFile(payload, "r") as zf:
-    for name in zf.namelist():
+with tarfile.open(payload, "r:gz") as tf:
+    for member in tf.getmembers():
+        name = member.name
         if (
             name == "."
             or name == "./"
