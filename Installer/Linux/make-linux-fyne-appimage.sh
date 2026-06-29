@@ -9,6 +9,8 @@ SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
 OUTPUT_APPIMAGE="$(realpath -m "$OUTPUT_APPIMAGE")"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FYNE_INSTALLER_SOURCE="$SCRIPT_DIR/FyneInstaller"
+
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -51,18 +53,24 @@ with zipfile.ZipFile(payload, "r") as zf:
 print(f"Verified safe installer payload: {payload}")
 PY
 
-cp -a "$SCRIPT_DIR/main.go" "$INSTALLER_DIR/main.go"
-
-if [[ -f "$SCRIPT_DIR/go.mod" ]]; then
-  cp -a "$SCRIPT_DIR/go.mod" "$INSTALLER_DIR/go.mod"
+if [[ ! -f "$FYNE_INSTALLER_SOURCE/main.go" ]]; then
+  echo "Could not find Fyne installer source:"
+  echo "  $FYNE_INSTALLER_SOURCE/main.go"
+  exit 1
 fi
 
-if [[ -f "$SCRIPT_DIR/go.sum" ]]; then
-  cp -a "$SCRIPT_DIR/go.sum" "$INSTALLER_DIR/go.sum"
+cp -a "$FYNE_INSTALLER_SOURCE/main.go" "$INSTALLER_DIR/main.go"
+
+if [[ -f "$FYNE_INSTALLER_SOURCE/go.mod" ]]; then
+  cp -a "$FYNE_INSTALLER_SOURCE/go.mod" "$INSTALLER_DIR/go.mod"
 fi
 
-if [[ -d "$SCRIPT_DIR/assets" ]]; then
-  cp -a "$SCRIPT_DIR/assets" "$INSTALLER_DIR/assets"
+if [[ -f "$FYNE_INSTALLER_SOURCE/go.sum" ]]; then
+  cp -a "$FYNE_INSTALLER_SOURCE/go.sum" "$INSTALLER_DIR/go.sum"
+fi
+
+if [[ -d "$FYNE_INSTALLER_SOURCE/assets" ]]; then
+  cp -a "$FYNE_INSTALLER_SOURCE/assets" "$INSTALLER_DIR/assets"
 fi
 
 cd "$INSTALLER_DIR"
@@ -87,8 +95,8 @@ Categories=Utility;
 Terminal=false
 EOF
 
-if [[ -f "$SCRIPT_DIR/assets/guildsync.png" ]]; then
-  cp -a "$SCRIPT_DIR/assets/guildsync.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/guildsync-installer.png"
+if [[ -f "$FYNE_INSTALLER_SOURCE/assets/guildsync.png" ]]; then
+  cp -a "$FYNE_INSTALLER_SOURCE/assets/guildsync.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/guildsync-installer.png"
 else
   convert -size 256x256 xc:transparent "$APPDIR/usr/share/icons/hicolor/256x256/apps/guildsync-installer.png"
 fi
