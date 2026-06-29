@@ -1,5 +1,6 @@
 # GuildSync user settings
 #
+# This file is intentionally named .txt so it is easy to find and edit.
 # Lines starting with # are comments.
 # Use KEY=value format.
 #
@@ -12,6 +13,8 @@
 # SAVED_VARS_DIR=~/.local/share/Steam/steamapps/compatdata/306130/pfx/drive_c/users/steamuser/Documents/Elder Scrolls Online/live/SavedVariables
 # macOS example:
 # SAVED_VARS_DIR=~/Documents/Elder Scrolls Online/live/SavedVariables
+SAVED_VARS_DIR=
 
-
-#SAVED_VARS_DIR=
+# Optional: force all deposit mails to this ESO account while testing.
+# Leave blank for normal use.
+GUILDSYNC_DEPOSIT_MAIL_FORCE_RECIPIENT=

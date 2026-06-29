@@ -59,6 +59,24 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: GO/GuildSync-Frontend-Client/go.sum
 
+      - name: Determine GuildSync version
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "GUILDSYNC_VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "GuildSync version: ${VERSION}"
+
+      - name: Update versioned files
+        shell: bash
+        working-directory: .
+        run: go run tools/update-version.go "${GUILDSYNC_VERSION}"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -93,12 +111,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${GITHUB_REF_NAME}"
-          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
-            VERSION="dev-${GITHUB_RUN_NUMBER}"
-          fi
-          VERSION="${VERSION#v}"
-          echo "GUILDSYNC_VERSION=${VERSION}" >> "$GITHUB_ENV"
+          VERSION="${GUILDSYNC_VERSION}"
 
           rm -rf release
           mkdir -p release/GuildSync
