@@ -189,18 +189,18 @@ jobs:
 
           Write-Host "Created $zipPath containing $($installer.Name)"
 
-      - name: Build macOS installer ZIP
+      - name: Build macOS PKG installer ZIP
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
 
-          DMG_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.dmg"
+          PKG_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.pkg"
           ZIP_PATH="release/GuildSync-Setup-${GUILDSYNC_VERSION}-macOS.zip"
 
           bash ../../Installer/Mac/make-macos-installer.sh \
             "release/GuildSync" \
-            "$DMG_PATH" \
+            "$PKG_PATH" \
             "${GUILDSYNC_VERSION}"
 
           rm -f "$ZIP_PATH"
@@ -211,14 +211,14 @@ jobs:
           from pathlib import Path
 
           version = os.environ["GUILDSYNC_VERSION"]
-          dmg = Path("release") / f"GuildSync-Setup-{version}-macOS.dmg"
+          pkg = Path("release") / f"GuildSync-Setup-{version}-macOS.pkg"
           zip_path = Path("release") / f"GuildSync-Setup-{version}-macOS.zip"
 
-          if not dmg.exists():
-              raise FileNotFoundError(f"Expected DMG was not created: {dmg}")
+          if not pkg.exists():
+              raise FileNotFoundError(f"Expected PKG was not created: {pkg}")
 
           with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-              zf.write(dmg, dmg.name)
+              zf.write(pkg, pkg.name)
 
           print(f"Created {zip_path}")
           PY
