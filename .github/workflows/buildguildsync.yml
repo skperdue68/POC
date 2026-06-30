@@ -189,7 +189,7 @@ jobs:
 
           Write-Host "Created $zipPath containing $($installer.Name)"
 
-      - name: Build macOS PKG installer ZIP
+      - name: Build macOS installer ZIP
         if: runner.os == 'macOS'
         shell: bash
         run: |
