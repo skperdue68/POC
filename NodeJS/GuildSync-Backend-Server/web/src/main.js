@@ -209,6 +209,7 @@ const MEMBER_LINK_STATUS_FILTERS = [
 
 let bankingEntries = [];
 let raffleBonusSettings = null;
+let raffleBonusDraft = null;
 let raffleBonusRaffles = [];
 let selectedBonusRaffle = '';
 let raffleBonusSettingsRequested = false;
@@ -1897,8 +1898,12 @@ function wireReportsPanel() {
   }
 
   document.querySelector('#raffleBonusSettingsForm')?.addEventListener('submit', saveRaffleBonusSettings);
+  document.querySelector('#raffleBonusSettingsForm')?.addEventListener('input', (event) => {
+    raffleBonusDraft = { raffle: selectedBonusRaffle, values: new Map(new FormData(event.currentTarget)) };
+  });
   document.querySelector('#bonusRafflePicker')?.addEventListener('change', (event) => {
     selectedBonusRaffle = event.currentTarget.value;
+    raffleBonusDraft = null;
     renderGuildSyncTabLayout();
   });
 
@@ -1910,9 +1915,10 @@ function wireReportsPanel() {
 
 function renderRaffleBonusSettings() {
   if (!raffleBonusSettings) return '<p>Loading raffle bonus settings...</p>';
+  const draft = raffleBonusDraft?.raffle === selectedBonusRaffle ? raffleBonusDraft.values : null;
   const selected = raffleBonusRaffles.find((raffle) => `${raffle.type}:${raffle.salesEnd}` === selectedBonusRaffle);
   const editing = selected ? {
-    enabled: selected.enabled,
+    enabledByType: { ...raffleBonusSettings.enabledByType, [selected.type]: selected.enabled },
     biweekly: selected.type === 'biweekly' ? selected.tiers : raffleBonusSettings.biweekly,
     monthly: selected.type === 'monthly' ? selected.tiers : raffleBonusSettings.monthly
   } : raffleBonusSettings;
@@ -1920,11 +1926,12 @@ function renderRaffleBonusSettings() {
   const fields = (type, label) => `
     <fieldset class="raffle-bonus-tiers" ${canEdit ? '' : 'disabled'}>
       <legend>${label}</legend>
+      <label><input name="${type}-enabled" type="checkbox" ${(draft ? draft.has(`${type}-enabled`) : (editing.enabledByType?.[type] ?? editing.enabled)) ? 'checked' : ''}> Enable bonus tickets</label>
       ${editing[type].map((tier, index) => `
         <div class="raffle-bonus-tier">
           <span>Period ${index + 1}${index === editing[type].length - 1 ? ' (final)' : ''}</span>
-          <label>Hours <input name="${type}-${index}-hours" type="number" min="1" step="1" required value="${escapeAttribute(String(tier.hours))}"></label>
-          <label>Bonus % <input name="${type}-${index}-percent" type="number" min="0" max="100" step="0.1" required value="${escapeAttribute(String(tier.percent))}"></label>
+          <label>Hours <input name="${type}-${index}-hours" type="number" min="1" step="1" required value="${escapeAttribute(String(draft ? draft.get(`${type}-${index}-hours`) ?? tier.hours : tier.hours))}"></label>
+          <label>Bonus % <input name="${type}-${index}-percent" type="number" min="0" max="100" step="0.1" required value="${escapeAttribute(String(draft ? draft.get(`${type}-${index}-percent`) ?? tier.percent : tier.percent))}"></label>
         </div>
       `).join('')}
     </fieldset>`;
@@ -1932,7 +1939,7 @@ function renderRaffleBonusSettings() {
     <article class="report-option-card raffle-bonus-card">
       <div class="report-option-copy">
         <h3>Raffle Bonus Tickets</h3>
-        <p>Default settings carry forward. Select a raffle to edit only that raffle, including past raffles. Purchase time determines its hour period. Bonuses round down; the final tier must be 0%.</p>
+        <p>Default settings carry forward. Select a raffle to edit only that raffle, including past raffles. Purchase time determines its hour period. Bonuses round down; the final tier must be 0%. Manual entries never receive additional bonuses. Changes apply only when you save.</p>
         <label>Bonus rules for
           <select id="bonusRafflePicker" ${canEdit ? '' : 'disabled'}>
             <option value="">Default rules for upcoming raffles</option>
@@ -1940,7 +1947,6 @@ function renderRaffleBonusSettings() {
           </select>
         </label>
         <form id="raffleBonusSettingsForm">
-          <label><input name="enabled" type="checkbox" ${editing.enabled ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Enable bonus tickets</label>
           ${selected ? fields(selected.type, selected.label) : fields('biweekly', 'Bi-Weekly Raffle') + fields('monthly', '50/50 Raffle')}
           ${canEdit ? '<button class="refresh-discord-button report-run-button" type="submit">Save Bonus Settings</button>' : '<p>Admin access is required to change these settings.</p>'}
         </form>
@@ -1958,12 +1964,13 @@ async function saveRaffleBonusSettings(event) {
     percent: Number(data.get(`${type}-${index}-percent`))
   }));
   const payload = selected
-    ? { raffleType: selected.type, salesEnd: selected.salesEnd, enabled: data.has('enabled'), tiers: tiers(selected.type) }
-    : { enabled: data.has('enabled'), biweekly: tiers('biweekly'), monthly: tiers('monthly') };
+    ? { raffleType: selected.type, salesEnd: selected.salesEnd, enabled: data.has(`${selected.type}-enabled`), tiers: tiers(selected.type) }
+    : { enabledByType: { biweekly: data.has('biweekly-enabled'), monthly: data.has('monthly-enabled') }, biweekly: tiers('biweekly'), monthly: tiers('monthly') };
   try {
     const response = await emitSocketWithAck('guildsync:save-raffle-bonus-settings', payload, 30000);
     if (!response?.ok) throw new Error(response?.message || 'Could not save raffle bonus settings.');
     raffleBonusSettings = response.bonusSettings;
+    raffleBonusDraft = null;
     await refreshBankingDataFromBackend({ silent: true });
     addSystemMessage('bonus-settings', 'Raffle bonus settings saved.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
     renderGuildSyncTabLayout();
@@ -5805,6 +5812,7 @@ function renderBankDepositsPanel() {
   const rows = getBankingRowsForSection(bankingActiveSection);
   const totals = getBankingTotals(rows, bankingActiveSection);
   const showTicketColumn = bankingActiveSection !== 'other';
+  const showBonusColumns = showTicketColumn && isBankingRaffleBonusEnabled(bankingActiveSection);
 
   return `
     <div class="guildsync-tab-panel bank-deposits-panel" data-active-tab="more">
@@ -5856,12 +5864,12 @@ function renderBankDepositsPanel() {
                 <th>Date / Time (Local)</th>
                 <th>Depositor</th>
                 <th>Amount Deposited</th>
-                ${showTicketColumn ? '<th>Purchased</th><th>Bonus</th><th>Total Tickets</th>' : ''}
+                ${showTicketColumn ? `<th>Purchased</th>${showBonusColumns ? '<th>Bonus %</th><th>Bonus Tickets</th>' : ''}<th>Total Tickets</th>` : ''}
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              ${rows.length > 0 ? rows.map((entry) => renderBankDepositRow(entry, showTicketColumn)).join('') : renderEmptyBankDepositRow(showTicketColumn)}
+              ${rows.length > 0 ? rows.map((entry) => renderBankDepositRow(entry, showTicketColumn, showBonusColumns)).join('') : renderEmptyBankDepositRow(showTicketColumn, showBonusColumns)}
             </tbody>
           </table>
         </div>
@@ -5871,7 +5879,7 @@ function renderBankDepositsPanel() {
           ${bankingActiveSection === 'monthly' ? `<div>Raffle Pot: <strong>${escapeHtml(formatGoldAmount(Math.floor(totals.amount / 2)))}</strong> <span aria-hidden="true">🪙</span></div>` : ''}
           ${bankingActiveSection === 'biweekly' ? `<div>Raffle Pot: <strong>${escapeHtml(formatGoldAmount(getRoundedBiweeklyRafflePot(totals.amount)))}</strong> <span aria-hidden="true">🪙</span></div>` : ''}
           ${bankingActiveSection === 'biweekly' ? `<div>Draws: <strong>${escapeHtml(String(getBiweeklyDrawCount(totals.amount)))}</strong></div>` : ''}
-          ${showTicketColumn ? `<div>Purchased: <strong>${escapeHtml(formatTicketAmount(totals.purchased))}</strong></div><div>Bonus: <strong>${escapeHtml(formatTicketAmount(totals.bonus))}</strong></div><div>Total Tickets: <strong>${escapeHtml(formatTicketAmount(totals.tickets))}</strong> <span aria-hidden="true">🎟</span></div>` : ''}
+          ${showTicketColumn ? `<div>Purchased: <strong>${escapeHtml(formatTicketAmount(totals.purchased))}</strong></div>${showBonusColumns ? `<div>Bonus: <strong>${escapeHtml(formatTicketAmount(totals.bonus))}</strong></div>` : ''}<div>Total Tickets: <strong>${escapeHtml(formatTicketAmount(totals.tickets))}</strong> <span aria-hidden="true">🎟</span></div>` : ''}
         </div>
       </div>
       ${bankingExportGridOpen ? renderBankingExportGrid(getBankingRowsForSection(bankingExportSection)) : ''}
@@ -5939,6 +5947,7 @@ function renderBankingHistoryMatches() {
 }
 
 function renderBankingHistoryRecords() {
+  const showBonusColumns = bankingHistoryRecords.some((record) => record.bonus_enabled);
   if (!bankingHistorySelectedAccount) {
     return '<div class="roster-history-muted">Choose a matching account to see banking history.</div>';
   }
@@ -5958,10 +5967,10 @@ function renderBankingHistoryRecords() {
           <tr>
             <th class="banking-history-date-column">Date / Time (Local)</th>
             <th>Type</th>
-            <th>Amount</th>
-            <th>Purchased</th>
-            <th>Bonus</th>
-            <th>Total Tickets</th>
+            <th style="text-align:right;">Amount</th>
+            <th style="text-align:right;">Purchased</th>
+            ${showBonusColumns ? '<th style="text-align:right;">Bonus %</th><th style="text-align:right;">Bonus Tickets</th>' : ''}
+            <th style="text-align:right;">Total Tickets</th>
             <th class="banking-history-notes-column">Notes</th>
           </tr>
         </thead>
@@ -5970,10 +5979,10 @@ function renderBankingHistoryRecords() {
             <tr>
               <td>${escapeHtml(formatBankingHistoryTimestamp(record.event_timestamp ?? record.eventTimestamp ?? record.time ?? ''))}</td>
               <td>${escapeHtml(formatBankingHistoryType(record.transaction_type || record.type || ''))}</td>
-              <td>${escapeHtml(formatBankingHistoryAmount(record.deposit_amount ?? record.depositAmount ?? record.amount))}</td>
-              <td>${escapeHtml(formatBankingHistoryTickets(record.purchased_tickets))}</td>
-              <td>${escapeHtml(formatBankingHistoryTickets(record.bonus_tickets))}</td>
-              <td>${escapeHtml(formatBankingHistoryTickets(record.total_tickets))}</td>
+              <td style="text-align:right;">${escapeHtml(formatBankingHistoryAmount(record.deposit_amount ?? record.depositAmount ?? record.amount))} 🪙</td>
+              <td style="text-align:right;">${escapeHtml(formatBankingHistoryTickets(record.purchased_tickets))}</td>
+              ${showBonusColumns ? `<td style="text-align:right;">${record.bonus_enabled ? `${escapeHtml(formatTicketAmount(record.bonus_percent))}%` : ''}</td><td style="text-align:right;">${record.bonus_enabled ? escapeHtml(formatBankingHistoryTickets(record.bonus_tickets)) : ''}</td>` : ''}
+              <td style="text-align:right;">${escapeHtml(formatBankingHistoryTickets(record.total_tickets))}</td>
               <td class="banking-history-note-cell">${escapeHtml(record.note || '')}</td>
             </tr>
           `).join('')}
@@ -5984,6 +5993,7 @@ function renderBankingHistoryRecords() {
 }
 
 function renderBankingExportGrid(rows) {
+  const showBonusColumns = isBankingRaffleBonusEnabled(bankingExportSection);
   return `
     <div class="bank-export-overlay" role="dialog" aria-modal="true" aria-label="Export bank deposits to spreadsheet">
       <div class="bank-export-dialog">
@@ -6007,7 +6017,7 @@ function renderBankingExportGrid(rows) {
                 <th>Guildie Name</th>
                 <th>Deposit Amount</th>
                 <th>Purchased Tickets</th>
-                <th>Bonus Tickets</th>
+                ${showBonusColumns ? '<th>Bonus %</th><th>Bonus Tickets</th>' : ''}
                 <th>Total Tickets</th>
                 <th>Note</th>
               </tr>
@@ -6025,12 +6035,13 @@ function renderBankingExportGrid(rows) {
 }
 
 function renderBankingExportGridRow(entry) {
+  const showBonusColumns = isBankingRaffleBonusEnabled(bankingExportSection);
   return `
     <tr>
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td>${escapeHtml(String(getBankingTotalDepositAmount(entry, bankingExportSection)))}</td>
       <td>${escapeHtml(String(entry.purchasedTickets))}</td>
-      <td>${escapeHtml(String(entry.bonusTickets))}</td>
+      ${showBonusColumns ? `<td>${escapeHtml(String(entry.bonusPercent))}%</td><td>${escapeHtml(String(entry.bonusTickets))}</td>` : ''}
       <td>${escapeHtml(String(entry.totalTickets))}</td>
       <td>${escapeHtml(entry.note || '')}</td>
     </tr>
@@ -6040,7 +6051,7 @@ function renderBankingExportGridRow(entry) {
 function renderEmptyBankingExportGridRow() {
   return `
     <tr>
-      <td class="bank-empty-row" colspan="6">No deposits to export for ${escapeHtml(getBankingSectionLabel(bankingExportSection))}.</td>
+      <td class="bank-empty-row" colspan="${isBankingRaffleBonusEnabled(bankingExportSection) ? 7 : 5}">No deposits to export for ${escapeHtml(getBankingSectionLabel(bankingExportSection))}.</td>
     </tr>
   `;
 }
@@ -6604,6 +6615,8 @@ function normalizeBankingHistoryRecords(records) {
         ticket_quantity: item.ticket_quantity ?? item.ticketQuantity ?? item.ticketAmount ?? '',
         purchased_tickets: item.purchasedTickets ?? item.ticket_quantity ?? item.ticketQuantity ?? item.ticketAmount ?? 0,
         bonus_tickets: item.bonusTickets ?? 0,
+        bonus_percent: item.bonusPercent ?? 0,
+        bonus_enabled: item.bonusEnabled === true,
         total_tickets: item.totalTickets ?? item.ticket_quantity ?? item.ticketQuantity ?? item.ticketAmount ?? 0,
         note: String(item.note || '').trim()
       }))
@@ -6772,14 +6785,15 @@ function wireBankDepositsPanel() {
 }
 
 function getBankingExportTsv(rows) {
-  const lines = [['Guildie Name', 'Deposit Amount', 'Purchased Tickets', 'Bonus Tickets', 'Total Tickets', 'Note']];
+  const showBonusColumns = isBankingRaffleBonusEnabled(bankingExportSection);
+  const lines = [['Guildie Name', 'Deposit Amount', 'Purchased Tickets', ...(showBonusColumns ? ['Bonus %', 'Bonus Tickets'] : []), 'Total Tickets', 'Note']];
 
   for (const entry of rows) {
     lines.push([
       entry.displayName || '',
       String(getBankingTotalDepositAmount(entry, bankingExportSection)),
       String(entry.purchasedTickets),
-      String(entry.bonusTickets),
+      ...(showBonusColumns ? [`${entry.bonusPercent}%`, String(entry.bonusTickets)] : []),
       String(entry.totalTickets),
       entry.note || ''
     ]);
@@ -7059,23 +7073,30 @@ function getBiweeklyDrawCount(totalDeposits) {
   return pot > 0 ? pot / 200000 : 0;
 }
 
-function renderBankDepositRow(entry, showTicketColumn = true) {
+function isBankingRaffleBonusEnabled(section) {
+  if (section !== 'biweekly' && section !== 'monthly') return false;
+  const { salesEnd } = getBankingRaffleWindow(section);
+  // A historical raffle or explicit override can differ from today's defaults.
+  return raffleBonusRaffles.find((raffle) => raffle.type === section && raffle.salesEnd === salesEnd)?.enabled === true;
+}
+
+function renderBankDepositRow(entry, showTicketColumn = true, showBonusColumns = isBankingRaffleBonusEnabled(bankingActiveSection)) {
   return `
     <tr>
       <td>${escapeHtml(entry.note || entry.eventId || '')}</td>
       <td>${escapeHtml(formatBankingTimestamp(entry.time))}</td>
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td><strong class="bank-gold-amount">${escapeHtml(formatGoldAmount(entry.amount))}</strong> <span aria-hidden="true">🪙</span></td>
-      ${showTicketColumn ? `<td>${escapeHtml(formatTicketAmount(entry.purchasedTickets))}</td><td>${escapeHtml(formatTicketAmount(entry.bonusTickets))}</td><td><strong class="bank-ticket-amount">${escapeHtml(formatTicketAmount(entry.totalTickets))}</strong></td>` : ''}
+      ${showTicketColumn ? `<td>${escapeHtml(formatTicketAmount(entry.purchasedTickets))}</td>${showBonusColumns ? `<td>${escapeHtml(formatTicketAmount(entry.bonusPercent))}%</td><td>${escapeHtml(formatTicketAmount(entry.bonusTickets))}</td>` : ''}<td><strong class="bank-ticket-amount">${escapeHtml(formatTicketAmount(entry.totalTickets))}</strong></td>` : ''}
       <td><button class="bank-entry-move-button" type="button" data-bank-entry-move="${escapeAttribute(entry.eventId || '')}">Move</button></td>
     </tr>
   `;
 }
 
-function renderEmptyBankDepositRow(showTicketColumn = true) {
+function renderEmptyBankDepositRow(showTicketColumn = true, showBonusColumns = false) {
   return `
     <tr>
-      <td class="bank-empty-row" colspan="${showTicketColumn ? '8' : '5'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
+      <td class="bank-empty-row" colspan="${showTicketColumn ? (showBonusColumns ? '9' : '7') : '5'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
     </tr>
   `;
 }
@@ -7135,6 +7156,8 @@ function normalizeBankingEntries(entries) {
       ticketAmount: Number(entry?.ticketAmount ?? entry?.ticket_amount ?? 0) || 0,
       purchasedTickets: Number(entry?.purchasedTickets ?? entry?.ticketAmount ?? 0) || 0,
       bonusTickets: Number(entry?.bonusTickets ?? 0) || 0,
+      bonusPercent: Number(entry?.bonusPercent ?? 0) || 0,
+      bonusEnabled: entry?.bonusEnabled === true,
       totalTickets: Number(entry?.totalTickets ?? entry?.ticketAmount ?? 0) || 0,
       note: String(entry?.note ?? '').trim(),
       dataSource: String(entry?.dataSource ?? entry?.data_source ?? '').trim(),
