@@ -149,7 +149,7 @@ func (a *App) GetGuildSyncSession() (GuildSyncSession, error) {
 		}, nil
 	}
 
-	if session.ExpiresAt.Before(time.Now()) {
+	if !session.ExpiresAt.IsZero() && session.ExpiresAt.Before(time.Now()) {
 		_ = DeleteGuildSyncSession()
 
 		cfg, _ := LoadGuildSyncClientConfig()
@@ -162,12 +162,48 @@ func (a *App) GetGuildSyncSession() (GuildSyncSession, error) {
 			StatusMessage: "Session expired. Please log in again.",
 		}, nil
 	}
+	if session.Token != "" {
+		endpoint := strings.TrimRight(session.AuthServerURL, "/") + "/api/auth/session"
+		req, reqErr := http.NewRequest(http.MethodGet, endpoint, nil)
+		if reqErr == nil {
+			req.Header.Set("Authorization", "Bearer "+session.Token)
+			client := http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Do(req)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusUnauthorized {
+					_ = DeleteGuildSyncSession()
+					return GuildSyncSession{StatusMessage: "Session ended. Please log in again."}, nil
+				}
+			}
+		}
+	}
 
 	return session, nil
 }
 
 func (a *App) LogoutGuildSync() (GuildSyncSession, error) {
-	_ = DeleteGuildSyncSession()
+	session, _ := loadGuildSyncSession()
+	if session.Token != "" {
+		endpoint := strings.TrimRight(session.AuthServerURL, "/") + "/api/auth/logout"
+		req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+		if err != nil {
+			return GuildSyncSession{}, err
+		}
+		req.Header.Set("Authorization", "Bearer "+session.Token)
+		client := http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return GuildSyncSession{}, fmt.Errorf("could not log out on the server: %w", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusUnauthorized {
+			return GuildSyncSession{}, fmt.Errorf("server could not log out (HTTP %d)", resp.StatusCode)
+		}
+	}
+	if err := DeleteGuildSyncSession(); err != nil {
+		return GuildSyncSession{}, err
+	}
 
 	cfg, _ := LoadGuildSyncClientConfig()
 

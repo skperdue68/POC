@@ -190,6 +190,10 @@ const MEMBER_LINK_STATUS_FILTERS = [
 ];
 
 let bankingEntries = [];
+let raffleBonusSettings = null;
+let raffleBonusRaffles = [];
+let selectedBonusRaffle = '';
+let raffleBonusSettingsRequested = false;
 let bankingActiveSection = 'biweekly';
 let bankingLastRefreshValue = null;
 let bankingDataLoading = false;
@@ -733,6 +737,10 @@ function renderGuildSyncTabLayout(options = {}) {
 
   const tabBar = document.querySelector('.guildsync-tabs');
   const content = document.querySelector('#guildSyncTabContent');
+  const scrollPositions = content ? Array.from(content.querySelectorAll('*'))
+    .map((element, index) => ({ index, top: element.scrollTop, left: element.scrollLeft }))
+    .filter(({ top, left }) => top || left) : [];
+  const windowScroll = { x: window.scrollX, y: window.scrollY };
 
   if (tabBar) {
     tabBar.innerHTML = renderGuildSyncTabs();
@@ -740,6 +748,14 @@ function renderGuildSyncTabLayout(options = {}) {
 
   if (content) {
     content.innerHTML = renderGuildSyncTabContent();
+    const elements = content.querySelectorAll('*');
+    for (const { index, top, left } of scrollPositions) {
+      if (elements[index]) {
+        elements[index].scrollTop = top;
+        elements[index].scrollLeft = left;
+      }
+    }
+    window.scrollTo(windowScroll.x, windowScroll.y);
   }
 
   wireGuildSyncTabs();
@@ -778,7 +794,10 @@ function renderGuildSyncTabLayout(options = {}) {
     refreshRosterDataFromBackend({ silent: true });
   }
 
-  if (activeGuildSyncTab === 'more' && socket?.connected && bankingEntries.length === 0 && !bankingDataLoading) {
+  if ((activeGuildSyncTab === 'more' && bankingEntries.length === 0 ||
+    activeGuildSyncTab === 'settings' && !raffleBonusSettings && !raffleBonusSettingsRequested) &&
+    socket?.connected && !bankingDataLoading) {
+    raffleBonusSettingsRequested = true;
     refreshBankingDataFromBackend({ silent: true });
   }
 
@@ -1614,6 +1633,7 @@ function renderReportsPanel() {
       </div>
 
       <div class="reports-scroll-area">
+        ${renderRaffleBonusSettings()}
         <section class="reports-list" aria-label="Available reports">
           <article class="report-option-card">
             <div class="report-option-copy">
@@ -1665,10 +1685,80 @@ function wireReportsPanel() {
     return;
   }
 
+  document.querySelector('#raffleBonusSettingsForm')?.addEventListener('submit', saveRaffleBonusSettings);
+  document.querySelector('#bonusRafflePicker')?.addEventListener('change', (event) => {
+    selectedBonusRaffle = event.currentTarget.value;
+    renderGuildSyncTabLayout();
+  });
+
   document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => openAssociatePromotionReportDialog());
   document.querySelector('#runDiscordRankAuditReportButton')?.addEventListener('click', () => openDiscordRankAuditReportDialog());
   document.querySelector('#runDiscordLastSeenReportButton')?.addEventListener('click', () => openDiscordLastSeenReportDialog());
   document.querySelector('#runMemberLinksReportButton')?.addEventListener('click', () => openMemberLinksReportDialog());
+}
+
+function renderRaffleBonusSettings() {
+  if (!raffleBonusSettings) return '<p>Loading raffle bonus settings...</p>';
+  const selected = raffleBonusRaffles.find((raffle) => `${raffle.type}:${raffle.salesEnd}` === selectedBonusRaffle);
+  const editing = selected ? {
+    enabled: selected.enabled,
+    biweekly: selected.type === 'biweekly' ? selected.tiers : raffleBonusSettings.biweekly,
+    monthly: selected.type === 'monthly' ? selected.tiers : raffleBonusSettings.monthly
+  } : raffleBonusSettings;
+  const canEdit = guildSyncSession?.user?.role === 'admin';
+  const fields = (type, label) => `
+    <fieldset class="raffle-bonus-tiers" ${canEdit ? '' : 'disabled'}>
+      <legend>${label}</legend>
+      ${editing[type].map((tier, index) => `
+        <div class="raffle-bonus-tier">
+          <span>Period ${index + 1}${index === editing[type].length - 1 ? ' (final)' : ''}</span>
+          <label>Hours <input name="${type}-${index}-hours" type="number" min="1" step="1" required value="${escapeAttribute(String(tier.hours))}"></label>
+          <label>Bonus % <input name="${type}-${index}-percent" type="number" min="0" max="100" step="0.1" required value="${escapeAttribute(String(tier.percent))}"></label>
+        </div>
+      `).join('')}
+    </fieldset>`;
+  return `
+    <article class="report-option-card raffle-bonus-card">
+      <div class="report-option-copy">
+        <h3>Raffle Bonus Tickets</h3>
+        <p>Default settings carry forward. Select a raffle to edit only that raffle, including past raffles. Purchase time determines its hour period. Bonuses round down; the final tier must be 0%.</p>
+        <label>Bonus rules for
+          <select id="bonusRafflePicker" ${canEdit ? '' : 'disabled'}>
+            <option value="">Default rules for upcoming raffles</option>
+            ${raffleBonusRaffles.map((raffle) => `<option value="${escapeAttribute(`${raffle.type}:${raffle.salesEnd}`)}" ${selectedBonusRaffle === `${raffle.type}:${raffle.salesEnd}` ? 'selected' : ''}>${escapeHtml(raffle.label)}${raffle.overridden ? ' (custom)' : ''}</option>`).join('')}
+          </select>
+        </label>
+        <form id="raffleBonusSettingsForm">
+          <label><input name="enabled" type="checkbox" ${editing.enabled ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Enable bonus tickets</label>
+          ${selected ? fields(selected.type, selected.label) : fields('biweekly', 'Bi-Weekly Raffle') + fields('monthly', '50/50 Raffle')}
+          ${canEdit ? '<button class="refresh-discord-button report-run-button" type="submit">Save Bonus Settings</button>' : '<p>Admin access is required to change these settings.</p>'}
+        </form>
+      </div>
+    </article>`;
+}
+
+async function saveRaffleBonusSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const selected = raffleBonusRaffles.find((raffle) => `${raffle.type}:${raffle.salesEnd}` === selectedBonusRaffle);
+  const tiers = (type) => (selected?.type === type ? selected.tiers : raffleBonusSettings[type]).map((_, index) => ({
+    hours: Number(data.get(`${type}-${index}-hours`)),
+    percent: Number(data.get(`${type}-${index}-percent`))
+  }));
+  const payload = selected
+    ? { raffleType: selected.type, salesEnd: selected.salesEnd, enabled: data.has('enabled'), tiers: tiers(selected.type) }
+    : { enabled: data.has('enabled'), biweekly: tiers('biweekly'), monthly: tiers('monthly') };
+  try {
+    const response = await emitSocketWithAck('guildsync:save-raffle-bonus-settings', payload, 30000);
+    if (!response?.ok) throw new Error(response?.message || 'Could not save raffle bonus settings.');
+    raffleBonusSettings = response.bonusSettings;
+    await refreshBankingDataFromBackend({ silent: true });
+    addSystemMessage('bonus-settings', 'Raffle bonus settings saved.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+    renderGuildSyncTabLayout();
+  } catch (error) {
+    addSystemMessage('bonus-settings-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
+  }
 }
 
 function openAssociatePromotionReportDialog() {
@@ -5276,7 +5366,7 @@ function renderBankDepositsPanel() {
                 <th>Date / Time (Local)</th>
                 <th>Depositor</th>
                 <th>Amount Deposited</th>
-                ${showTicketColumn ? '<th>Tickets Awarded</th>' : ''}
+                ${showTicketColumn ? '<th>Purchased</th><th>Bonus</th><th>Total Tickets</th>' : ''}
                 <th>Actions</th>
               </tr>
             </thead>
@@ -5291,7 +5381,7 @@ function renderBankDepositsPanel() {
           ${bankingActiveSection === 'monthly' ? `<div>Raffle Pot: <strong>${escapeHtml(formatGoldAmount(Math.floor(totals.amount / 2)))}</strong> <span aria-hidden="true">🪙</span></div>` : ''}
           ${bankingActiveSection === 'biweekly' ? `<div>Raffle Pot: <strong>${escapeHtml(formatGoldAmount(getRoundedBiweeklyRafflePot(totals.amount)))}</strong> <span aria-hidden="true">🪙</span></div>` : ''}
           ${bankingActiveSection === 'biweekly' ? `<div>Draws: <strong>${escapeHtml(String(getBiweeklyDrawCount(totals.amount)))}</strong></div>` : ''}
-          ${showTicketColumn ? `<div>Total Tickets Awarded: <strong>${escapeHtml(formatTicketAmount(totals.tickets))}</strong> <span aria-hidden="true">🎟</span></div>` : ''}
+          ${showTicketColumn ? `<div>Purchased: <strong>${escapeHtml(formatTicketAmount(totals.purchased))}</strong></div><div>Bonus: <strong>${escapeHtml(formatTicketAmount(totals.bonus))}</strong></div><div>Total Tickets: <strong>${escapeHtml(formatTicketAmount(totals.tickets))}</strong> <span aria-hidden="true">🎟</span></div>` : ''}
         </div>
       </div>
       ${bankingExportGridOpen ? renderBankingExportGrid(getBankingRowsForSection(bankingExportSection)) : ''}
@@ -5379,7 +5469,9 @@ function renderBankingHistoryRecords() {
             <th class="banking-history-date-column">Date / Time (Local)</th>
             <th>Type</th>
             <th style="text-align:right;">Amount</th>
-            <th style="text-align:right;">Tickets</th>
+            <th style="text-align:right;">Purchased</th>
+            <th style="text-align:right;">Bonus</th>
+            <th style="text-align:right;">Total Tickets</th>
             <th class="banking-history-notes-column">Notes</th>
           </tr>
         </thead>
@@ -5389,7 +5481,9 @@ function renderBankingHistoryRecords() {
               <td>${escapeHtml(formatBankingHistoryTimestamp(record.event_timestamp ?? record.eventTimestamp ?? record.time ?? ''))}</td>
               <td>${escapeHtml(formatBankingHistoryType(record.transaction_type || record.type || ''))}</td>
               <td style="text-align:right;">${escapeHtml(formatBankingHistoryAmount(record.deposit_amount ?? record.depositAmount ?? record.amount))} 🪙</td>
-              <td style="text-align:right;">${escapeHtml(formatBankingHistoryTickets(record.ticket_quantity ?? record.ticketQuantity ?? record.ticketAmount))}</td>
+              <td style="text-align:right;">${escapeHtml(formatBankingHistoryTickets(record.purchased_tickets))}</td>
+              <td style="text-align:right;">${escapeHtml(formatBankingHistoryTickets(record.bonus_tickets))}</td>
+              <td style="text-align:right;">${escapeHtml(formatBankingHistoryTickets(record.total_tickets))}</td>
               <td class="banking-history-note-cell">${escapeHtml(record.note || '')}</td>
             </tr>
           `).join('')}
@@ -5422,7 +5516,9 @@ function renderBankingExportGrid(rows) {
               <tr>
                 <th>Guildie Name</th>
                 <th>Deposit Amount</th>
-                <th>Number of Tickets</th>
+                <th>Purchased Tickets</th>
+                <th>Bonus Tickets</th>
+                <th>Total Tickets</th>
                 <th>Note</th>
               </tr>
             </thead>
@@ -5443,7 +5539,9 @@ function renderBankingExportGridRow(entry) {
     <tr>
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td>${escapeHtml(String(getBankingTotalDepositAmount(entry, bankingExportSection)))}</td>
-      <td>${escapeHtml(String(Number(entry.ticketAmount) || 0))}</td>
+      <td>${escapeHtml(String(entry.purchasedTickets))}</td>
+      <td>${escapeHtml(String(entry.bonusTickets))}</td>
+      <td>${escapeHtml(String(entry.totalTickets))}</td>
       <td>${escapeHtml(entry.note || '')}</td>
     </tr>
   `;
@@ -5452,7 +5550,7 @@ function renderBankingExportGridRow(entry) {
 function renderEmptyBankingExportGridRow() {
   return `
     <tr>
-      <td class="bank-empty-row" colspan="4">No deposits to export for ${escapeHtml(getBankingSectionLabel(bankingExportSection))}.</td>
+      <td class="bank-empty-row" colspan="6">No deposits to export for ${escapeHtml(getBankingSectionLabel(bankingExportSection))}.</td>
     </tr>
   `;
 }
@@ -6046,6 +6144,9 @@ function normalizeBankingHistoryRecords(records) {
         event_timestamp: item.event_timestamp ?? item.eventTimestamp ?? item.time ?? '',
         deposit_amount: item.deposit_amount ?? item.depositAmount ?? item.amount ?? '',
         ticket_quantity: item.ticket_quantity ?? item.ticketQuantity ?? item.ticketAmount ?? '',
+        purchased_tickets: item.purchasedTickets ?? item.ticket_quantity ?? item.ticketQuantity ?? item.ticketAmount ?? 0,
+        bonus_tickets: item.bonusTickets ?? 0,
+        total_tickets: item.totalTickets ?? item.ticket_quantity ?? item.ticketQuantity ?? item.ticketAmount ?? 0,
         note: String(item.note || '').trim()
       }))
       .sort((left, right) => {
@@ -6213,13 +6314,15 @@ function wireBankDepositsPanel() {
 }
 
 function getBankingExportTsv(rows) {
-  const lines = [['Guildie Name', 'Deposit Amount', 'Tickets', 'Note']];
+  const lines = [['Guildie Name', 'Deposit Amount', 'Purchased Tickets', 'Bonus Tickets', 'Total Tickets', 'Note']];
 
   for (const entry of rows) {
     lines.push([
       entry.displayName || '',
       String(getBankingTotalDepositAmount(entry, bankingExportSection)),
-      String(Number(entry.ticketAmount) || 0),
+      String(entry.purchasedTickets),
+      String(entry.bonusTickets),
+      String(entry.totalTickets),
       entry.note || ''
     ]);
   }
@@ -6297,7 +6400,7 @@ function getBankingRowsForSection(section) {
   return bankingEntries
     .filter((entry) => entry.type === section)
     .filter((entry) => isBankingEntryInSelectedPeriod(section, entry))
-    .sort((left, right) => (Number(right.time) || 0) - (Number(left.time) || 0));
+    .sort((left, right) => (Number(left.time) || 0) - (Number(right.time) || 0));
 }
 
 function isBankingEntryInSelectedPeriod(section, entry) {
@@ -6478,10 +6581,12 @@ function getBankingTotals(rows, section = bankingActiveSection) {
   return rows.reduce(
     (totals, entry) => {
       totals.amount += getBankingTotalDepositAmount(entry, section);
-      totals.tickets += Number(entry.ticketAmount) || 0;
+      totals.purchased += Number(entry.purchasedTickets) || 0;
+      totals.bonus += Number(entry.bonusTickets) || 0;
+      totals.tickets += Number(entry.totalTickets) || 0;
       return totals;
     },
-    { amount: 0, tickets: 0 }
+    { amount: 0, purchased: 0, bonus: 0, tickets: 0 }
   );
 }
 
@@ -6503,7 +6608,7 @@ function renderBankDepositRow(entry, showTicketColumn = true) {
       <td>${escapeHtml(formatBankingTimestamp(entry.time))}</td>
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td><strong class="bank-gold-amount">${escapeHtml(formatGoldAmount(entry.amount))}</strong> <span aria-hidden="true">🪙</span></td>
-      ${showTicketColumn ? `<td><strong class="bank-ticket-amount">${escapeHtml(formatTicketAmount(entry.ticketAmount))}</strong></td>` : ''}
+      ${showTicketColumn ? `<td>${escapeHtml(formatTicketAmount(entry.purchasedTickets))}</td><td>${escapeHtml(formatTicketAmount(entry.bonusTickets))}</td><td><strong class="bank-ticket-amount">${escapeHtml(formatTicketAmount(entry.totalTickets))}</strong></td>` : ''}
       <td><button class="bank-entry-move-button" type="button" data-bank-entry-move="${escapeAttribute(entry.eventId || '')}">Move</button></td>
     </tr>
   `;
@@ -6512,7 +6617,7 @@ function renderBankDepositRow(entry, showTicketColumn = true) {
 function renderEmptyBankDepositRow(showTicketColumn = true) {
   return `
     <tr>
-      <td class="bank-empty-row" colspan="${showTicketColumn ? '6' : '5'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
+      <td class="bank-empty-row" colspan="${showTicketColumn ? '8' : '5'}">No ${escapeHtml(getBankingSectionLabel(bankingActiveSection))} deposits found for this ${bankingActiveSection === 'other' ? 'section' : 'raffle period'}.</td>
     </tr>
   `;
 }
@@ -6570,6 +6675,9 @@ function normalizeBankingEntries(entries) {
       displayName: String(entry?.displayName ?? entry?.display_name ?? '').trim(),
       amount: Number(entry?.amount ?? 0) || 0,
       ticketAmount: Number(entry?.ticketAmount ?? entry?.ticket_amount ?? 0) || 0,
+      purchasedTickets: Number(entry?.purchasedTickets ?? entry?.ticketAmount ?? 0) || 0,
+      bonusTickets: Number(entry?.bonusTickets ?? 0) || 0,
+      totalTickets: Number(entry?.totalTickets ?? entry?.ticketAmount ?? 0) || 0,
       note: String(entry?.note ?? '').trim(),
       dataSource: String(entry?.dataSource ?? entry?.data_source ?? '').trim(),
       emailRequested: Boolean(entry?.emailRequested ?? entry?.email_requested),
@@ -6619,6 +6727,8 @@ async function handleBankingDataUpdated(payload = {}) {
   }
 
   bankingEntries = normalizeBankingEntries(payload.entries);
+  if (payload.bonusSettings) raffleBonusSettings = payload.bonusSettings;
+  if (Array.isArray(payload.bonusRaffles)) raffleBonusRaffles = payload.bonusRaffles;
   markBankingLastRefreshNow();
 
   if (activeGuildSyncTab === 'more') {
@@ -6656,6 +6766,8 @@ async function refreshBankingDataFromBackend(options = {}) {
     }
 
     bankingEntries = normalizeBankingEntries(response.entries);
+    if (response.bonusSettings) raffleBonusSettings = response.bonusSettings;
+    if (Array.isArray(response.bonusRaffles)) raffleBonusRaffles = response.bonusRaffles;
     markBankingLastRefreshNow();
 
     if (!silent) {
@@ -8256,7 +8368,7 @@ function connectSocket() {
       refreshRosterDataFromBackend({ silent: true });
     }
 
-    if (activeGuildSyncTab === 'more') {
+    if (activeGuildSyncTab === 'more' || activeGuildSyncTab === 'settings' && !raffleBonusSettings) {
       refreshBankingDataFromBackend({ silent: true });
     }
 
