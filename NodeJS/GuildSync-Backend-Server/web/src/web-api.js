@@ -18,6 +18,25 @@ function clearStoredSession() {
   localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
+function restoreSessionDuringOutage(token, stored) {
+  let expiresAt = 0;
+  let persistentSession = false;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    expiresAt = Number(payload.exp) * 1000;
+    persistentSession = Boolean(payload.jti && payload.sub && !payload.exp);
+  } catch {
+    // A malformed token cannot be restored.
+  }
+  if (expiresAt > Date.now() || persistentSession) {
+    return { ...stored, token, logged_in: true, allowed: true,
+      status_message: 'Reconnecting to GuildSync. Your login is saved.' };
+  }
+  clearStoredSession();
+  localStorage.removeItem('guildsync-web-token');
+  return { logged_in: false, allowed: false, status_message: 'Session expired. Please log in again.' };
+}
+
 export async function ShowMainWindow() { return true; }
 export async function SaveWindowState() { return true; }
 export async function MaximizeWindow() { return true; }
@@ -41,11 +60,21 @@ export async function GetGuildSyncSession() {
     };
   }
 
-  const response = await fetch('/api/auth/session', {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  });
+  let response;
+  try {
+    response = await fetch('/api/auth/session', {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+  } catch (error) {
+    // A server restart is a temporary connection failure, not a logout.
+    return restoreSessionDuringOutage(token, stored);
+  }
+
+  if (response.status >= 500) {
+    return restoreSessionDuringOutage(token, stored);
+  }
 
   const result = await response.json().catch(() => ({}));
   if (!response.ok || result.ok === false) {
@@ -77,6 +106,15 @@ export async function GetGuildSyncSession() {
 }
 
 export async function LogoutGuildSync() {
+  const token = readStoredSession().token || localStorage.getItem('guildsync-web-token');
+  if (token) {
+    const response = await fetch('/api/auth/logout', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!response.ok && response.status !== 401) {
+      throw new Error('Could not log out on the server. Please try again.');
+    }
+  }
   clearStoredSession();
   localStorage.removeItem('guildsync-web-token');
   return {

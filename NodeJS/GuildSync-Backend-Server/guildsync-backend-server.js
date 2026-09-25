@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
 
 import {
@@ -30,6 +31,11 @@ import {
   getDiscordRoleDataJSON,
   getBankingDataDate,
   getBankingDataJSON,
+  getRaffleBonusSettings,
+  getRaffleBonusVersions,
+  getRaffleBonusChoices,
+  saveRaffleBonusOverride,
+  saveRaffleBonusSettings,
   getBankingHistoryMatches,
   getBankingHistoryForAccount,
   checkoutDepositMail,
@@ -76,7 +82,6 @@ const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || 'http://127.0.0
 const DISCORD_WEB_REDIRECT_URI = process.env.DISCORD_WEB_REDIRECT_URI || 'https://guildsync.perdues.me/api/auth/discord/web-callback';
 const GUILDSYNC_WEB_PUBLIC_URL = process.env.GUILDSYNC_WEB_PUBLIC_URL || 'https://guildsync.perdues.me';
 const GUILDSYNC_JWT_SECRET = requiredEnv('GUILDSYNC_JWT_SECRET');
-const GUILDSYNC_TOKEN_TTL_SECONDS = Number(process.env.GUILDSYNC_TOKEN_TTL_SECONDS || 86400);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WEB_DIST_DIR = process.env.GUILDSYNC_WEB_DIST_DIR || path.join(__dirname, 'public');
@@ -161,30 +166,12 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
       role: dbUser.role || 'user'
     };
 
-    const expiresAt = new Date(Date.now() + GUILDSYNC_TOKEN_TTL_SECONDS * 1000);
-
-    const token = jwt.sign(
-      {
-        sub: guildSyncUser.discord_user_id,
-        username: guildSyncUser.username,
-        global_name: guildSyncUser.global_name,
-        display_name: preferredUserName(dbUser),
-        avatar_url: guildSyncUser.avatar_url,
-        role: guildSyncUser.role
-      },
-      GUILDSYNC_JWT_SECRET,
-      {
-        issuer: 'guildsync-auth-server',
-        audience: 'guildsync-desktop',
-        expiresIn: GUILDSYNC_TOKEN_TTL_SECONDS
-      }
-    );
+    const token = await createGuildSyncJWT(guildSyncUser);
 
     return res.json({
       ok: true,
       allowed: true,
       token,
-      expires_at: expiresAt.toISOString(),
       user: guildSyncUser,
       message: `Logged in and authorized as ${guildSyncUser.display_name}.`
     });
@@ -239,7 +226,7 @@ app.get('/api/auth/discord/web-callback', async (req, res) => {
     }
 
     const guildSyncUser = buildGuildSyncUserFromDBUser(dbUser);
-    const token = createGuildSyncJWT(guildSyncUser);
+    const token = await createGuildSyncJWT(guildSyncUser);
 
     return res.send(renderWebAuthResultPage({
       ok: true,
@@ -279,17 +266,14 @@ app.get('/api/client-download', (req, res) => {
   }
 });
 
-app.get('/api/auth/session', (req, res) => {
+app.get('/api/auth/session', async (req, res) => {
   try {
     const token = getBearerToken(req);
     if (!token) {
       return res.status(401).json({ ok: false, message: 'Missing session token.' });
     }
 
-    const claims = jwt.verify(token, GUILDSYNC_JWT_SECRET, {
-      issuer: 'guildsync-auth-server',
-      audience: 'guildsync-desktop'
-    });
+    const claims = await verifyGuildSyncSession(token);
 
     return res.json({
       ok: true,
@@ -303,7 +287,24 @@ app.get('/api/auth/session', (req, res) => {
       }
     });
   } catch (error) {
-    return res.status(401).json({ ok: false, message: 'Invalid or expired session token.' });
+    return res.status(error instanceof jwt.JsonWebTokenError || error.message === 'Session was logged out.' ? 401 : 503)
+      .json({ ok: false, message: 'Session could not be verified. Please retry.' });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const claims = await verifyGuildSyncSession(getBearerToken(req));
+    if (claims.jti) {
+      await loginDB.execute('DELETE FROM guildsync_login_sessions WHERE session_id = ? AND discord_user_id = ?', [claims.jti, claims.sub]);
+      for (const socket of io.sockets.sockets.values()) {
+        if (socket.guildSyncSessionId === claims.jti) socket.disconnect(true);
+      }
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(error instanceof jwt.JsonWebTokenError || error.message === 'Session was logged out.' ? 401 : 503)
+      .json({ ok: false, message: 'Could not log out. Please retry.' });
   }
 });
 
@@ -374,7 +375,7 @@ app.get('*', (req, res, next) => {
 });
 
 // Authentication Middleware
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const auth = socket.handshake.auth || {};
   const token = auth.token;
 
@@ -412,13 +413,11 @@ io.use((socket, next) => {
   }
 
   try {
-    const claims = jwt.verify(token, GUILDSYNC_JWT_SECRET, {
-      issuer: 'guildsync-auth-server',
-      audience: 'guildsync-desktop'
-    });
+    const claims = await verifyGuildSyncSession(token);
 
     socket.guildSyncAuthenticated = true;
     socket.guildSyncAuthType = 'GuildSync user';
+    socket.guildSyncSessionId = claims.jti || null;
     socket.guildSyncUser = {
       discord_user_id: claims.sub,
       username: claims.username,
@@ -1451,15 +1450,20 @@ io.on('connection', (socket) => {
 
   socket.on('guildsync:request-banking-data', async (payload = {}, callback) => {
     try {
-      const [entries, refreshDate] = await Promise.all([
-        getBankingDataJSON(applicationDB),
-        getBankingDataDate(applicationDB)
+      const bonusSettings = await getRaffleBonusSettings(applicationDB);
+      const bonusVersions = await getRaffleBonusVersions(applicationDB);
+      const [entries, refreshDate, bonusRaffles] = await Promise.all([
+        getBankingDataJSON(applicationDB, bonusVersions),
+        getBankingDataDate(applicationDB),
+        getRaffleBonusChoices(applicationDB, bonusVersions)
       ]);
 
       const response = {
         ok: true,
         message: 'Banking data retrieved.',
         entries,
+        bonusSettings,
+        bonusRaffles,
         entries_returned: entries.length,
         last_refresh: refreshDate?.value || null,
         at: new Date().toLocaleString()
@@ -1479,6 +1483,33 @@ io.on('connection', (socket) => {
       };
 
       sendSocketResponse(socket, 'guildsync:banking-data-request-result', callback, response);
+    }
+  });
+
+  socket.on('guildsync:save-raffle-bonus-settings', async (payload = {}, callback) => {
+    try {
+      if (!socket.guildSyncAuthenticated || !socket.guildSyncUser?.discord_user_id ||
+          socket.guildSyncAuthType === 'discord-bot') {
+        throw new Error('Admin access is required to change raffle bonuses.');
+      }
+      const [admins] = await loginDB.execute(
+        'SELECT role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',
+        [socket.guildSyncUser.discord_user_id]
+      );
+      if (admins[0]?.role !== 'admin') {
+        throw new Error('Admin access is required to change raffle bonuses.');
+      }
+      if (payload.raffleType) {
+        await saveRaffleBonusOverride(applicationDB, payload);
+      } else {
+        await saveRaffleBonusSettings(applicationDB, payload);
+      }
+      const bonusSettings = await getRaffleBonusSettings(applicationDB);
+      sendSocketResponse(socket, 'guildsync:raffle-bonus-settings-result', callback, { ok: true, bonusSettings });
+      await broadcastBankingDataUpdate();
+    } catch (error) {
+      sendSocketResponse(socket, 'guildsync:raffle-bonus-settings-result', callback,
+        { ok: false, message: error.message || 'Could not save raffle bonus settings.' });
     }
   });
 
@@ -2487,15 +2518,20 @@ server.listen(PORT, HOST, () => {
 
 async function broadcastBankingDataUpdate() {
   try {
-    const [entries, refreshDate] = await Promise.all([
-      getBankingDataJSON(applicationDB),
-      getBankingDataDate(applicationDB)
+    const bonusSettings = await getRaffleBonusSettings(applicationDB);
+    const bonusVersions = await getRaffleBonusVersions(applicationDB);
+    const [entries, refreshDate, bonusRaffles] = await Promise.all([
+      getBankingDataJSON(applicationDB, bonusVersions),
+      getBankingDataDate(applicationDB),
+      getRaffleBonusChoices(applicationDB, bonusVersions)
     ]);
 
     io.to('GuildSyncClient').emit('guildsync:banking-data-updated', {
       ok: true,
       message: 'Banking data updated.',
       entries,
+      bonusSettings,
+      bonusRaffles,
       entries_returned: entries.length,
       last_refresh: refreshDate?.value || null,
       at: new Date().toLocaleString()
@@ -2716,7 +2752,10 @@ function buildGuildSyncUserFromDBUser(dbUser = {}) {
   };
 }
 
-function createGuildSyncJWT(guildSyncUser = {}) {
+async function createGuildSyncJWT(guildSyncUser = {}) {
+  const sessionId = randomUUID();
+  await loginDB.execute('INSERT INTO guildsync_login_sessions (session_id, discord_user_id) VALUES (?, ?)',
+    [sessionId, guildSyncUser.discord_user_id]);
   return jwt.sign(
     {
       sub: guildSyncUser.discord_user_id,
@@ -2724,15 +2763,35 @@ function createGuildSyncJWT(guildSyncUser = {}) {
       global_name: guildSyncUser.global_name,
       display_name: guildSyncUser.display_name,
       avatar_url: guildSyncUser.avatar_url,
-      role: guildSyncUser.role
+      role: guildSyncUser.role,
+      jti: sessionId
     },
     GUILDSYNC_JWT_SECRET,
     {
       issuer: 'guildsync-auth-server',
-      audience: 'guildsync-desktop',
-      expiresIn: GUILDSYNC_TOKEN_TTL_SECONDS
+      audience: 'guildsync-desktop'
     }
   );
+}
+
+async function verifyGuildSyncSession(token) {
+  const claims = jwt.verify(token, GUILDSYNC_JWT_SECRET, {
+    issuer: 'guildsync-auth-server', audience: 'guildsync-desktop'
+  });
+  if (!claims.jti) return claims; // Existing time-limited sessions remain valid until they expire.
+  const [rows] = await loginDB.execute(
+    `SELECT users.role FROM guildsync_login_sessions AS sessions
+     JOIN guildsync_users AS users ON users.discord_user_id = sessions.discord_user_id
+     WHERE sessions.session_id = ? AND sessions.discord_user_id = ? AND users.allowed = 1 LIMIT 1`,
+    [claims.jti, claims.sub]);
+  if (!rows.length) {
+    for (const socket of io.sockets.sockets.values()) {
+      if (socket.guildSyncSessionId === claims.jti) socket.disconnect(true);
+    }
+    throw new Error('Session was logged out.');
+  }
+  claims.role = rows[0].role || 'user';
+  return claims;
 }
 
 function getBearerToken(req) {
@@ -2743,17 +2802,14 @@ function getBearerToken(req) {
   return authorization.slice(7).trim();
 }
 
-function requireGuildSyncWebUser(req, res, next) {
+async function requireGuildSyncWebUser(req, res, next) {
   try {
     const token = getBearerToken(req);
     if (!token) {
       return res.status(401).json({ ok: false, message: 'You must be logged in to upload SavedVariables files.' });
     }
 
-    const claims = jwt.verify(token, GUILDSYNC_JWT_SECRET, {
-      issuer: 'guildsync-auth-server',
-      audience: 'guildsync-desktop'
-    });
+    const claims = await verifyGuildSyncSession(token);
 
     req.guildSyncUser = claims;
     return next();

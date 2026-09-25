@@ -1,5 +1,6 @@
 import mysql from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_BONUS_TIERS, parseBonusTiers, calculateRaffleBonus, selectRaffleBonusSettings } from './raffle-bonus.js';
 
 
 const DEFAULT_DEPOSIT_MAIL_SUBJECT_TEMPLATE = 'Raffle ticket deposit received';
@@ -309,6 +310,15 @@ async function createAndInitializePool() {
 async function initializeSchema(db) {
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS guildsync_login_sessions (
+      session_id CHAR(36) PRIMARY KEY,
+      discord_user_id VARCHAR(32) NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_login_sessions_user (discord_user_id)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_users (
       discord_user_id VARCHAR(32) PRIMARY KEY,
       username VARCHAR(255) NOT NULL,
@@ -415,6 +425,27 @@ async function initializeSchema(db) {
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS guildsync_raffle_bonus_versions (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      raffle_type VARCHAR(16) NOT NULL,
+      effective_from BIGINT UNSIGNED NOT NULL,
+      enabled TINYINT(1) NOT NULL,
+      tiers_json TEXT NOT NULL,
+      INDEX idx_raffle_bonus_type_time (raffle_type, effective_from, id)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS guildsync_raffle_bonus_overrides (
+      raffle_type VARCHAR(16) NOT NULL,
+      sales_end BIGINT UNSIGNED NOT NULL,
+      enabled TINYINT(1) NOT NULL,
+      tiers_json TEXT NOT NULL,
+      PRIMARY KEY (raffle_type, sales_end)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+  await initializeRaffleBonusVersions(db);
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_roles
@@ -1734,7 +1765,11 @@ export async function getBankingHistoryForAccount(applicationDB, accountName = '
     [cleanAccountName]
   );
 
-  return rows;
+  const versions = await getRaffleBonusVersions(applicationDB);
+  const overrides = await getRaffleBonusOverrides(applicationDB);
+  return rows.map((row) => ({ ...row, ...calculateBankingEntryBonus({
+    type: row.transaction_type, time: row.event_timestamp, ticketAmount: row.ticket_quantity
+  }, versions, overrides) }));
 }
 
 export async function getBankingDataDate(applicationDB) {
@@ -1757,7 +1792,143 @@ export async function getBankingDataDate(applicationDB) {
   };
 }
 
-export async function getBankingDataJSON(applicationDB) {
+export async function getRaffleBonusSettings(applicationDB) {
+  const saved = await getSettingValue(applicationDB, 'raffle_bonus_settings');
+  const defaults = {
+    enabled: String(process.env.GUILDSYNC_RAFFLE_BONUS_ENABLED || 'true').toLowerCase() !== 'false',
+    biweekly: parseBonusTiers(process.env.GUILDSYNC_BIWEEKLY_BONUS_TIERS || DEFAULT_BONUS_TIERS.biweekly),
+    monthly: parseBonusTiers(process.env.GUILDSYNC_MONTHLY_BONUS_TIERS || DEFAULT_BONUS_TIERS.monthly)
+  };
+  if (!saved) return defaults;
+  try {
+    const parsed = JSON.parse(saved);
+    return {
+      enabled: parsed.enabled === true,
+      biweekly: parseBonusTiers(parsed.biweekly.map(({ hours, percent }) => `${hours}:${percent}`).join(',')),
+      monthly: parseBonusTiers(parsed.monthly.map(({ hours, percent }) => `${hours}:${percent}`).join(','))
+    };
+  } catch (error) {
+    throw new Error(`Saved raffle bonus settings are invalid: ${error.message}`);
+  }
+}
+
+async function initializeRaffleBonusVersions(db) {
+  const settings = await getRaffleBonusSettings(db);
+  const effectiveFrom = Math.floor(Date.now() / 1000);
+  for (const type of ['biweekly', 'monthly']) {
+    const [latest] = await db.execute(`
+      SELECT enabled, tiers_json FROM guildsync_raffle_bonus_versions
+      WHERE raffle_type = ? ORDER BY effective_from DESC, id DESC LIMIT 1
+    `, [type]);
+    if (latest.length && Boolean(Number(latest[0].enabled)) === settings.enabled &&
+        JSON.stringify(JSON.parse(latest[0].tiers_json)) === JSON.stringify(settings[type])) continue;
+    await db.execute(`
+      INSERT INTO guildsync_raffle_bonus_versions (raffle_type, effective_from, enabled, tiers_json)
+      VALUES (?, ?, ?, ?)
+    `, [type, effectiveFrom, settings.enabled ? 1 : 0, JSON.stringify(settings[type])]);
+  }
+}
+
+export async function getRaffleBonusVersions(applicationDB) {
+  const [rows] = await applicationDB.execute(`
+    SELECT raffle_type, effective_from, enabled, tiers_json
+    FROM guildsync_raffle_bonus_versions
+    ORDER BY effective_from ASC, id ASC
+  `);
+  return rows.map((row) => ({
+    type: row.raffle_type,
+    effectiveFrom: Number(row.effective_from),
+    enabled: Boolean(Number(row.enabled)),
+    tiers: typeof row.tiers_json === 'string' ? JSON.parse(row.tiers_json) : row.tiers_json
+  }));
+}
+
+export async function getRaffleBonusOverrides(applicationDB) {
+  const [rows] = await applicationDB.execute(
+    'SELECT raffle_type, sales_end, enabled, tiers_json FROM guildsync_raffle_bonus_overrides');
+  return rows.map((row) => ({
+    type: row.raffle_type, salesEnd: Number(row.sales_end), enabled: Boolean(Number(row.enabled)),
+    tiers: typeof row.tiers_json === 'string' ? JSON.parse(row.tiers_json) : row.tiers_json
+  }));
+}
+
+export async function getRaffleBonusChoices(applicationDB, versions = null, overrides = null) {
+  const [rows] = await applicationDB.execute(
+    'SELECT transaction_type, event_timestamp FROM guildsync_banking_entries WHERE ticket_quantity > 0');
+  const policies = versions || await getRaffleBonusVersions(applicationDB);
+  const saved = overrides || await getRaffleBonusOverrides(applicationDB);
+  const defaultSettings = await getRaffleBonusSettings(applicationDB);
+  const choices = new Map();
+  for (const row of rows) {
+    const window = getAssociateTicketReportRaffleWindow(row);
+    if (!window) continue;
+    const key = `${window.type}:${window.salesEnd}`;
+    if (choices.has(key)) continue;
+    const override = saved.find((item) => item.type === window.type && item.salesEnd === window.salesEnd);
+    const policy = override || selectRaffleBonusSettings(policies, saved, window.type, window.salesEnd);
+    choices.set(key, {
+      type: window.type, salesEnd: window.salesEnd, raffleTime: window.raffleTime,
+      label: `${window.label} | Raffle ${formatAssociateTicketReportShortDateEastern(window.raffleTime)}`,
+      enabled: policy?.enabled ?? false, tiers: policy?.tiers || defaultSettings[window.type], overridden: Boolean(override)
+    });
+  }
+  return [...choices.values()].sort((a, b) => b.salesEnd - a.salesEnd);
+}
+
+export async function saveRaffleBonusOverride(applicationDB, input) {
+  const type = input?.raffleType;
+  const salesEnd = Number(input?.salesEnd);
+  if (!['monthly', 'biweekly'].includes(type) || !Number.isSafeInteger(salesEnd) || salesEnd <= 0 ||
+      typeof input.enabled !== 'boolean' || !Array.isArray(input.tiers)) {
+    throw new Error('Select a raffle and provide its bonus settings.');
+  }
+  const tiers = parseBonusTiers(input.tiers.map(({ hours, percent }) => `${hours}:${percent}`).join(','));
+  const [rows] = await applicationDB.execute(
+    'SELECT transaction_type, event_timestamp FROM guildsync_banking_entries WHERE transaction_type = ? AND ticket_quantity > 0', [type]);
+  if (!rows.some((row) => getAssociateTicketReportRaffleWindow(row)?.salesEnd === salesEnd)) {
+    throw new Error('The selected raffle has no ticket purchases.');
+  }
+  await applicationDB.execute(`
+    INSERT INTO guildsync_raffle_bonus_overrides (raffle_type, sales_end, enabled, tiers_json)
+    VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), tiers_json = VALUES(tiers_json)
+  `, [type, salesEnd, input.enabled ? 1 : 0, JSON.stringify(tiers)]);
+}
+
+export async function saveRaffleBonusSettings(applicationDB, input) {
+  if (typeof input?.enabled !== 'boolean' || !Array.isArray(input.biweekly) || !Array.isArray(input.monthly)) {
+    throw new Error('Provide enabled, biweekly tiers, and monthly tiers.');
+  }
+  const settings = {
+    enabled: input.enabled,
+    biweekly: parseBonusTiers(input.biweekly.map(({ hours, percent }) => `${hours}:${percent}`).join(',')),
+    monthly: parseBonusTiers(input.monthly.map(({ hours, percent }) => `${hours}:${percent}`).join(','))
+  };
+  const connection = await applicationDB.getConnection();
+  try {
+    await connection.beginTransaction();
+    const previous = await getRaffleBonusSettings(connection);
+    await setSetting(connection, 'raffle_bonus_settings', JSON.stringify(settings));
+    const effectiveFrom = Math.floor(Date.now() / 1000) + 1;
+    for (const type of ['biweekly', 'monthly']) {
+      if (previous.enabled === settings.enabled &&
+          JSON.stringify(previous[type]) === JSON.stringify(settings[type])) continue;
+      await connection.execute(`
+        INSERT INTO guildsync_raffle_bonus_versions (raffle_type, effective_from, enabled, tiers_json)
+        VALUES (?, ?, ?, ?)
+      `, [type, effectiveFrom, settings.enabled ? 1 : 0, JSON.stringify(settings[type])]);
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+  return settings;
+}
+
+export async function getBankingDataJSON(applicationDB, bonusVersions = null) {
+  const bonusOverrides = await getRaffleBonusOverrides(applicationDB);
   const [rows] = await applicationDB.execute(`
     SELECT JSON_ARRAYAGG(
       JSON_OBJECT(
@@ -1810,11 +1981,37 @@ export async function getBankingDataJSON(applicationDB) {
     return [];
   }
 
-  if (typeof bankingJson === 'string') {
-    return JSON.parse(bankingJson);
-  }
+  const entries = typeof bankingJson === 'string' ? JSON.parse(bankingJson) : bankingJson;
+  const versions = bonusVersions || await getRaffleBonusVersions(applicationDB);
+  return entries.map((entry) => ({ ...entry, ...calculateBankingEntryBonus(entry, versions, bonusOverrides) }));
+}
 
-  return bankingJson;
+function calculateBankingEntryBonus(entry, versions, overrides = []) {
+    const type = normalizeDepositMailTicketType(entry.type);
+    const paid = Math.max(0, Math.floor(Number(entry.ticketAmount) || 0));
+    if (type !== 'monthly' && type !== 'biweekly') {
+      return { purchasedTickets: paid, bonusPercent: 0, bonusTickets: 0, totalTickets: paid };
+    }
+    const windowInfo = getAssociateTicketReportRaffleWindow({ transaction_type: type, event_timestamp: entry.time });
+    if (!windowInfo) {
+      return { purchasedTickets: paid, bonusPercent: 0, bonusTickets: 0, totalTickets: paid };
+    }
+    // Select the raffle's current policy for all of its purchases. Freeze that
+    // policy at the end of sales so changes cannot rewrite completed raffles.
+    // The purchase timestamp still selects the hour tier below.
+    const policy = selectRaffleBonusSettings(versions, overrides, type, windowInfo.salesEnd);
+    if (!policy) {
+      return { purchasedTickets: paid, bonusPercent: 0, bonusTickets: 0, totalTickets: paid };
+    }
+    const result = calculateRaffleBonus({
+      purchasedTickets: paid,
+      purchaseTimestamp: entry.time,
+      salesStart: windowInfo.salesStart,
+      salesEnd: windowInfo.salesEnd,
+      tiers: policy.tiers,
+      enabled: policy.enabled
+    });
+    return result;
 }
 
 
@@ -4715,5 +4912,3 @@ function formatAssociateTicketReportEarliestDeposit(row = {}) {
   const rafflePeriod = formatAssociateTicketReportRafflePeriod(row);
   return [depositDate, rafflePeriod].filter(Boolean).join(' | ');
 }
-
-
