@@ -33,7 +33,7 @@ import {
 
 import { EventsOn } from './web-events.js';
 
-const GUILDSYNC_APP_VERSION = '1.2.0';
+const GUILDSYNC_APP_VERSION = '1.2.7';
 
 const GUILDSYNC_DESKTOP_CLIENT_PLATFORM_LABELS = {
   windows: { label: 'Windows detected', shortLabel: 'Windows' },
@@ -440,6 +440,7 @@ function getDetectedDesktopClientDownload() {
       available: true,
       label: `${latestDesktopClientDownloadInfo.label || platformLabels.shortLabel} detected`,
       shortLabel: latestDesktopClientDownloadInfo.label || platformLabels.shortLabel,
+      version: latestDesktopClientDownloadInfo.version,
       fileName: latestDesktopClientDownloadInfo.fileName,
       href: latestDesktopClientDownloadInfo.url
     };
@@ -486,6 +487,7 @@ async function fetchLatestDesktopClientDownload() {
     latestDesktopClientDownloadInfo = {
       platform: String(download.platform || payload.platform || platform).trim(),
       label: String(download.label || '').trim(),
+      version: String(download.version || '').trim(),
       fileName,
       url
     };
@@ -547,7 +549,7 @@ function renderDesktopClientDownloadButton() {
       <span class="desktop-client-download-icon" aria-hidden="true">⬇</span>
       <span class="desktop-client-download-copy">
         <span class="desktop-client-download-title">Download Desktop Client</span>
-        <span class="desktop-client-download-subtitle">${escapeHtml(download.label)} · ZIP</span>
+        <span class="desktop-client-download-subtitle">${escapeHtml(download.label)} · ${escapeHtml(download.version)} · ZIP</span>
       </span>
       <span class="desktop-client-download-caret" aria-hidden="true">▾</span>
     </a>
@@ -8931,7 +8933,7 @@ function sendVersionCheck() {
   socket.emit('guildsync:client-version', {
     version: GUILDSYNC_APP_VERSION,
     platform: getGuildSyncClientPlatform(),
-    client_type: 'wails'
+    client_type: 'web'
   });
 }
 

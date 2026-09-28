@@ -10,6 +10,7 @@ Thumbs.db
 .env
 
 # Node
+NodeJS/GuildSync-Discord-Bot/data/
 node_modules/
 npm-debug.log*
 yarn-debug.log*

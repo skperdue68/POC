@@ -34,6 +34,13 @@ func main() {
 		},
 	})
 
+	replaceFile(&changed, "NodeJS/GuildSync-Backend-Server/web/src/main.js", []replacement{
+		{
+			pattern: regexp.MustCompile(`(?m)^const\s+GUILDSYNC_APP_VERSION\s*=\s*['\"][^'\"]*['\"];`),
+			value:   fmt.Sprintf("const GUILDSYNC_APP_VERSION = '%s';", version),
+		},
+	})
+
 	updateWailsJSON(&changed, "GO/GuildSync-Frontend-Client/wails.json", version)
 
 	replaceFile(&changed, "NodeJS/GuildSync-Backend-Server/.env", []replacement{

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { REST, Routes, SlashCommandBuilder } from 'discord.js';
 
 import * as roles from './commands/roles.js';
+import * as raffle from './commands/raffle.js';
 
 const gsaCommandData = new SlashCommandBuilder()
   .setName('gsa')
@@ -30,6 +31,7 @@ const gsaCommandData = new SlashCommandBuilder()
 
 const commands = [
   roles.data.toJSON(),
+  raffle.data.toJSON(),
   gsaCommandData.toJSON(),
 ];
 
