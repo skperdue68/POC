@@ -2012,21 +2012,37 @@ function getCurrentRaffleBonusInfo(type, salesEnd, salesStart, now, versions, ov
 export async function getRaffleUserTickets(applicationDB, discordUserId, now = Math.floor(Date.now() / 1000), requestedEsoAccountName = '') {
   const id = String(discordUserId || '').trim();
   if (!id) return { linked: false, purchases: [] };
-  const [links] = requestedEsoAccountName ? [ [{ eso_account_name: String(requestedEsoAccountName).replace(/^@+/, '') }] ] : await applicationDB.execute(`
+  const [links] = requestedEsoAccountName ? [ [] ] : await applicationDB.execute(`
     SELECT eso_account_name FROM guildsync_member_links
     WHERE discord_user_id = ? AND link_status = 'linked' LIMIT 1
   `, [id]);
-  const esoAccountName = links[0]?.eso_account_name;
-  if (!esoAccountName) return { linked: false, purchases: [] };
+  const linkedName = links[0]?.eso_account_name;
   const entries = await getBankingDataJSON(applicationDB);
-  const purchases = ['biweekly', 'monthly'].flatMap(type => {
+  const getPurchases = (esoAccountName) => ['biweekly', 'monthly'].flatMap(type => {
     const reference = now - BANKING_RAFFLE_AFTER_SALES_SECONDS + 1;
     const salesEnd = type === 'monthly' ? getDepositMailMonthlySalesEndAtOrAfter(reference) : getDepositMailBiweeklySalesEndAtOrAfter(reference);
     const previousSalesEnd = type === 'monthly' ? getDepositMailPreviousMonthlySalesEnd(salesEnd) : salesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS;
     return entries.filter(entry => normalizeDepositMailTicketType(entry.type) === type && Number(entry.time) > previousSalesEnd && Number(entry.time) <= salesEnd && Number(entry.time) <= now && String(entry.displayName || '').replace(/^@+/, '').toLowerCase() === String(esoAccountName).toLowerCase() && Number(entry.purchasedTickets || 0) > 0)
       .map(entry => ({ raffleType: type, raffleLabel: type === 'biweekly' ? 'Bi-weekly' : '50/50', time: Number(entry.time), purchasedTickets: Number(entry.purchasedTickets) || 0, bonusTickets: Number(entry.bonusTickets) || 0, totalTickets: Number(entry.totalTickets) || 0 }));
   });
-  return { linked: true, esoAccountName, purchases };
+  if (!requestedEsoAccountName) {
+    if (!linkedName) return { linked: false, purchases: [] };
+    return { linked: true, esoAccountName: linkedName, purchases: getPurchases(linkedName) };
+  }
+  const providedName = String(requestedEsoAccountName).trim();
+  const directPurchases = getPurchases(providedName);
+  if (directPurchases.length) return { linked: true, esoAccountName: providedName, purchases: directPurchases };
+  const [nameLinks] = await applicationDB.execute(`
+    SELECT eso_account_name FROM guildsync_member_links
+    WHERE link_status = 'linked' AND (
+      LOWER(discord_username) = LOWER(?) OR
+      LOWER(discord_display_name) = LOWER(?) OR
+      LOWER(discord_server_nickname) = LOWER(?)
+    ) LIMIT 1
+  `, [providedName, providedName, providedName]);
+  const fallbackName = nameLinks[0]?.eso_account_name;
+  if (fallbackName) return { linked: true, esoAccountName: fallbackName, purchases: getPurchases(fallbackName) };
+  return { linked: true, esoAccountName: providedName, purchases: [] };
 }
 
 export async function getBankingDataJSON(applicationDB, bonusVersions = null) {
