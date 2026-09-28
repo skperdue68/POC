@@ -14,8 +14,9 @@ Zero-ticket 50/50 donations scan K34, writing name/gold to K/L and ID to X.
 Each section uses its name column's first blank displayed cell; other cells and
 formulas are preserved. Other transactions are not exported.
 Manual entries append their stored note in parentheses after the name.
-Both sheets update N3 with the authenticated uploader followed by (GuildSync),
-and N4 with Eastern time, only after a successful entry write.
+Bi-weekly updates N3 with the authenticated uploader followed by (GuildSync),
+and N4 with Eastern time. 50/50 uses L3 and L4 respectively.
+Metadata changes only after a successful entry write to that sheet.
 
 This update does not restore formulas or relocate entries from earlier exports.
 Before enabling the new mapping on an existing sheet, move existing ticket IDs

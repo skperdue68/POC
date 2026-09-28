@@ -68,7 +68,8 @@ test('writes only D/E and X at the first gap, logs before writing, preserves met
     ]);
     assert.equal(writes[4][0].values[0][0], 'Winner (FFTG)');
     assert.equal(metadata.length, 2);
-    assert.ok(metadata.every(url => url.includes('N3:N4')));
+    assert.ok(metadata[0].includes("'bi-weekly raffle'!N3:N4"));
+    assert.ok(metadata[1].includes("'50/50'!L3:L4"));
     assert.ok(logs.some(line => line.includes('selected=D7')));
     assert.ok(logs.some(line => line.includes('confirmedRanges')));
   } finally {
