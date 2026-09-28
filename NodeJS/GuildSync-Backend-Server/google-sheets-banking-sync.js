@@ -1,7 +1,18 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+const backendRoot = path.dirname(fileURLToPath(import.meta.url));
+async function exportLog(message) {
+  const line = `${new Date().toISOString()} [GUILDSYNC-GOOGLE-SHEETS] ${message}`;
+  console.log(line);
+  const filename = path.resolve(backendRoot, process.env.GUILDSYNC_GOOGLE_SHEETS_LOG_FILE || 'logs/google-sheets.log');
+  await fs.mkdir(path.dirname(filename), { recursive: true });
+  await fs.appendFile(filename, line + '\n');
+}
+const sheetRange = (tab, cells) => `'${tab.replace(/'/g, "''")}'!${cells}`;
 
 function config() {
   return {
@@ -60,16 +71,19 @@ async function updateSheetMetadata(token, base, tab, type) {
   await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!${range}`)}?valueInputOption=USER_ENTERED`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [['GuildSync'], [easternTimestamp()]] }) });
 }
 
-async function firstEmptyRow(token, base, tab, startRow) {
-  const result = await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D${startRow}:D`)}?majorDimension=COLUMNS`);
+async function firstEmptyRow(token, base, tab, startRow, log) {
+  const result = await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, `D${startRow}:D`))}?majorDimension=COLUMNS&valueRenderOption=FORMATTED_VALUE`);
   const values = result.values?.[0] || [];
   const offset = values.findIndex(value => String(value ?? '').trim() === '');
-  return offset < 0 ? startRow + values.length : startRow + offset;
+  const row = offset < 0 ? startRow + values.length : startRow + offset;
+  await log(`Scan ${JSON.stringify(tab)}: responseRange=${JSON.stringify(result.range)}, returnedCells=${values.length}, sample=${JSON.stringify(Array.from({ length: 8 }, (_, i) => ({ cell: `D${startRow + i}`, value: values[i] ?? '' })))}, selected=D${row}`);
+  return row;
 }
 
-export async function syncBankingEntriesToGoogleSheets(entries, { log = console.error } = {}) {
+export async function syncBankingEntriesToGoogleSheets(entries, { log = exportLog } = {}) {
   const settings = config();
   if (!settings.enabled || !entries?.length) return { enabled: settings.enabled, synced: 0 };
+  await log(`Starting spreadsheet update: entries=${entries.length}, spreadsheet=${JSON.stringify(settings.spreadsheetId)}`);
   if (!settings.spreadsheetId) throw new Error('Google Sheets is enabled but GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID is missing.');
   const account = await credentials(settings);
   const token = await accessToken(account);
@@ -80,18 +94,23 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = console.
     const tab = tabFor(entry.type, settings);
     if (!tab || !entry.eventId) continue;
     const startRow = startRowFor(entry.type, settings);
-    const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!X${startRow}:X`)}?majorDimension=COLUMNS`);
+    const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, `X${startRow}:X`))}?majorDimension=COLUMNS`);
     const ids = existing.values?.[0] || [];
     if (ids.some(value => String(value) === String(entry.eventId))) continue;
-    const values = Array(21).fill('');
+    const values = [];
     values[0] = entry.displayName || '';
     values[1] = sheetGoldAmount(entry.amount);
     // The sheet calculates ticket quantity itself. Keep ticket and bonus fields
     // on the backend entry payload for future integrations without writing them here.
     values[20] = String(entry.eventId);
-    const row = await firstEmptyRow(token, base, tab, startRow);
-    await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D${row}:X${row}`)}?valueInputOption=USER_ENTERED`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] }) });
-    log(`[GUILDSYNC-GOOGLE-SHEETS] Added ${entry.type} entry to "${tab}" row ${row}: D=${values[0]}, E=${values[1]}, F=(sheet formula), X=${values[20]}`);
+    const row = await firstEmptyRow(token, base, tab, startRow, log);
+    const data = [
+      { range: sheetRange(tab, `D${row}:E${row}`), values: [[values[0], values[1]]] },
+      { range: sheetRange(tab, `X${row}`), values: [[values[20]]] }
+    ];
+    await log(`Writing ${JSON.stringify(tab)} row ${row}: ${JSON.stringify(data)}`);
+    const written = await sheetsRequest(token, `${base}:batchUpdate`, { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });
+    await log(`Added ${JSON.stringify(tab)} row ${row}; confirmedRanges=${JSON.stringify(written.responses?.map(item => item.updatedRange) || [])}`);
     if (!metadataUpdated.has(tab)) {
       await updateSheetMetadata(token, base, tab, entry.type);
       metadataUpdated.add(tab);
@@ -102,3 +121,4 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = console.
 }
 
 export function googleSheetsBankingConfig() { return config(); }
+
