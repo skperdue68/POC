@@ -64,7 +64,8 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = console.
     const values = Array(21).fill('');
     values[0] = entry.displayName || '';
     values[1] = sheetGoldAmount(entry.amount);
-    values[2] = Number(entry.ticketAmount) || 0;
+    // The sheet calculates ticket quantity itself. Keep ticket and bonus fields
+    // on the backend entry payload for future integrations without writing them here.
     values[20] = String(entry.eventId);
     await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D6:X`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] }) });
     synced += 1;
