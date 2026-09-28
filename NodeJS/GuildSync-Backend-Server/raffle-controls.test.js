@@ -115,7 +115,7 @@ test('manual tickets retain their entered count and receive no bonus in banking 
   const db = database({ enabled: true, ...tiers });
   for (const type of ['biweekly', 'monthly']) {
     db.versions.push({ raffle_type: type, effective_from: 1, enabled: 1, tiers_json: JSON.stringify(tiers[type]) });
-    for (const source of ['ManualBiweeklyTicket', 'ManualMonthlyTicket', 'ManualMovedMonthlyTicket', 'ManualMovedBiweeklyTicket']) {
+    for (const source of ['ManualBiweeklyTicket', 'ManualMonthlyTicket', 'ManualMovedMonthlyTicket', 'ManualMovedBiweeklyTicket', 'ManualBiweeklyTicket (evainefaye)', 'ManualMonthlyTicket (evainefaye)']) {
       db.entries.push({ type, time: 1780000000, ticketAmount: 100, dataSource: source });
     }
   }
@@ -128,3 +128,4 @@ test('manual tickets retain their entered count and receive no bonus in banking 
     }
   }
 });
+

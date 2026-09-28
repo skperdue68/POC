@@ -1,4 +1,5 @@
 import mysql from 'mysql2/promise';
+import { bankingSource } from './banking-source.js';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BONUS_TIERS, parseBonusTiers, calculateRaffleBonus, selectRaffleBonusSettings } from './raffle-bonus.js';
 import { syncBankingEntriesToGoogleSheets, googleSheetsBankingConfig } from './google-sheets-banking-sync.js';
@@ -471,7 +472,7 @@ async function initializeSchema(db) {
       event_datetime datetime NOT NULL,
       deposit_amount int(10) unsigned NOT NULL,
       ticket_quantity int(10) unsigned DEFAULT NULL,
-      data_source varchar(64) NOT NULL,
+      data_source varchar(255) NOT NULL,
       note varchar(255) DEFAULT NULL,
       mail_status varchar(32) NOT NULL DEFAULT 'unsent',
       mail_request_id varchar(64) DEFAULT NULL,
@@ -493,6 +494,12 @@ async function initializeSchema(db) {
   `);
 
   await addColumnIfMissing(db, 'guildsync_banking_entries', 'mail_status', "varchar(32) NOT NULL DEFAULT 'unsent'");
+  const [sourceColumns] = await db.query(`SELECT CHARACTER_MAXIMUM_LENGTH AS capacity
+    FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'guildsync_banking_entries' AND COLUMN_NAME = 'data_source'`);
+  if (Number(sourceColumns[0]?.capacity) < 255) {
+    await db.query('ALTER TABLE guildsync_banking_entries MODIFY COLUMN data_source VARCHAR(255) NOT NULL');
+  }
   await addColumnIfMissing(db, 'guildsync_banking_entries', 'mail_request_id', 'varchar(64) DEFAULT NULL');
   await addColumnIfMissing(db, 'guildsync_banking_entries', 'mail_batch_id', 'varchar(64) DEFAULT NULL');
   await addColumnIfMissing(db, 'guildsync_banking_entries', 'checked_out_by', 'varchar(255) DEFAULT NULL');
@@ -2606,7 +2613,7 @@ export async function insertBankingEntries(applicationDB, payload) {
           event_timestamp,
           deposit_amount,
           ticket_quantity,
-          String(payload?.source || 'GuildSyncBanking').trim(),
+          bankingSource(payload?.source || 'GuildSyncBanking', payload.uploadedBy),
           String(entry.note || '').trim() || null,
           initial_mail_status,
           initial_mail_request_id,
@@ -3263,6 +3270,7 @@ export async function getAssociateTicketReport(applicationDB) {
         AND COALESCE(bank.ticket_quantity, 0) > 0
         AND COALESCE(bank.deposit_amount, 0) > 0
         AND COALESCE(bank.data_source, '') <> 'ManualBiweeklyTicket'
+        AND COALESCE(bank.data_source, '') NOT LIKE 'ManualBiweeklyTicket (%'
       GROUP BY
         roster.account_name,
         roster.rank_name,
@@ -3477,7 +3485,7 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
   const event_id = `Manual${timestamp}${random}`.slice(0, 32);
   const defaultNote = transactionType === 'monthly' ? 'Manual 50/50 ticket entry' : 'Manual bi-weekly ticket entry';
   const auditedNote = `${note || defaultNote} - added by ${addedBy || 'Unknown'}`.slice(0, 255);
-  const dataSource = transactionType === 'monthly' ? 'ManualMonthlyTicket' : 'ManualBiweeklyTicket';
+  const dataSource = bankingSource(transactionType === 'monthly' ? 'ManualMonthlyTicket' : 'ManualBiweeklyTicket', addedBy);
   const isAnonymousEntry = isAnonymousAccount;
   const mailStatus = isAnonymousEntry ? 'sent' : 'unsent';
   const mailRequestId = isAnonymousEntry ? `manual_no_mail_${event_id}` : null;
