@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BONUS_TIERS, parseBonusTiers, calculateRaffleBonus, selectRaffleBonusSettings } from './raffle-bonus.js';
+import { syncBankingEntriesToGoogleSheets, googleSheetsBankingConfig } from './google-sheets-banking-sync.js';
 
 
 const DEFAULT_DEPOSIT_MAIL_SUBJECT_TEMPLATE = 'Raffle ticket deposit received';
@@ -2520,6 +2521,7 @@ export async function insertBankingEntries(applicationDB, payload) {
 
   const connection = await applicationDB.getConnection();
   let insertedCount = 0;
+  const insertedEntries = [];
 
   try {
     await connection.beginTransaction();
@@ -2615,6 +2617,7 @@ export async function insertBankingEntries(applicationDB, payload) {
       );
 
       insertedCount += result.affectedRows || 0;
+      if (result.affectedRows) insertedEntries.push({ eventId: event_id, type: normalizeDepositMailTicketType(transaction_type), displayName: account_name, amount: deposit_amount, ticketAmount: ticket_quantity || 0 });
     }
 
     if (entries.length > 0) {
@@ -2644,6 +2647,15 @@ export async function insertBankingEntries(applicationDB, payload) {
     throw error;
   } finally {
     connection.release();
+  }
+
+  if (insertedEntries.length) {
+    try {
+      const settings = googleSheetsBankingConfig();
+      const enriched = settings.enabled ? await getBankingDataJSON(applicationDB) : insertedEntries;
+      const byId = new Map(enriched.map(entry => [String(entry.eventId), entry]));
+      await syncBankingEntriesToGoogleSheets(insertedEntries.map(entry => ({ ...entry, ...(byId.get(String(entry.eventId)) || {}) })));
+    } catch (error) { console.error(`Google Sheets banking sync failed: ${error.message}`); }
   }
 
   return {
