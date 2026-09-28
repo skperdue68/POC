@@ -2654,7 +2654,7 @@ export async function insertBankingEntries(applicationDB, payload) {
       const settings = googleSheetsBankingConfig();
       const enriched = settings.enabled ? await getBankingDataJSON(applicationDB) : insertedEntries;
       const byId = new Map(enriched.map(entry => [String(entry.eventId), entry]));
-      await syncBankingEntriesToGoogleSheets(insertedEntries.map(entry => ({ ...entry, ...(byId.get(String(entry.eventId)) || {}) })));
+      await syncBankingEntriesToGoogleSheets(insertedEntries.map(entry => ({ ...entry, ...(byId.get(String(entry.eventId)) || {}) })), { uploadedBy: payload.uploadedBy });
     } catch (error) { console.error(`Google Sheets banking sync failed: ${error.message}`); }
   }
 
@@ -5048,3 +5048,4 @@ function formatAssociateTicketReportEarliestDeposit(row = {}) {
   const rafflePeriod = formatAssociateTicketReportRafflePeriod(row);
   return [depositDate, rafflePeriod].filter(Boolean).join(' | ');
 }
+

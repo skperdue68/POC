@@ -327,6 +327,7 @@ app.post('/api/guildsync/upload-savedvars/:kind', requireGuildSyncWebUser, async
       const data = parseGuildSyncBankingSavedVarsLua(rawLuaText);
       const result = await insertBankingEntries(applicationDB, {
         source: data.table_name || 'GuildSyncBanking',
+        uploadedBy: req.guildSyncUser.display_name || req.guildSyncUser.username || req.guildSyncUser.sub,
         entries: data.entries || []
       });
 
@@ -506,6 +507,7 @@ io.on('connection', (socket) => {
         const data = parseGuildSyncBankingSavedVarsLua(rawLuaText);
         const result = await insertBankingEntries(applicationDB, {
           source: data.table_name || 'GuildSyncBanking',
+          uploadedBy: socket.guildSyncUser.display_name || socket.guildSyncUser.username || socket.guildSyncUser.discord_user_id,
           entries: data.entries || []
         });
 
@@ -1203,6 +1205,7 @@ io.on('connection', (socket) => {
 
       const result = await insertBankingEntries(applicationDB, {
         source: dataSource,
+        uploadedBy: authenticatedUsername,
         entries
       });
 
@@ -3114,3 +3117,4 @@ export function Log(message) {
   const timestamp = new Date().toLocaleString();
   console.log(`${timestamp} [GUILDSYNC-NODE] ${message}`);
 }
+

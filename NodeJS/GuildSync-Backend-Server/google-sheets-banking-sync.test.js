@@ -21,7 +21,10 @@ test('writes only D/E and X at the first gap, logs before writing, preserves met
       assert.equal(body.valueInputOption, 'RAW');
       writes.push(body.data);
       response = { responses: body.data.map(item => ({ updatedRange: item.range })) };
-    } else if (options.method === 'PUT') metadata.push(decoded);
+    } else if (options.method === 'PUT') {
+      assert.equal(JSON.parse(options.body).values[0][0], 'EvaineFaye (GuildSync)');
+      metadata.push(decoded);
+    }
     else if (decoded.includes('!D')) response = { range: 'D6:D256', values: [['Alice', 'Bob', '', 'Later']] };
     else if (decoded.includes('!X')) response = { values: [] };
     else throw new Error(decoded);
@@ -31,7 +34,7 @@ test('writes only D/E and X at the first gap, logs before writing, preserves met
     await syncBankingEntriesToGoogleSheets([
       { type: 'biweekly', eventId: '123', displayName: 'Player', amount: 200001 },
       { type: 'monthly', eventId: '124', displayName: 'Other', amount: 300003 }
-    ], { log: message => logs.push(message) });
+    ], { log: message => logs.push(message), uploadedBy: 'EvaineFaye' });
     assert.deepEqual(writes[0], [
       { range: "'bi-weekly raffle'!D8:E8", values: [['Player', 200000]] },
       { range: "'bi-weekly raffle'!X8", values: [['123']] }
