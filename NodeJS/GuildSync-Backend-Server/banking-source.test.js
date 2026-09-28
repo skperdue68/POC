@@ -17,11 +17,15 @@ test('manual inserts store attribution for both raffle types', async () => {
   try {
     for (const [type, prefix] of [['biweekly', 'ManualBiweeklyTicket'], ['monthly', 'ManualMonthlyTicket']]) {
       const db = { async execute(sql, params) {
-        if (sql.includes('INSERT IGNORE')) assert.equal(params[7], `${prefix} (evainefaye)`);
+        if (sql.includes('INSERT IGNORE')) {
+          assert.equal(params[7], `${prefix} (evainefaye)`);
+          assert.equal(params[8], 'FFTG');
+        }
         return [{ affectedRows: 1 }];
       } };
-      const result = await addManualBiweeklyTicketEntry(db, { account_name: 'Buyer', ticket_type: type, tickets: 5, gold_value: 0, addedBy: 'evainefaye' });
+      const result = await addManualBiweeklyTicketEntry(db, { account_name: 'Buyer', ticket_type: type, tickets: 5, gold_value: 0, addedBy: 'evainefaye', note: 'FFTG' });
       assert.equal(result.entry.dataSource, `${prefix} (evainefaye)`);
+      assert.equal(result.entry.note, 'FFTG');
     }
   } finally {
     if (previous === undefined) delete process.env.GUILDSYNC_GOOGLE_SHEETS_ENABLED;

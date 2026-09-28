@@ -3484,7 +3484,7 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
   const random = Math.floor(Math.random() * 900000) + 100000;
   const event_id = `Manual${timestamp}${random}`.slice(0, 32);
   const defaultNote = transactionType === 'monthly' ? 'Manual 50/50 ticket entry' : 'Manual bi-weekly ticket entry';
-  const auditedNote = `${note || defaultNote} - added by ${addedBy || 'Unknown'}`.slice(0, 255);
+  const auditedNote = note || defaultNote;
   const dataSource = bankingSource(transactionType === 'monthly' ? 'ManualMonthlyTicket' : 'ManualBiweeklyTicket', addedBy);
   const isAnonymousEntry = isAnonymousAccount;
   const mailStatus = isAnonymousEntry ? 'sent' : 'unsent';
