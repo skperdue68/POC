@@ -46,6 +46,16 @@ function sheetGoldAmount(amount) {
   const marker = Math.abs(Math.trunc(value)) % 10;
   return marker === 1 || marker === 3 ? (value > marker ? value - marker : value) : value;
 }
+function easternTimestamp() {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  return `${value.month}/${value.day}/${value.year} ${value.hour}:${value.minute}${value.dayPeriod.toLowerCase()} ET`;
+}
+
+async function updateSheetMetadata(token, base, tab, type) {
+  const range = type === 'biweekly' ? 'N4:N5' : 'L3:L4';
+  await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!${range}`)}?valueInputOption=USER_ENTERED`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [['GuildSync'], [easternTimestamp()]] }) });
+}
 
 export async function syncBankingEntriesToGoogleSheets(entries, { log = console.error } = {}) {
   const settings = config();
@@ -55,6 +65,7 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = console.
   const token = await accessToken(account);
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(settings.spreadsheetId)}/values`;
   let synced = 0;
+  const metadataUpdated = new Set();
   for (const entry of entries) {
     const tab = tabFor(entry.type, settings);
     if (!tab || !entry.eventId) continue;
@@ -68,6 +79,10 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = console.
     // on the backend entry payload for future integrations without writing them here.
     values[20] = String(entry.eventId);
     await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D6:X`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] }) });
+    if (!metadataUpdated.has(tab)) {
+      await updateSheetMetadata(token, base, tab, entry.type);
+      metadataUpdated.add(tab);
+    }
     synced += 1;
   }
   return { enabled: true, synced };
