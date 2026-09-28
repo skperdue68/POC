@@ -25,25 +25,40 @@ test('writes only D/E and X at the first gap, logs before writing, preserves met
       assert.equal(JSON.parse(options.body).values[0][0], 'EvaineFaye (GuildSync)');
       metadata.push(decoded);
     }
-    else if (decoded.includes('!D')) response = { range: 'D6:D256', values: [['Alice', 'Bob', '', 'Later']] };
-    else if (decoded.includes('!X')) response = { values: [] };
+    else if (/![DKM]/.test(decoded)) response = { range: 'fixture', values: [['Alice', 'Bob', '', 'Later']] };
+    else if (decoded.includes('!X') || decoded.includes('!Y')) response = { values: [['duplicate']] };
     else throw new Error(decoded);
     return { ok: true, json: async () => response };
   };
   try {
     await syncBankingEntriesToGoogleSheets([
       { type: 'biweekly', eventId: '123', displayName: 'Player', amount: 200001 },
-      { type: 'monthly', eventId: '124', displayName: 'Other', amount: 300003 }
+      { type: 'monthly', eventId: '124', displayName: 'Other', amount: 300003 },
+      { type: 'monthly', eventId: '125', displayName: 'Donor', amount: 500003, ticketAmount: 0 },
+      { type: 'biweekly', eventId: '126', displayName: 'ManualDonor', amount: 800000, ticketAmount: 0, dataSource: 'ManualBiweeklyTicket', note: 'Guild donation' },
+      { type: 'biweekly', eventId: '127', displayName: 'Winner', amount: 0, ticketAmount: 20, dataSource: 'ManualBiweeklyTicket', note: 'FFTG' },
+      { type: 'other', eventId: '128', displayName: 'Bank', amount: 999, ticketAmount: 0 },
+      { type: 'monthly', eventId: 'duplicate', displayName: 'Skip', amount: 10, ticketAmount: 0 }
     ], { log: message => logs.push(message), uploadedBy: 'EvaineFaye' });
     assert.deepEqual(writes[0], [
-      { range: "'bi-weekly raffle'!D8:E8", values: [['Player', 200000]] },
-      { range: "'bi-weekly raffle'!X8", values: [['123']] }
+      { range: "'bi-weekly raffle'!D7:E7", values: [['Player', 200000]] },
+      { range: "'bi-weekly raffle'!X7", values: [['123']] }
     ]);
     assert.equal(writes[1][0].range, "'50/50'!D7:E7");
     assert.equal(writes[1][1].range, "'50/50'!X7");
-    assert.ok(metadata[0].includes('N4:N5'));
-    assert.ok(metadata[1].includes('L3:L4'));
-    assert.ok(logs.some(line => line.includes('selected=D8')));
+    assert.equal(writes.length, 5);
+    assert.deepEqual(writes[2], [
+      { range: "'50/50'!K36:L36", values: [['Donor', 500000]] },
+      { range: "'50/50'!Y36", values: [['125']] }
+    ]);
+    assert.deepEqual(writes[3], [
+      { range: "'bi-weekly raffle'!M64:N64", values: [['ManualDonor (Guild donation)', 800000]] },
+      { range: "'bi-weekly raffle'!Y64", values: [['126']] }
+    ]);
+    assert.equal(writes[4][0].values[0][0], 'Winner (FFTG)');
+    assert.equal(metadata.length, 2);
+    assert.ok(metadata.every(url => url.includes('N3:N4')));
+    assert.ok(logs.some(line => line.includes('selected=D7')));
     assert.ok(logs.some(line => line.includes('confirmedRanges')));
   } finally {
     globalThis.fetch = originalFetch;

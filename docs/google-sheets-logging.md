@@ -8,10 +8,14 @@ Logs include export start, the first eight returned D-column values, selected ro
 outgoing D/E and X values, and the ranges Google reports updating.
 These logs contain player names and transaction details; store them privately.
 
-Bi-weekly scanning starts at D6; 50/50 scanning starts at D5. The first blank
-displayed D value is selected. Hidden columns do not alter the explicit D/E/X
-addresses. Only D/E and X are written; F through W are preserved.
-Metadata remains N4:N5 for bi-weekly and L3:L4 for 50/50 after a successful write.
+Ticket entries on both sheets scan from D5, writing name/gold to D/E and ID to X.
+Zero-ticket bi-weekly donations scan M62, writing name/gold to M/N and ID to Y.
+Zero-ticket 50/50 donations scan K34, writing name/gold to K/L and ID to Y.
+Each section uses its name column's first blank displayed cell; other cells and
+formulas are preserved. Other transactions are not exported.
+Manual entries append their stored note in parentheses after the name.
+Both sheets update N3 with the authenticated uploader followed by (GuildSync),
+and N4 with Eastern time, only after a successful entry write.
 
 This update does not restore formulas or relocate entries from earlier exports.
 
