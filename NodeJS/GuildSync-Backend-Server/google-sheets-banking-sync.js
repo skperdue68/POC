@@ -47,9 +47,19 @@ async function accessToken(account) {
   return (await response.json()).access_token;
 }
 
-async function sheetsRequest(token, url, init = {}) {
+export async function sheetsRequest(token, url, init = {}, log = exportLog) {
   const response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers || {}) } });
-  if (!response.ok) throw new Error(`Google Sheets request failed (${response.status}).`);
+  if (!response.ok) {
+    let detail = 'Google returned no structured error details.';
+    try {
+      const body = await response.json();
+      detail = `${body.error?.status || ''}: ${body.error?.message || detail}`;
+    } catch { /* A proxy may return a non-JSON error. */ }
+    const endpoint = decodeURIComponent(new URL(url).pathname);
+    const message = `Google Sheets ${init.method || 'GET'} ${endpoint} failed (${response.status}): ${detail}`;
+    try { await log(message); } catch (error) { console.error(`Could not save Sheets error log: ${error.message}`); }
+    throw new Error(message);
+  }
   return response.json();
 }
 
@@ -100,6 +110,7 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = exportLo
     const nameColumn = donation ? (entry.type === 'biweekly' ? 'M' : 'K') : 'D';
     const goldColumn = donation ? (entry.type === 'biweekly' ? 'N' : 'L') : 'E';
     const idColumn = donation ? 'Y' : 'X';
+    await log(`Checking transaction ${JSON.stringify(String(entry.eventId))}: sheet=${JSON.stringify(tab)}, donation=${donation}, duplicateRange=${sheetRange(tab, `${idColumn}${startRow}:${idColumn}`)}, nameScan=${nameColumn}${startRow}:${nameColumn}`);
     const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, `${idColumn}${startRow}:${idColumn}`))}?majorDimension=COLUMNS`);
     const ids = existing.values?.[0] || [];
     if (ids.some(value => String(value) === String(entry.eventId))) continue;
