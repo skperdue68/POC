@@ -37,7 +37,7 @@ test('writes only D/E and X at the first gap, logs before writing, preserves met
       metadata.push(decoded);
     }
     else if (/![DKM]/.test(decoded)) response = { range: 'fixture', values: [['Alice', 'Bob', '', 'Later']] };
-    else if (decoded.includes('!X') || decoded.includes('!Y')) response = { values: [['duplicate']] };
+    else if (decoded.includes('!W') || decoded.includes('!X')) response = { values: [['duplicate']] };
     else throw new Error(decoded);
     return { ok: true, json: async () => response };
   };
@@ -53,18 +53,18 @@ test('writes only D/E and X at the first gap, logs before writing, preserves met
     ], { log: message => logs.push(message), uploadedBy: 'EvaineFaye' });
     assert.deepEqual(writes[0], [
       { range: "'bi-weekly raffle'!D7:E7", values: [['Player', 200000]] },
-      { range: "'bi-weekly raffle'!X7", values: [['123']] }
+      { range: "'bi-weekly raffle'!W7", values: [['123']] }
     ]);
     assert.equal(writes[1][0].range, "'50/50'!D7:E7");
-    assert.equal(writes[1][1].range, "'50/50'!X7");
+    assert.equal(writes[1][1].range, "'50/50'!W7");
     assert.equal(writes.length, 5);
     assert.deepEqual(writes[2], [
       { range: "'50/50'!K36:L36", values: [['Donor', 500000]] },
-      { range: "'50/50'!Y36", values: [['125']] }
+      { range: "'50/50'!X36", values: [['125']] }
     ]);
     assert.deepEqual(writes[3], [
       { range: "'bi-weekly raffle'!M64:N64", values: [['ManualDonor (Guild donation)', 800000]] },
-      { range: "'bi-weekly raffle'!Y64", values: [['126']] }
+      { range: "'bi-weekly raffle'!X64", values: [['126']] }
     ]);
     assert.equal(writes[4][0].values[0][0], 'Winner (FFTG)');
     assert.equal(metadata.length, 2);
