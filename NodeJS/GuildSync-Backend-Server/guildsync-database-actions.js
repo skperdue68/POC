@@ -1972,10 +1972,34 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
       drawTime: salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS,
       salesOpen: now < salesEnd, prizeGold,
       ...(type === 'biweekly' ? { drawCount: prizeGold / 200000, goldPerDraw: 200000 } : {}),
-      totalTickets: rows.reduce((sum, entry) => sum + (Number(entry.totalTickets) || 0), 0)
+      totalTickets: rows.reduce((sum, entry) => sum + (Number(entry.totalTickets) || 0), 0),
+      bonusEnabled: rows.some(entry => entry.bonusEnabled),
+      bonusTickets: rows.reduce((sum, entry) => sum + (Number(entry.bonusTickets) || 0), 0),
+      bonusPercent: rows.reduce((max, entry) => Math.max(max, Number(entry.bonusPercent) || 0), 0),
+      bonusExpiresAt: salesEnd
     };
   });
   return { asOf: now, raffles };
+}
+
+export async function getRaffleUserTickets(applicationDB, discordUserId, now = Math.floor(Date.now() / 1000)) {
+  const id = String(discordUserId || '').trim();
+  if (!id) return { linked: false, purchases: [] };
+  const [links] = await applicationDB.execute(`
+    SELECT eso_account_name FROM guildsync_member_links
+    WHERE discord_user_id = ? AND link_status = 'linked' LIMIT 1
+  `, [id]);
+  const esoAccountName = links[0]?.eso_account_name;
+  if (!esoAccountName) return { linked: false, purchases: [] };
+  const entries = await getBankingDataJSON(applicationDB);
+  const purchases = ['biweekly', 'monthly'].flatMap(type => {
+    const reference = now - BANKING_RAFFLE_AFTER_SALES_SECONDS + 1;
+    const salesEnd = type === 'monthly' ? getDepositMailMonthlySalesEndAtOrAfter(reference) : getDepositMailBiweeklySalesEndAtOrAfter(reference);
+    const previousSalesEnd = type === 'monthly' ? getDepositMailPreviousMonthlySalesEnd(salesEnd) : salesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS;
+    return entries.filter(entry => normalizeDepositMailTicketType(entry.type) === type && Number(entry.time) > previousSalesEnd && Number(entry.time) <= salesEnd && Number(entry.time) <= now && String(entry.displayName || '').replace(/^@+/, '').toLowerCase() === String(esoAccountName).toLowerCase() && Number(entry.purchasedTickets || 0) > 0)
+      .map(entry => ({ raffleType: type, raffleLabel: type === 'biweekly' ? 'Bi-weekly' : '50/50', time: Number(entry.time), purchasedTickets: Number(entry.purchasedTickets) || 0, bonusTickets: Number(entry.bonusTickets) || 0, totalTickets: Number(entry.totalTickets) || 0 }));
+  });
+  return { linked: true, esoAccountName, purchases };
 }
 
 export async function getBankingDataJSON(applicationDB, bonusVersions = null) {
