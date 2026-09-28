@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { registerRaffleSocket } from './raffle-socket.js';
+test('raffle endpoint permits the authenticated bot only and handles database failure', async () => {
+  let handler, called = 0, result;
+  const socket = { on(event, fn) { assert.equal(event, 'guildsync:request-active-raffles'); handler = fn; } };
+  registerRaffleSocket(socket, {}, async () => { called++; return { raffles: [] }; });
+  await handler({}, value => { result = value; });
+  assert.equal(result.ok, false);
+  assert.equal(called, 0);
+  socket.guildSyncAuthenticated = true;
+  socket.guildSyncAuthType = 'GuildSync user';
+  await handler({}, value => { result = value; });
+  assert.equal(result.ok, false);
+  socket.guildSyncAuthType = 'discord-bot';
+  await handler({}, value => { result = value; });
+  assert.equal(result.ok, true);
+  assert.equal(called, 1);
+  registerRaffleSocket(socket, {}, async () => { throw new Error('private DB error'); });
+  await handler({}, value => { result = value; });
+  assert.equal(result.ok, false);
+  assert.doesNotMatch(result.message, /private/);
+});

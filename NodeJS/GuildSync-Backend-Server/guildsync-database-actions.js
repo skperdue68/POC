@@ -1942,6 +1942,42 @@ export async function saveRaffleBonusSettings(applicationDB, input) {
   return settings;
 }
 
+export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Date.now() / 1000)) {
+  const entries = await getBankingDataJSON(applicationDB);
+  const raffles = ['biweekly', 'monthly'].map((type) => {
+    // Selection advances at draw time, not at the earlier ticket cutoff.
+    // +1 makes the next raffle active at the exact draw-time boundary.
+    const reference = now - BANKING_RAFFLE_AFTER_SALES_SECONDS + 1;
+    const salesEnd = type === 'monthly'
+      ? getDepositMailMonthlySalesEndAtOrAfter(reference)
+      : getDepositMailBiweeklySalesEndAtOrAfter(reference);
+    const previousSalesEnd = type === 'monthly'
+      ? getDepositMailPreviousMonthlySalesEnd(salesEnd)
+      : salesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS;
+    const rows = entries.filter((entry) => normalizeDepositMailTicketType(entry.type) === type &&
+      Number(entry.time) > previousSalesEnd && Number(entry.time) <= salesEnd && Number(entry.time) <= now);
+    const deposits = rows.reduce((sum, entry) => {
+      const amount = Number(entry.amount) || 0;
+      const digit = Math.abs(Math.trunc(amount)) % 10;
+      const marker = digit === 1 || digit === 3 ? digit : 0;
+      return sum + (marker && amount > marker ? amount - marker : amount);
+    }, 0);
+    const prizeGold = type === 'biweekly'
+      ? Math.ceil(Math.max(0, deposits) / 2 / 200000) * 200000
+      : Math.floor(Math.max(0, deposits) / 2);
+    return {
+      id: `${type}:${salesEnd}`, type, label: getDepositMailTicketTypeLabel(type),
+      activeStart: previousSalesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS,
+      salesStart: previousSalesEnd + 1, salesEnd,
+      drawTime: salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS,
+      salesOpen: now < salesEnd, prizeGold,
+      ...(type === 'biweekly' ? { drawCount: prizeGold / 200000, goldPerDraw: 200000 } : {}),
+      totalTickets: rows.reduce((sum, entry) => sum + (Number(entry.totalTickets) || 0), 0)
+    };
+  });
+  return { asOf: now, raffles };
+}
+
 export async function getBankingDataJSON(applicationDB, bonusVersions = null) {
   const bonusOverrides = await getRaffleBonusOverrides(applicationDB);
   const [rows] = await applicationDB.execute(`

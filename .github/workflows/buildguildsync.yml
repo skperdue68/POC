@@ -68,7 +68,7 @@
             if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
               VERSION="${GITHUB_REF_NAME#v}"
             else
-              VERSION="0.0.${GITHUB_RUN_NUMBER}"
+              VERSION="$(python -c 'import json; print(json.load(open("GO/GuildSync-Frontend-Client/wails.json"))["info"]["productVersion"])')"
             fi
             echo "GUILDSYNC_VERSION=${VERSION}" >> "$GITHUB_ENV"
             echo "GuildSync version: ${VERSION}"

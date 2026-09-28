@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
 import fs from 'node:fs';
+import { registerRaffleSocket } from './raffle-socket.js';
+import { getActiveRaffleSummary } from './guildsync-database-actions.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
@@ -248,13 +250,16 @@ app.get('/api/client-download', (req, res) => {
 
   try {
     const download = getGuildSyncClientDownload(platform);
+    if (!download) {
+      return res.status(404).json({ ok: false, platform, download_available: false, release_version: CURRENT_GUILDSYNC_CLIENT_VERSION, error: `GuildSync ${CURRENT_GUILDSYNC_CLIENT_VERSION} is not currently available for ${platform}.` });
+    }
 
     return res.json({
       ok: true,
       platform,
       download,
-      download_url: download.url,
-      download_file_name: download.file_name
+      download_url: download?.url || '',
+      download_file_name: download?.file_name || ''
     });
   } catch (error) {
     Log(`Client download lookup failed for ${platform}: ${error.message}`);
@@ -433,6 +438,7 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', (socket) => {
+  registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary);
 
   const user = socket.guildSyncUser;
 
@@ -1306,18 +1312,22 @@ io.on('connection', (socket) => {
     const clientVersion = String(payload.version || '').trim();
     const clientPlatform = normalizeClientPlatform(payload.platform || payload.os || payload.operating_system);
     const download = getGuildSyncClientDownload(clientPlatform);
-    const updateRequired = isVersionLower(clientVersion, CURRENT_GUILDSYNC_CLIENT_VERSION);
+    const updateRequired = Boolean(download) && isVersionLower(clientVersion, download.version);
 
     socket.emit('guildsync:version-status', {
       ok: true,
       client_version: clientVersion,
-      latest_version: CURRENT_GUILDSYNC_CLIENT_VERSION,
+      latest_version: download?.version || null,
+      release_version: CURRENT_GUILDSYNC_CLIENT_VERSION,
+      download_available: Boolean(download),
       update_required: updateRequired,
       platform: clientPlatform,
       download,
-      download_url: download.url,
-      download_file_name: download.file_name,
-      message: updateRequired
+      download_url: download?.url || '',
+      download_file_name: download?.file_name || '',
+      message: !download
+        ? `GuildSync ${CURRENT_GUILDSYNC_CLIENT_VERSION} download is not currently available for ${clientPlatform}.`
+        : updateRequired
         ? `GuildSync ${clientVersion || 'unknown'} is out of date. Latest version is ${CURRENT_GUILDSYNC_CLIENT_VERSION}.`
         : `GuildSync ${clientVersion || 'unknown'} is current.`
     });
@@ -2994,7 +3004,7 @@ function getGuildSyncClientDownload(platform) {
   const fileName = findLatestGuildSyncClientDownloadFile(normalizedPlatform);
 
   if (!fileName) {
-    throw new Error(`No ${normalizedPlatform} GuildSync client download file was found in ${GUILDSYNC_DOWNLOADS_DIR}.`);
+    return null;
   }
 
   const labelMap = {
@@ -3006,6 +3016,7 @@ function getGuildSyncClientDownload(platform) {
   return {
     platform: normalizedPlatform,
     label: labelMap[normalizedPlatform] || 'Windows',
+    version: CURRENT_GUILDSYNC_CLIENT_VERSION,
     file_name: fileName,
     url: buildPublicDownloadUrl(`/downloads/${fileName}`)
   };
@@ -3013,50 +3024,15 @@ function getGuildSyncClientDownload(platform) {
 
 function findLatestGuildSyncClientDownloadFile(platform) {
   const normalizedPlatform = normalizeClientPlatform(platform);
-  const patterns = {
-    // Example: GuildSync-Setup-1.1.6-Windows.zip
-    windows: /^GuildSync-Setup-(\d+(?:\.\d+){1,3})-Windows\.zip$/i,
-    // Example: GuildSync-Setup-1.1.6-Linux-x86_64.zip
-    linux: /^GuildSync-Setup-(\d+(?:\.\d+){1,3})-Linux-x86_64\.zip$/i,
-    // Example: GuildSync-Setup-1.1.6-macOS.zip
-    macos: /^GuildSync-Setup-(\d+(?:\.\d+){1,3})-macOS\.zip$/i
-  };
-  const pattern = patterns[normalizedPlatform];
-
-  if (!pattern) {
-    return null;
-  }
-
-  let entries;
+  const suffixes = { windows: 'Windows', macos: 'macOS', linux: 'Linux-x86_64' };
+  const expected = `GuildSync-Setup-${CURRENT_GUILDSYNC_CLIENT_VERSION}-${suffixes[normalizedPlatform]}.zip`;
   try {
-    entries = fs.readdirSync(GUILDSYNC_DOWNLOADS_DIR, { withFileTypes: true });
+    const entries = fs.readdirSync(GUILDSYNC_DOWNLOADS_DIR, { withFileTypes: true });
+    return entries.find(entry => entry.isFile() && entry.name === expected)?.name || null;
   } catch (error) {
-    Log(`Download directory unavailable (${GUILDSYNC_DOWNLOADS_DIR}): ${error.message}`);
+    Log(`Download directory unavailable: ${error.message}`);
     return null;
   }
-
-  let latest = null;
-
-  for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
-    }
-
-    const match = entry.name.match(pattern);
-    if (!match) {
-      continue;
-    }
-
-    const version = match[1];
-    if (!latest || compareVersionStrings(version, latest.version) > 0) {
-      latest = {
-        fileName: entry.name,
-        version
-      };
-    }
-  }
-
-  return latest ? latest.fileName : null;
 }
 
 function compareVersionStrings(a, b) {
