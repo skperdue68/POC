@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { bankingSource } from './banking-source.js';
 
 const source = fs.readFileSync(new URL('./guildsync-database-actions.js', import.meta.url), 'utf8');
 const start = source.indexOf('export async function insertBankingEntries(');
@@ -16,11 +17,12 @@ test('Sheets receives only new inserts after commit and preserves uploader attri
       async beginTransaction() {}, async rollback() {}, release() {},
       async commit() { if (scenario === 'commit-failure') throw new Error('commit failed'); committed = true; },
       async execute(sql, params) {
+        if (sql.includes('INSERT IGNORE')) assert.equal(params[7], 'GuildSyncBanking (EvaineFaye)');
         return [{ affectedRows: sql.includes('INSERT IGNORE') ? (scenario === 'duplicate' || params[0] === 2 ? 0 : 1) : 1 }];
       }
     };
     const context = vm.createContext({
-      console, normalizeDepositMailTicketType: value => value,
+      console, bankingSource, normalizeDepositMailTicketType: value => value,
       safeRollback: async c => c.rollback(),
       googleSheetsBankingConfig: () => ({ enabled: true }),
       getBankingDataJSON: async () => [],
