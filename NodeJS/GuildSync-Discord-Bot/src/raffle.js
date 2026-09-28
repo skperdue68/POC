@@ -21,7 +21,7 @@ export function formatRaffles(snapshot, { includeTickets = false, verifyName = '
   return ['**GuildSync active raffle prizes**', ...snapshot.raffles.map(raffle => [
     `**${raffle.type === 'biweekly' ? 'Bi-Weekly' : '50/50'}: ${number(raffle.prizeGold)} gold available for the draw**`,
     ...(raffle.type === 'biweekly' ? [`${number(raffle.drawCount)} draws × 200,000 gold each (rounded up).`] : []),
-    `Tickets: ${number(raffle.totalTickets)}${raffle.bonusEnabled ? ` (includes ${number(raffle.bonusTickets || 0)} bonus; ${number(raffle.bonusPercent || 0)}% bonus expires <t:${raffle.bonusExpiresAt}:R>)` : ''} · Draw: <t:${raffle.drawTime}:F>`,
+    `Tickets: ${number(raffle.totalTickets)}${raffle.bonusEnabled ? ` (includes ${number(raffle.bonusTickets || 0)} bonus; ${number(raffle.bonusPercent || 0)}% bonus expires <t:${raffle.bonusExpiresAt}:R>${raffle.nextBonusPercent ? `, then ${number(raffle.nextBonusPercent)}% until <t:${raffle.nextBonusExpiresAt}:R>` : ''})` : ''} · Draw: <t:${raffle.drawTime}:F>`,
     raffle.salesOpen ? `Ticket sales close <t:${raffle.salesEnd}:R>.` : 'Sales closed — awaiting the draw.'
   ].join('\n')), ...(includeTickets ? [formatUserTickets(snapshot, verifyName)] : []), `As of <t:${snapshot.asOf}:f>. Based on the latest banking data received by GuildSync.`].join('\n\n');
 }

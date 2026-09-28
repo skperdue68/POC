@@ -1944,6 +1944,8 @@ export async function saveRaffleBonusSettings(applicationDB, input) {
 
 export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Date.now() / 1000)) {
   const entries = await getBankingDataJSON(applicationDB);
+  const bonusVersions = await getRaffleBonusVersions(applicationDB);
+  const bonusOverrides = await getRaffleBonusOverrides(applicationDB);
   const raffles = ['biweekly', 'monthly'].map((type) => {
     // Selection advances at draw time, not at the earlier ticket cutoff.
     // +1 makes the next raffle active at the exact draw-time boundary.
@@ -1954,6 +1956,7 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
     const previousSalesEnd = type === 'monthly'
       ? getDepositMailPreviousMonthlySalesEnd(salesEnd)
       : salesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS;
+    const salesStart = previousSalesEnd + 1;
     const rows = entries.filter((entry) => normalizeDepositMailTicketType(entry.type) === type &&
       Number(entry.time) > previousSalesEnd && Number(entry.time) <= salesEnd && Number(entry.time) <= now);
     const deposits = rows.reduce((sum, entry) => {
@@ -1965,6 +1968,7 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
     const prizeGold = type === 'biweekly'
       ? Math.ceil(Math.max(0, deposits) / 2 / 200000) * 200000
       : Math.floor(Math.max(0, deposits) / 2);
+    const bonus = getCurrentRaffleBonusInfo(type, salesEnd, salesStart, now, bonusVersions, bonusOverrides);
     return {
       id: `${type}:${salesEnd}`, type, label: getDepositMailTicketTypeLabel(type),
       activeStart: previousSalesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS,
@@ -1973,13 +1977,36 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
       salesOpen: now < salesEnd, prizeGold,
       ...(type === 'biweekly' ? { drawCount: prizeGold / 200000, goldPerDraw: 200000 } : {}),
       totalTickets: rows.reduce((sum, entry) => sum + (Number(entry.totalTickets) || 0), 0),
-      bonusEnabled: rows.some(entry => entry.bonusEnabled),
+      bonusEnabled: bonus.enabled,
       bonusTickets: rows.reduce((sum, entry) => sum + (Number(entry.bonusTickets) || 0), 0),
-      bonusPercent: rows.reduce((max, entry) => Math.max(max, Number(entry.bonusPercent) || 0), 0),
-      bonusExpiresAt: salesEnd
+      bonusPercent: bonus.percent,
+      bonusExpiresAt: bonus.expiresAt,
+      ...(bonus.nextPercent > 0 ? { nextBonusPercent: bonus.nextPercent, nextBonusExpiresAt: bonus.nextExpiresAt } : {})
     };
   });
   return { asOf: now, raffles };
+}
+
+function getCurrentRaffleBonusInfo(type, salesEnd, salesStart, now, versions, overrides) {
+  const policy = selectRaffleBonusSettings(versions, overrides, type, salesEnd);
+  if (!policy?.enabled || now >= salesEnd || now < salesStart || !Array.isArray(policy.tiers)) {
+    return { enabled: false, percent: 0, expiresAt: salesEnd, nextPercent: 0, nextExpiresAt: salesEnd };
+  }
+  const totalHours = policy.tiers.reduce((sum, tier) => sum + Number(tier.hours || 0), 0);
+  const elapsedHours = Math.max(0, (now - (salesEnd - totalHours * 3600)) / 3600);
+  let cumulative = 0;
+  for (let index = 0; index < policy.tiers.length; index += 1) {
+    const tier = policy.tiers[index];
+    const endElapsed = cumulative + Number(tier.hours || 0);
+    if (elapsedHours < endElapsed) {
+      const expiresAt = Math.min(salesEnd, Math.floor(salesEnd - (totalHours - endElapsed) * 3600));
+      const next = policy.tiers[index + 1];
+      const nextExpiresAt = next ? Math.min(salesEnd, Math.floor(expiresAt + Number(next.hours || 0) * 3600)) : salesEnd;
+      return { enabled: Number(tier.percent) > 0, percent: Number(tier.percent) || 0, expiresAt, nextPercent: next ? Number(next.percent) || 0 : 0, nextExpiresAt };
+    }
+    cumulative = endElapsed;
+  }
+  return { enabled: false, percent: 0, expiresAt: salesEnd, nextPercent: 0, nextExpiresAt: salesEnd };
 }
 
 export async function getRaffleUserTickets(applicationDB, discordUserId, now = Math.floor(Date.now() / 1000), requestedEsoAccountName = '') {
