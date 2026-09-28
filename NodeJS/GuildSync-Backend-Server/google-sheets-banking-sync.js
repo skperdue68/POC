@@ -41,6 +41,11 @@ async function sheetsRequest(token, url, init = {}) {
 }
 
 function tabFor(type, settings) { return type === 'biweekly' ? settings.biweeklyTab : type === 'monthly' ? settings.fiftyFiftyTab : ''; }
+function sheetGoldAmount(amount) {
+  const value = Number(amount) || 0;
+  const marker = Math.abs(Math.trunc(value)) % 10;
+  return marker === 1 || marker === 3 ? (value > marker ? value - marker : value) : value;
+}
 
 export async function syncBankingEntriesToGoogleSheets(entries, { log = console.error } = {}) {
   const settings = config();
@@ -53,15 +58,15 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = console.
   for (const entry of entries) {
     const tab = tabFor(entry.type, settings);
     if (!tab || !entry.eventId) continue;
-    const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!X:X`)}?majorDimension=COLUMNS`);
+    const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!X6:X`)}?majorDimension=COLUMNS`);
     const ids = existing.values?.[0] || [];
     if (ids.some(value => String(value) === String(entry.eventId))) continue;
     const values = Array(21).fill('');
     values[0] = entry.displayName || '';
-    values[1] = Number(entry.amount) || 0;
+    values[1] = sheetGoldAmount(entry.amount);
     values[2] = Number(entry.ticketAmount) || 0;
     values[20] = String(entry.eventId);
-    await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D:X`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] }) });
+    await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D6:X`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] }) });
     synced += 1;
   }
   return { enabled: true, synced };
