@@ -77,7 +77,7 @@ function easternTimestamp() {
 }
 
 async function updateSheetMetadata(token, base, tab, type, uploadedBy) {
-  const range = 'N3:N4';
+  const range = type === 'biweekly' ? 'N3:N4' : 'L3:L4';
   const name = String(uploadedBy || '').trim();
   await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, range))}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [[name ? `${name} (GuildSync)` : 'GuildSync'], [easternTimestamp()]] }) });
 }
