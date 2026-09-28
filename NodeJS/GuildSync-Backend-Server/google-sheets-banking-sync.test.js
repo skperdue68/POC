@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { syncBankingEntriesToGoogleSheets } from './google-sheets-banking-sync.js';
+import { syncBankingEntriesToGoogleSheets, sheetsRequest } from './google-sheets-banking-sync.js';
+
+test('failed Sheets requests log the operation, range and Google explanation without credentials', async () => {
+  const originalFetch = globalThis.fetch;
+  const logs = [];
+  globalThis.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: { status: 'INVALID_ARGUMENT', message: 'Range exceeds grid limits. Max columns: 24' } }) });
+  try {
+    await assert.rejects(sheetsRequest('secret-token', 'https://sheets.googleapis.com/v4/spreadsheets/fixture/values/%2750%2F50%27!Y34%3AY', {}, message => logs.push(message)), /Range exceeds grid limits/);
+    assert.match(logs[0], /GET.*Y34:Y.*400.*INVALID_ARGUMENT/);
+    assert.ok(!logs[0].includes('secret-token'));
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('writes only D/E and X at the first gap, logs before writing, preserves metadata destinations', async () => {
   const originalFetch = globalThis.fetch;
