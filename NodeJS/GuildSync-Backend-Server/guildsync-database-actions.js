@@ -3543,6 +3543,16 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
 
   await setSetting(applicationDB, 'banking_refresh', new Date().toISOString());
 
+  if (result.affectedRows) {
+    try {
+      await syncBankingEntriesToGoogleSheets([{
+        type: transactionType, eventId: event_id, displayName: accountName,
+        amount: goldValue, ticketAmount: tickets, dataSource, note: auditedNote,
+        purchasedTickets: tickets, bonusTickets: 0, bonusPercent: 0, totalTickets: tickets
+      }], { uploadedBy: addedBy });
+    } catch (error) { console.error(`Google Sheets manual entry sync failed: ${error.message}`); }
+  }
+
   return {
     eventId: event_id,
     inserted: result.affectedRows || 0,
