@@ -10,7 +10,9 @@ function config() {
     serviceAccountFile: String(process.env.GUILDSYNC_GOOGLE_SERVICE_ACCOUNT_FILE || '').trim(),
     serviceAccountJson: String(process.env.GUILDSYNC_GOOGLE_SERVICE_ACCOUNT_JSON || '').trim(),
     biweeklyTab: process.env.GUILDSYNC_GOOGLE_SHEETS_BIWEEKLY_TAB || 'bi-weekly raffle',
-    fiftyFiftyTab: process.env.GUILDSYNC_GOOGLE_SHEETS_5050_TAB || '50/50'
+    fiftyFiftyTab: process.env.GUILDSYNC_GOOGLE_SHEETS_5050_TAB || '50/50',
+    biweeklyStartRow: 6,
+    fiftyFiftyStartRow: 5
   };
 }
 
@@ -41,6 +43,7 @@ async function sheetsRequest(token, url, init = {}) {
 }
 
 function tabFor(type, settings) { return type === 'biweekly' ? settings.biweeklyTab : type === 'monthly' ? settings.fiftyFiftyTab : ''; }
+function startRowFor(type, settings) { return type === 'biweekly' ? settings.biweeklyStartRow : settings.fiftyFiftyStartRow; }
 function sheetGoldAmount(amount) {
   const value = Number(amount) || 0;
   const marker = Math.abs(Math.trunc(value)) % 10;
@@ -57,6 +60,13 @@ async function updateSheetMetadata(token, base, tab, type) {
   await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!${range}`)}?valueInputOption=USER_ENTERED`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [['GuildSync'], [easternTimestamp()]] }) });
 }
 
+async function firstEmptyRow(token, base, tab, startRow) {
+  const result = await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D${startRow}:D`)}?majorDimension=COLUMNS`);
+  const values = result.values?.[0] || [];
+  const offset = values.findIndex(value => String(value ?? '').trim() === '');
+  return offset < 0 ? startRow + values.length : startRow + offset;
+}
+
 export async function syncBankingEntriesToGoogleSheets(entries, { log = console.error } = {}) {
   const settings = config();
   if (!settings.enabled || !entries?.length) return { enabled: settings.enabled, synced: 0 };
@@ -69,7 +79,8 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = console.
   for (const entry of entries) {
     const tab = tabFor(entry.type, settings);
     if (!tab || !entry.eventId) continue;
-    const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!X6:X`)}?majorDimension=COLUMNS`);
+    const startRow = startRowFor(entry.type, settings);
+    const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!X${startRow}:X`)}?majorDimension=COLUMNS`);
     const ids = existing.values?.[0] || [];
     if (ids.some(value => String(value) === String(entry.eventId))) continue;
     const values = Array(21).fill('');
@@ -78,7 +89,9 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = console.
     // The sheet calculates ticket quantity itself. Keep ticket and bonus fields
     // on the backend entry payload for future integrations without writing them here.
     values[20] = String(entry.eventId);
-    await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D6:X`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: 'POST', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] }) });
+    const row = await firstEmptyRow(token, base, tab, startRow);
+    await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!D${row}:X${row}`)}?valueInputOption=USER_ENTERED`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] }) });
+    log(`[GUILDSYNC-GOOGLE-SHEETS] Added ${entry.type} entry to "${tab}" row ${row}: D=${values[0]}, E=${values[1]}, F=(sheet formula), X=${values[20]}`);
     if (!metadataUpdated.has(tab)) {
       await updateSheetMetadata(token, base, tab, entry.type);
       metadataUpdated.add(tab);
