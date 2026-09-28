@@ -5,7 +5,8 @@ export function requestActiveRaffles(socket, options = {}) {
     if (!socket?.connected) return reject(new Error('GuildSync is temporarily unavailable. Please try again.'));
     socket.timeout(15000).emit('guildsync:request-active-raffles', {
       discordUserId: options.discordUserId || '',
-      includeTickets: options.includeTickets === true
+      includeTickets: options.includeTickets === true,
+      esoAccountName: options.esoAccountName || ''
     }, (error, response) => {
       if (error) return reject(new Error('GuildSync did not respond. Please try again.'));
       if (!response?.ok || !Array.isArray(response.raffles) || response.raffles.length === 0) {
@@ -15,18 +16,18 @@ export function requestActiveRaffles(socket, options = {}) {
     });
   });
 }
-export function formatRaffles(snapshot, { includeTickets = false } = {}) {
+export function formatRaffles(snapshot, { includeTickets = false, verifyName = '' } = {}) {
   const number = value => Number(value || 0).toLocaleString('en-US');
   return ['**GuildSync active raffle prizes**', ...snapshot.raffles.map(raffle => [
     `**${raffle.type === 'biweekly' ? 'Bi-Weekly' : '50/50'}: ${number(raffle.prizeGold)} gold available for the draw**`,
     ...(raffle.type === 'biweekly' ? [`${number(raffle.drawCount)} draws × 200,000 gold each (rounded up).`] : []),
     `Tickets: ${number(raffle.totalTickets)}${raffle.bonusEnabled ? ` (includes ${number(raffle.bonusTickets || 0)} bonus; ${number(raffle.bonusPercent || 0)}% bonus expires <t:${raffle.bonusExpiresAt}:R>)` : ''} · Draw: <t:${raffle.drawTime}:F>`,
     raffle.salesOpen ? `Ticket sales close <t:${raffle.salesEnd}:R>.` : 'Sales closed — awaiting the draw.'
-  ].join('\n')), ...(includeTickets ? [formatUserTickets(snapshot)] : []), `As of <t:${snapshot.asOf}:f>. Based on the latest banking data received by GuildSync.`].join('\n\n');
+  ].join('\n')), ...(includeTickets ? [formatUserTickets(snapshot, verifyName)] : []), `As of <t:${snapshot.asOf}:f>. Based on the latest banking data received by GuildSync.`].join('\n\n');
 }
 
-function formatUserTickets(snapshot) {
-  if (snapshot.tickets?.linked === false) return 'I could not determine your ESO name. Link your ESO account, or make your Discord name match your ESO account name.';
+function formatUserTickets(snapshot, verifyName = '') {
+  if (snapshot.tickets?.linked === false) return verifyName ? `No linked ESO account was found for **${verifyName}**.` : 'I could not determine your ESO name. Link your ESO account, or make your Discord name match your ESO account name.';
   if (!snapshot.tickets?.purchases?.length) return `No raffle tickets are recorded for your linked ESO account${snapshot.tickets?.esoAccountName ? ` (${snapshot.tickets.esoAccountName})` : ''}.`;
   return `**Your tickets (${snapshot.tickets.esoAccountName})**\n` + snapshot.tickets.purchases.map(item =>
     `${item.raffleLabel}: ${item.totalTickets} tickets (${item.purchasedTickets} purchased${item.bonusTickets ? ` + ${item.bonusTickets} bonus` : ''}) — <t:${item.time}:f>`

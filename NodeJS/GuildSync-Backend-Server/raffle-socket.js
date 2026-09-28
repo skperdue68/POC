@@ -8,7 +8,7 @@ export function registerRaffleSocket(socket, applicationDB, getActiveRaffleSumma
     try {
       const result = await getActiveRaffleSummary(applicationDB);
       if (payload.includeTickets === true) {
-        result.tickets = await getRaffleUserTickets(applicationDB, payload.discordUserId);
+        result.tickets = await getRaffleUserTickets(applicationDB, payload.discordUserId, undefined, payload.esoAccountName);
       }
       callback({ ok: true, ...result });
     } catch {

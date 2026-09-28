@@ -1982,10 +1982,10 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
   return { asOf: now, raffles };
 }
 
-export async function getRaffleUserTickets(applicationDB, discordUserId, now = Math.floor(Date.now() / 1000)) {
+export async function getRaffleUserTickets(applicationDB, discordUserId, now = Math.floor(Date.now() / 1000), requestedEsoAccountName = '') {
   const id = String(discordUserId || '').trim();
   if (!id) return { linked: false, purchases: [] };
-  const [links] = await applicationDB.execute(`
+  const [links] = requestedEsoAccountName ? [ [{ eso_account_name: String(requestedEsoAccountName).replace(/^@+/, '') }] ] : await applicationDB.execute(`
     SELECT eso_account_name FROM guildsync_member_links
     WHERE discord_user_id = ? AND link_status = 'linked' LIMIT 1
   `, [id]);
