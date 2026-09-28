@@ -4,7 +4,7 @@ import cors from 'cors';
 import http from 'node:http';
 import fs from 'node:fs';
 import { registerRaffleSocket } from './raffle-socket.js';
-import { getActiveRaffleSummary } from './guildsync-database-actions.js';
+import { getActiveRaffleSummary, getRaffleUserTickets } from './guildsync-database-actions.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
@@ -438,7 +438,7 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary);
+  registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
 
   const user = socket.guildSyncUser;
 
