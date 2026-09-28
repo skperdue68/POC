@@ -20,6 +20,10 @@ export async function execute(interaction, guildSyncSocket) {
     return;
   }
   if (verify) {
+    if (/[\s]*@|https?:\/\/|www\.|<@|\]\(/i.test(verifyName)) {
+      await interaction.reply({ content: 'Enter the ESO account name only, without @ signs, Discord mentions, or links.', flags: MessageFlags.Ephemeral });
+      return;
+    }
     const allowed = new Set(['consigliere', 'capo', 'caporegieme']);
     const hasRole = interaction.member?.roles?.cache?.some(role => allowed.has(String(role.name).toLowerCase()));
     if (!hasRole) {
