@@ -109,7 +109,7 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = exportLo
     const startRow = donation ? (entry.type === 'biweekly' ? 62 : 34) : startRowFor(entry.type, settings);
     const nameColumn = donation ? (entry.type === 'biweekly' ? 'M' : 'K') : 'D';
     const goldColumn = donation ? (entry.type === 'biweekly' ? 'N' : 'L') : 'E';
-    const idColumn = donation ? 'Y' : 'X';
+    const idColumn = donation ? 'X' : 'W';
     await log(`Checking transaction ${JSON.stringify(String(entry.eventId))}: sheet=${JSON.stringify(tab)}, donation=${donation}, duplicateRange=${sheetRange(tab, `${idColumn}${startRow}:${idColumn}`)}, nameScan=${nameColumn}${startRow}:${nameColumn}`);
     const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, `${idColumn}${startRow}:${idColumn}`))}?majorDimension=COLUMNS`);
     const ids = existing.values?.[0] || [];
