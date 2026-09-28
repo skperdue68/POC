@@ -66,9 +66,10 @@ function easternTimestamp() {
   return `${value.month}/${value.day}/${value.year} ${value.hour}:${value.minute}${value.dayPeriod.toLowerCase()} ET`;
 }
 
-async function updateSheetMetadata(token, base, tab, type) {
+async function updateSheetMetadata(token, base, tab, type, uploadedBy) {
   const range = type === 'biweekly' ? 'N4:N5' : 'L3:L4';
-  await sheetsRequest(token, `${base}/${encodeURIComponent(`${tab}!${range}`)}?valueInputOption=USER_ENTERED`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [['GuildSync'], [easternTimestamp()]] }) });
+  const name = String(uploadedBy || '').trim();
+  await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, range))}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [[name ? `${name} (GuildSync)` : 'GuildSync'], [easternTimestamp()]] }) });
 }
 
 async function firstEmptyRow(token, base, tab, startRow, log) {
@@ -80,7 +81,7 @@ async function firstEmptyRow(token, base, tab, startRow, log) {
   return row;
 }
 
-export async function syncBankingEntriesToGoogleSheets(entries, { log = exportLog } = {}) {
+export async function syncBankingEntriesToGoogleSheets(entries, { log = exportLog, uploadedBy = '' } = {}) {
   const settings = config();
   if (!settings.enabled || !entries?.length) return { enabled: settings.enabled, synced: 0 };
   await log(`Starting spreadsheet update: entries=${entries.length}, spreadsheet=${JSON.stringify(settings.spreadsheetId)}`);
@@ -112,7 +113,7 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = exportLo
     const written = await sheetsRequest(token, `${base}:batchUpdate`, { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });
     await log(`Added ${JSON.stringify(tab)} row ${row}; confirmedRanges=${JSON.stringify(written.responses?.map(item => item.updatedRange) || [])}`);
     if (!metadataUpdated.has(tab)) {
-      await updateSheetMetadata(token, base, tab, entry.type);
+      await updateSheetMetadata(token, base, tab, entry.type, uploadedBy);
       metadataUpdated.add(tab);
     }
     synced += 1;
