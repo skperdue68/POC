@@ -111,6 +111,13 @@ test('saving enables each raffle independently and is effective in the immediate
   }
 });
 
+test('rejects bonus periods longer than the raffle window before saving', async () => {
+  const db = database({ enabled: false, ...tiers });
+  const invalid = { ...tiers, biweekly: [{ hours: 337, percent: 20 }, { hours: 1, percent: 0 }] };
+  await assert.rejects(saveRaffleBonusSettings(db, { enabledByType: { biweekly: true, monthly: true }, ...invalid }), /only 336 hours long/);
+  assert.equal(db.versions.length, 0);
+});
+
 test('manual tickets retain their entered count and receive no bonus in banking or history', async () => {
   const db = database({ enabled: true, ...tiers });
   for (const type of ['biweekly', 'monthly']) {
