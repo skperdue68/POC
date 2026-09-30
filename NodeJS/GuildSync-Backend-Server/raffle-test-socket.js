@@ -26,7 +26,8 @@ export function registerRaffleTestSocket(socket, db, { getActiveRaffleSummary, g
       if (!['biweekly', 'monthly', 'both'].includes(type)) throw new Error('Choose a valid raffle.');
       if (!['export', 'close'].includes(payload.action)) throw new Error('Unknown raffle test action.');
       if (payload.action === 'close' && (type === 'both' || payload.confirm !== true)) throw new Error('Select one raffle and confirm the archive/reset test.');
-      const requestedBy = String(payload.requestedBy || 'Discord raffle test').slice(0, 100);
+      const requestedBy = String(payload.requestedBy || '').trim().slice(0, 100);
+      if (!requestedBy) throw new Error('The initiating Discord display name is required.');
       await log('TEST ' + payload.action + ' requested by ' + JSON.stringify(requestedBy) + ' for ' + type);
       if (payload.action === 'export') {
         const snapshot = await getActiveRaffleSummary(db);

@@ -68,8 +68,9 @@ export async function execute(interaction, socket) {
           reminders: [{ type: raffleType, kind, at, percent: raffle.bonusPercent, nextPercent: raffle.nextBonusPercent || 0 }] });
       }
     } else {
-      content = await requestTest(socket, { action, raffleType, confirm: true,
-        requestedBy: interaction.member?.displayName || interaction.user?.globalName || interaction.user?.username || interaction.user?.id || 'Discord officer' });
+      const displayName = String(interaction.member?.displayName || '').trim();
+      if (!displayName) throw new Error('Discord display name is unavailable; the test was not started.');
+      content = await requestTest(socket, { action, raffleType, confirm: true, requestedBy: displayName });
     }
     await interaction.editReply({ content, allowedMentions: { parse: [] } });
   } catch (error) {
