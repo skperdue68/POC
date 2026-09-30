@@ -8,9 +8,9 @@ archive copy and prepares the original for new entries.
 
 | Entries | Rows | Transaction ID | ESO name | Gold | Bonus |
 | --- | --- | --- | --- | --- | --- |
-| Tickets, both tabs | 5–254 | D | E | F | G |
-| Bi-weekly donations | 63–70 | O | P | Q | — |
-| 50/50 donations | 36–44 | M | N | O | — |
+| Tickets, both tabs | 5–254 | D | E | F | H |
+| Bi-weekly donations | 63–70 | P | Q | R | — |
+| 50/50 donations | 36–44 | N | O | P | — |
 
 The first row with both ID and name blank is selected within these bounds.
 Duplicate IDs are skipped. A full section produces an error without writing past
@@ -19,7 +19,7 @@ Zero-ticket raffle entries are donations; other guild-bank deposits are excluded
 Gold ending in a raffle marker of 1 or 3 has that marker removed; other gold is
 unchanged. Manual entries append their note in parentheses after the name.
 
-G contains the awarded bonus-ticket count with a cell note `Bonus: N%` when that
+H contains the awarded bonus-ticket count with a cell note `Bonus: N%` when that
 raffle's bonus policy is enabled. Manual tickets always receive 0 extra bonus
 tickets and 0%. G and H become visible when bonuses are enabled. No purchased/total
 ticket count is written; the sheet calculates it. Disabled bonuses clear H5:H254
@@ -57,8 +57,8 @@ raffles close together, one archive preserves both before both reset.
 
 Only the closing raffle tab is cleared:
 
-- D5:G254 values and G5:G254 notes; column G is hidden.
-- Bi-weekly O62:Q70 values, or 50/50 M36:O44 values.
+- D5:H254 values and H5:H254 notes; columns G:H are hidden.
+- Bi-weekly P62:R70 values, or 50/50 N36:P44 values.
 
 Other cells, formatting, metadata fields, and the non-closing tab stay intact.
 New entries keep using the original spreadsheet ID. Archives are snapshots;

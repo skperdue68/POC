@@ -57,7 +57,7 @@ test('tickets write D/E/F in first fully empty row with G bonus note and correct
     assert.deepEqual(cellValues(requests[0]), [index ? '124' : '123', 'Player', gold]);
     assert.equal(requests[0].updateCells.fields, 'userEnteredValue');
     assert.deepEqual(requests[1].updateCells, {
-      range: { sheetId: id, startRowIndex: 6, endRowIndex: 7, startColumnIndex: 6, endColumnIndex: 7 },
+      range: { sheetId: id, startRowIndex: 6, endRowIndex: 7, startColumnIndex: 7, endColumnIndex: 8 },
       rows: [{ values: [{ userEnteredValue: { numberValue: 20 }, note: 'Bonus: 10%' }] }], fields: 'userEnteredValue,note'
     });
     assert.deepEqual(requests[2].updateDimensionProperties, { range: { sheetId: id, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 }, properties: { hiddenByUser: false }, fields: 'hiddenByUser' });
@@ -88,11 +88,11 @@ test('disabled bonus clears stale G value/note without hiding other rows; manual
 test('zero-ticket donations use bounded O/P/Q and M/N/O ranges without bonus cells or notes', async t => {
   const f = fixture(t, { rows: [['existing', 'Member', 50], []] });
   await f.run([ticket({ ticketAmount: 0, note: 'Guild donation', dataSource: 'ManualBiweeklyTicket' }), ticket({ type: 'monthly', eventId: 'monthly', ticketAmount: 0, amount: 500003 })]);
-  assert.ok(f.calls.some(url => url.includes("'bi-weekly raffle'!O63:Q70")));
-  assert.ok(f.calls.some(url => url.includes("'50/50'!M36:O44")));
+  assert.ok(f.calls.some(url => url.includes("'bi-weekly raffle'!P63:R70")));
+  assert.ok(f.calls.some(url => url.includes("'50/50'!N36:P44")));
   const requests = f.writes.flat();
-  assert.deepEqual(requests[0].updateCells.start, { sheetId: 7, rowIndex: 63, columnIndex: 14 });
-  assert.deepEqual(requests[2].updateCells.start, { sheetId: 8, rowIndex: 36, columnIndex: 12 });
+  assert.deepEqual(requests[0].updateCells.start, { sheetId: 7, rowIndex: 63, columnIndex: 15 });
+  assert.deepEqual(requests[2].updateCells.start, { sheetId: 8, rowIndex: 36, columnIndex: 13 });
   assert.deepEqual(cellValues(requests[0]), ['123', 'Player (Guild donation)', 200000]);
   assert.deepEqual(cellValues(requests[2]), ['monthly', 'Player', 500000]);
   assert.equal(requests.length, 4);
@@ -106,7 +106,7 @@ test('existing transaction IDs skip all writes including bonus and metadata', as
   assert.ok(f.logs.some(line => line.includes('Duplicate skipped: 123')));
 });
 
-for (const [type, ticketAmount, count, range] of [['biweekly', 200, 250, 'D5:F254'], ['biweekly', 0, 8, 'O63:Q70'], ['monthly', 0, 9, 'M36:O44']]) {
+for (const [type, ticketAmount, count, range] of [['biweekly', 200, 250, 'D5:F254'], ['biweekly', 0, 8, 'P63:R70'], ['monthly', 0, 9, 'N36:P44']]) {
   test(`full ${type} ${range} refuses overflow without writes`, async t => {
     const f = fixture(t, { rows: Array.from({ length: count }, (_, index) => [String(index + 500), 'Occupied', 100]) });
     await assert.rejects(f.run([ticket({ type, ticketAmount })]), /No empty row/);

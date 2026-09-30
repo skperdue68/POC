@@ -9,10 +9,10 @@ const escapeQuery = value => String(value).replace(/\\/g, '\\\\').replace(/'/g, 
 export function resetRequests(sheetId, type, key, oldMetadata = []) {
   const range = (r1, r2, c1, c2) => ({ sheetId, startRowIndex: r1, endRowIndex: r2, startColumnIndex: c1, endColumnIndex: c2 });
   return [
-    { updateCells: { range: range(4, 254, 3, 7), fields: 'userEnteredValue' } },
+    { updateCells: { range: range(4, 254, 3, 8), fields: 'userEnteredValue' } },
     { updateCells: { range: range(4, 254, 6, 8), fields: 'userEnteredValue,note' } },
     { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
-    { updateCells: { range: type === 'biweekly' ? range(61, 70, 14, 17) : range(35, 44, 12, 15), fields: 'userEnteredValue' } },
+    { updateCells: { range: type === 'biweekly' ? range(61, 70, 15, 18) : range(35, 44, 13, 16), fields: 'userEnteredValue' } },
     ...oldMetadata.map(metadata => ({ deleteDeveloperMetadata: { dataFilter: { developerMetadataLookup: { metadataId: metadata.metadataId } } } })),
     { createDeveloperMetadata: { developerMetadata: { metadataKey: MARKER, metadataValue: key, visibility: 'DOCUMENT', location: { sheetId } } } }
   ];
