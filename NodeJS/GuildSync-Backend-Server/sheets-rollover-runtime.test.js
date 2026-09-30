@@ -11,8 +11,8 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [14,
     const requests = resetRequests(7, type, 'next-key', [{ metadataId: 23 }]);
     assert.deepEqual(requests, [
       { updateCells: { range: { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 3, endColumnIndex: 7 }, fields: 'userEnteredValue' } },
-      { updateCells: { range: { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 6, endColumnIndex: 7 }, fields: 'note' } },
-      { updateDimensionProperties: { range: { sheetId: 7, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
+      { updateCells: { range: { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 6, endColumnIndex: 8 }, fields: 'userEnteredValue,note' } },
+      { updateDimensionProperties: { range: { sheetId: 7, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
       { updateCells: { range: { sheetId: 7, startRowIndex: donationRows[0], endRowIndex: donationRows[1], startColumnIndex: donationColumns[0], endColumnIndex: donationColumns[1] }, fields: 'userEnteredValue' } },
       { deleteDeveloperMetadata: { dataFilter: { developerMetadataLookup: { metadataId: 23 } } } },
       { createDeveloperMetadata: { developerMetadata: { metadataKey: 'guildsync_last_rollover', metadataValue: 'next-key', visibility: 'DOCUMENT', location: { sheetId: 7 } } } }
