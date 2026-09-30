@@ -9,7 +9,7 @@ archive copy and prepares the original for new entries.
 | Entries | Rows | Transaction ID | ESO name | Gold | Bonus |
 | --- | --- | --- | --- | --- | --- |
 | Tickets, both tabs | 5–254 | D | E | F | H |
-| Bi-weekly donations | 63–70 | P | Q | R | — |
+| Bi-weekly donations | 62–70 | P | Q | R | — |
 | 50/50 donations | 36–44 | N | O | P | — |
 
 The first row with both ID and name blank is selected within these bounds.
