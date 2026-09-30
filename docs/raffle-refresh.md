@@ -54,7 +54,7 @@ gold-marker removal, bonus handling, and update attribution:
 | --- | --- | --- |
 | Ticket ID / name / gold | D5:F254 | D5:F254 |
 | Bonus count and percentage note | H5:H254 | H5:H254 |
-| Donation ID / name / gold | P33:R52 | N36:P44 |
+| Donation ID / name / gold | P62:R70 | N36:P44 |
 | Updater / Eastern timestamp | R3 / R4 | P3 / P4 |
 
 Column G formulas and other cells are preserved. Bonus columns G/H are shown

@@ -15,7 +15,7 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
     assert.ok(ranges.some(range => range.startRowIndex === donationRows[0] && range.endRowIndex === donationRows[1] && range.startColumnIndex === donationColumns[0] && range.endColumnIndex === donationColumns[1]));
     if (type === 'biweekly') {
       assert.ok(ranges.some(range => range.startRowIndex === 2 && range.endRowIndex === 4 && range.startColumnIndex === 17 && range.endColumnIndex === 18));
-      assert.ok(ranges.some(range => range.startRowIndex === 32 && range.endRowIndex === 52 && range.startColumnIndex === 15 && range.endColumnIndex === 18));
+      assert.ok(ranges.some(range => range.startRowIndex === 32 && range.endRowIndex === 52 && range.startColumnIndex === 16 && range.endColumnIndex === 17));
     } else {
       assert.ok(ranges.some(range => range.startRowIndex === 2 && range.endRowIndex === 4 && range.startColumnIndex === 15 && range.endColumnIndex === 16));
       assert.ok(ranges.some(range => range.startRowIndex === 24 && range.endRowIndex === 25 && range.startColumnIndex === 15 && range.endColumnIndex === 16));

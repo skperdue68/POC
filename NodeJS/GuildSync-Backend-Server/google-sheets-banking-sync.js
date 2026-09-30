@@ -116,7 +116,7 @@ export function entryLayout(entry) {
   const donation = entry.ticketAmount != null && Number(entry.ticketAmount) === 0;
   return donation
     ? entry.type === 'biweekly'
-      ? { donation, first: 33, last: 52, id: 'P', name: 'Q', gold: 'R', index: 15 }
+      ? { donation, first: 62, last: 70, id: 'P', name: 'Q', gold: 'R', index: 15 }
       : { donation, first: 36, last: 44, id: 'N', name: 'O', gold: 'P', index: 13 }
     : { donation, first: 5, last: 254, id: 'D', name: 'E', gold: 'F', index: 3 };
 }
@@ -158,7 +158,7 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
       preparation.push(
         { updateCells: { range: range(4, 254, 3, 6), fields: 'userEnteredValue' } },
         { updateCells: { range: range(4, 254, 7, 8), fields: 'userEnteredValue,note' } },
-        { updateCells: { range: type === 'biweekly' ? range(32, 52, 15, 18) : range(35, 44, 13, 16), fields: 'userEnteredValue' } },
+        { updateCells: { range: type === 'biweekly' ? range(61, 70, 15, 18) : range(35, 44, 13, 16), fields: 'userEnteredValue' } },
         { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 },
           properties: { hiddenByUser: !entries.some(entry => entry.type === type && entry.bonusEnabled === true) }, fields: 'hiddenByUser' } },
         attributionRequest(sheet.sheetId, type, uploadedBy)

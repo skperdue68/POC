@@ -17,7 +17,7 @@ export function resetRequests(sheetId, type, key, oldMetadata = []) {
     ...(type === 'biweekly'
       ? [
           { updateCells: { range: range(2, 4, 17, 18), fields: 'userEnteredValue' } },
-          { updateCells: { range: range(32, 52, 15, 18), fields: 'userEnteredValue' } }
+          { updateCells: { range: range(32, 52, 16, 17), fields: 'userEnteredValue' } }
         ]
       : [
           { updateCells: { range: range(2, 4, 15, 16), fields: 'userEnteredValue' } },
