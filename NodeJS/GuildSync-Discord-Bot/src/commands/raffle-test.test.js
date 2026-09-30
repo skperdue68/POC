@@ -28,6 +28,7 @@ test('test command registration is opt-in and exposes only supported actions and
   assert.deepEqual(definition.options.map(item => item.name), ['export', 'preview', 'close']);
   assert.equal(definition.options[2].options.find(item => item.name === 'confirm').required, true);
   assert.deepEqual(definition.options[2].options.find(item => item.name === 'raffle').choices.map(item => item.value), ['biweekly', 'monthly']);
+  assert.deepEqual(definition.options[1].options.find(item => item.name === 'raffle').choices.map(item => item.value), ['biweekly', 'monthly', 'both']);
 });
 
 test('test commands reject disabled execution, missing officer role, DMs and unconfirmed close without requests', async t => {

@@ -11,7 +11,7 @@ export const data = new SlashCommandBuilder().setName('raffle-test')
   .addSubcommand(sub => sub.setName('preview').setDescription('Privately preview a raffle reminder without scheduling or posting it.')
     .addStringOption(option => option.setName('kind').setDescription('Reminder to preview').setRequired(true)
       .addChoices({ name: 'Bonus change or expiration', value: 'bonus' }, { name: 'Sales close', value: 'sales' }))
-    .addStringOption(option => raffleOption(option)))
+    .addStringOption(option => raffleOption(option, true)))
   .addSubcommand(sub => sub.setName('close').setDescription('Archive and clear a raffle worksheet now; requires explicit confirmation.')
     .addStringOption(option => raffleOption(option))
     .addBooleanOption(option => option.setName('confirm').setDescription('True archives and clears this raffle worksheet now.').setRequired(true)));
@@ -44,7 +44,7 @@ export async function execute(interaction, socket) {
   const action = interaction.options.getSubcommand();
   const raffleType = interaction.options.getString('raffle');
   if (!['export', 'preview', 'close'].includes(action) ||
-      !['biweekly', 'monthly', ...(action === 'export' ? ['both'] : [])].includes(raffleType)) {
+      !['biweekly', 'monthly', ...(action === 'export' || action === 'preview' ? ['both'] : [])].includes(raffleType)) {
     return reply('Choose a supported raffle test and raffle.');
   }
   if (action === 'close' && interaction.options.getBoolean('confirm') !== true) {
@@ -57,15 +57,18 @@ export async function execute(interaction, socket) {
       const kind = interaction.options.getString('kind');
       if (!['bonus', 'sales'].includes(kind)) throw new Error('Choose a bonus or sales reminder preview.');
       const snapshot = await requestActiveRaffles(socket);
-      const raffle = snapshot.raffles.find(item => item.type === raffleType);
-      if (!raffle) throw new Error('The selected raffle is unavailable.');
-      if (kind === 'bonus' && (!raffle.bonusEnabled || !(raffle.bonusPercent > 0))) {
+      const raffles = raffleType === 'both' ? snapshot.raffles : snapshot.raffles.filter(item => item.type === raffleType);
+      if (!raffles.length) throw new Error('The selected raffle is unavailable.');
+      if (kind === 'bonus' && raffles.every(raffle => !raffle.bonusEnabled || !(raffle.bonusPercent > 0))) {
         content = '**TEST PREVIEW** — There is no active ticket bonus for this raffle.';
       } else {
-        const at = kind === 'bonus' ? raffle.bonusExpiresAt : raffle.salesEnd;
-        if (!Number.isFinite(at)) throw new Error('The selected reminder boundary is unavailable.');
-        content = '**TEST PREVIEW — not scheduled or posted**\n\n' + formatRaffles({ ...snapshot, raffles: [raffle],
-          reminders: [{ type: raffleType, kind, at, percent: raffle.bonusPercent, nextPercent: raffle.nextBonusPercent || 0 }] });
+        const reminders = raffles.filter(raffle => kind !== 'bonus' || raffle.bonusEnabled).map(raffle => ({
+          type: raffle.type, kind, at: kind === 'bonus' ? raffle.bonusExpiresAt : raffle.salesEnd,
+          percent: raffle.bonusPercent, nextPercent: raffle.nextBonusPercent || 0
+        }));
+        if (reminders.some(item => !Number.isFinite(item.at))) throw new Error('The selected reminder boundary is unavailable.');
+        content = '**TEST PREVIEW — not scheduled or posted**\n\n' + formatRaffles({ ...snapshot, raffles,
+          reminders });
       }
     } else {
       const displayName = String(interaction.member?.displayName || '').trim();
