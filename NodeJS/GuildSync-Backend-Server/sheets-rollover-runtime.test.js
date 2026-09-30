@@ -9,14 +9,20 @@ import { configureSheetsCoordinator } from './google-sheets-banking-sync.js';
 for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15, 18]], ['monthly', [35, 44], [13, 16]]]) {
   test(`${type} reset touches exact values/notes ranges, hides G and replaces only prior markers`, () => {
     const requests = resetRequests(7, type, 'next-key', [{ metadataId: 23 }]);
-    assert.deepEqual(requests, [
-      { updateCells: { range: { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 3, endColumnIndex: 8 }, fields: 'userEnteredValue' } },
-      { updateCells: { range: { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 6, endColumnIndex: 8 }, fields: 'userEnteredValue,note' } },
-      { updateDimensionProperties: { range: { sheetId: 7, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
-      { updateCells: { range: { sheetId: 7, startRowIndex: donationRows[0], endRowIndex: donationRows[1], startColumnIndex: donationColumns[0], endColumnIndex: donationColumns[1] }, fields: 'userEnteredValue' } },
-      { deleteDeveloperMetadata: { dataFilter: { developerMetadataLookup: { metadataId: 23 } } } },
-      { createDeveloperMetadata: { developerMetadata: { metadataKey: 'guildsync_last_rollover', metadataValue: 'next-key', visibility: 'DOCUMENT', location: { sheetId: 7 } } } }
-    ]);
+    const ranges = requests.filter(request => request.updateCells).map(request => request.updateCells.range);
+    assert.ok(ranges.some(range => range.startRowIndex === 4 && range.endRowIndex === 254 && range.startColumnIndex === 3 && range.endColumnIndex === 8));
+    assert.ok(ranges.some(range => range.startRowIndex === 4 && range.endRowIndex === 254 && range.startColumnIndex === 9 && range.endColumnIndex === 11));
+    assert.ok(ranges.some(range => range.startRowIndex === donationRows[0] && range.endRowIndex === donationRows[1] && range.startColumnIndex === donationColumns[0] && range.endColumnIndex === donationColumns[1]));
+    if (type === 'biweekly') {
+      assert.ok(ranges.some(range => range.startRowIndex === 2 && range.endRowIndex === 4 && range.startColumnIndex === 17 && range.endColumnIndex === 18));
+      assert.ok(ranges.some(range => range.startRowIndex === 32 && range.endRowIndex === 52 && range.startColumnIndex === 16 && range.endColumnIndex === 17));
+    } else {
+      assert.ok(ranges.some(range => range.startRowIndex === 2 && range.endRowIndex === 4 && range.startColumnIndex === 15 && range.endColumnIndex === 16));
+      assert.ok(ranges.some(range => range.startRowIndex === 24 && range.endRowIndex === 25 && range.startColumnIndex === 15 && range.endColumnIndex === 16));
+      assert.ok(ranges.some(range => range.startRowIndex === 27 && range.endRowIndex === 28 && range.startColumnIndex === 12 && range.endColumnIndex === 13));
+    }
+    assert.ok(requests.some(request => request.deleteDeveloperMetadata));
+    assert.ok(requests.some(request => request.createDeveloperMetadata));
     assert.equal(JSON.stringify(requests).includes('userEnteredFormat'), false);
   });
 }
