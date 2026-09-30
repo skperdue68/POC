@@ -50,7 +50,7 @@ function fixture(t) {
   registerRaffleTestSocket(socket, {}, {
     authorize: async () => true,
     getActiveRaffleSummary: async () => snapshot, getBankingDataJSON: async () => entries,
-    sheets: { testClose: async type => { calls.push(['close', type]); return { name: '260926 raffle', archiveId: 'copy' }; } },
+    sheets: { testReset: async type => { calls.push(['reset', type]); }, testClose: async type => { calls.push(['close', type]); return { name: '260926 raffle', archiveId: 'copy' }; } },
     exportEntries: async (rows, options) => { calls.push(['export', rows, options]); return { synced: rows.length }; }, log: async () => {}
   });
   return { socket, calls, request: payload => new Promise(resolve => handler(payload, resolve)) };
@@ -119,4 +119,17 @@ test('test reset requires explicit confirmation and a single raffle', async t =>
   assert.equal(result.ok, true);
   assert.deepEqual(f.calls, [['close', 'monthly']]);
   assert.match(result.message, /260926 raffle/);
+});
+
+test('reset endpoint clears only the selected raffle without invoking close', async t => {
+  const f = fixture(t);
+  const payload = { action: 'reset', raffleType: 'biweekly', confirm: true, requestedBy: 'Officer' };
+  for (const override of [{ confirm: false }, { raffleType: 'both' }]) {
+    assert.equal((await f.request({ ...payload, ...override })).ok, false);
+  }
+  assert.deepEqual(f.calls, []);
+  const result = await f.request(payload);
+  assert.equal(result.ok, true);
+  assert.match(result.message, /No archive was created/);
+  assert.deepEqual(f.calls, [['reset', 'biweekly']]);
 });

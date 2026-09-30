@@ -100,7 +100,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true } = {
 
   // One local queue plus a MariaDB advisory lock coordinates all backend instances.
   let tail = Promise.resolve();
-  const run = operation => {
+  const run = (operation, { processRollover = true } = {}) => {
     const job = tail.then(async () => {
       const conn = await db.getConnection();
       let locked = false;
@@ -108,9 +108,10 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true } = {
         const [rows] = await conn.execute('SELECT GET_LOCK(?, 10) AS acquired', ['guildsync_sheet_' + hash]);
         if (Number(rows[0]?.acquired) !== 1) throw new Error('Could not acquire spreadsheet export lock.');
         locked = true; connection = conn; context = null;
-        const [saved] = enabled ? [[]] : await conn.execute('SELECT value FROM guildsync_settings WHERE setting_key = ?', [stateKey]);
-        const state = enabled ? await coordinator.tick() : (saved.length ? JSON.parse(saved[0].value) : {});
-        if (!enabled && state.pending) throw new Error('A raffle reset is pending; re-enable rollover to finish before exporting.');
+        const advance = enabled && processRollover;
+        const [saved] = advance ? [[]] : await conn.execute('SELECT value FROM guildsync_settings WHERE setting_key = ?', [stateKey]);
+        const state = advance ? await coordinator.tick() : (saved.length ? JSON.parse(saved[0].value) : {});
+        if (!advance && state.pending) throw new Error('A raffle reset is pending; finish rollover before continuing.');
         return operation ? await operation(state) : state;
       } finally {
         try {
@@ -137,9 +138,24 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true } = {
     await io.reset({ ...job, archiveId });
     return { archiveId, name: job.name };
   });
-  if (!enabled || !schedule) return { run, testClose, stop: () => {} };
+  const testReset = async type => {
+    if (!/^true$/i.test(process.env.GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED || '')) throw new Error('Raffle testing is disabled.');
+    if (!['biweekly', 'monthly'].includes(type)) throw new Error('Select biweekly or monthly.');
+    return run(async () => {
+      const { token, url } = await googleContext();
+      const book = await sheetsRequest(token, url + '?fields=sheets.properties');
+      const tab = book.sheets?.find(item => item.properties.title === tabFor(type));
+      if (!tab) throw new Error('Missing rollover tab: ' + tabFor(type));
+      // Reuse closure fields without recording a completed rollover or touching its markers.
+      const requests = resetRequests(tab.properties.sheetId, type, '').filter(request => request.updateCells || request.updateDimensionProperties);
+      await exportLog('TEST reset: clearing ' + JSON.stringify(tabFor(type)) + ' without an archive; raffle dates remain unchanged.');
+      await sheetsRequest(token, url + ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) });
+      return { tab: tabFor(type) };
+    }, { processRollover: false });
+  };
+  if (!enabled || !schedule) return { run, testClose, testReset, stop: () => {} };
   const tick = () => run().catch(error => exportLog('Rollover failed; export/reset paused: ' + error.message).catch(console.error));
   const timer = setInterval(tick, 60000); timer.unref();
   tick();
-  return { run, testClose, stop: () => clearInterval(timer) };
+  return { run, testClose, testReset, stop: () => clearInterval(timer) };
 }

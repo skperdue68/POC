@@ -27,7 +27,7 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
   });
 }
 
-async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false } = {}) {
+async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, targetSheet = 7 } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'guildsync-rollover-test-'));
   const env = {
     GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED: 'true',
@@ -40,7 +40,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
   const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
   const originalFetch = globalThis.fetch;
-  const calls = [], mutations = [], markers = [];
+  const calls = [], mutations = [], markers = [], batches = [];
   let state = { version: 1, windows: [{ type: 'biweekly', salesEnd: 1000, drawTime: 2000 }, { type: 'monthly', salesEnd: 3000, drawTime: 4000 }], lastClosedSalesEnd: {}, pending: null };
   let copy, released = 0, failClear = uncertainClear;
   const connection = {
@@ -69,7 +69,8 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
       assert.equal(url, 'https://sheets.googleapis.com/v4/spreadsheets/original-source:batchUpdate');
       mutations.push('clear');
       const requests = JSON.parse(init.body).requests;
-      assert.ok(requests.every(request => (request.updateCells?.range.sheetId ?? request.updateDimensionProperties?.range.sheetId ?? request.createDeveloperMetadata?.developerMetadata.location.sheetId) === 7));
+      batches.push(requests);
+      assert.ok(requests.every(request => (request.updateCells?.range.sheetId ?? request.updateDimensionProperties?.range.sheetId ?? request.createDeveloperMetadata?.developerMetadata.location.sheetId) === targetSheet));
       markers.push(...requests.filter(request => request.createDeveloperMetadata).map(request => request.createDeveloperMetadata.developerMetadata));
       if (failClear) { failClear = false; throw new Error('response lost after clear'); }
       body = {};
@@ -86,8 +87,37 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
     for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(dir, { recursive: true, force: true });
   });
-  return { start, calls, mutations, state: () => state, released: () => released };
+  return { start, calls, mutations, batches, state: () => state, released: () => released };
 }
+
+for (const [type, sheetId] of [['biweekly', 7], ['monthly', 8]]) {
+  test(`test reset clears ${type} closure fields without archiving or advancing overdue rollover`, async t => {
+    const f = await fixture(t, { targetSheet: sheetId });
+    const before = structuredClone(f.state());
+    const runtime = f.start();
+    assert.equal(typeof runtime.testReset, 'function');
+    await runtime.testReset(type);
+    assert.deepEqual(f.mutations, ['clear']);
+    assert.ok(f.calls.every(url => !url.includes('/drive/v3/')));
+    assert.deepEqual(f.state(), before);
+    assert.deepEqual(f.batches[0], resetRequests(sheetId, type, 'unused').filter(request => request.updateCells || request.updateDimensionProperties));
+    assert.equal(f.released(), 1);
+  });
+}
+
+test('test reset refuses disabled testing, invalid raffle and pending rollover without Google writes', async t => {
+  const f = await fixture(t);
+  const runtime = f.start();
+  assert.equal(typeof runtime.testReset, 'function');
+  await assert.rejects(runtime.testReset('both'), /Select biweekly or monthly/);
+  process.env.GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED = 'false';
+  await assert.rejects(runtime.testReset('biweekly'), /disabled/);
+  process.env.GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED = 'true';
+  f.state().pending = { key: 'incomplete-archive' };
+  await assert.rejects(runtime.testReset('biweekly'), /pending/i);
+  assert.deepEqual(f.mutations, []);
+  assert.deepEqual(f.calls, []);
+});
 
 test('explicit test close archives and resets with automatic rollover off without advancing schedule', async t => {
   const f = await fixture(t);
