@@ -1,80 +1,147 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
-import { syncBankingEntriesToGoogleSheets, sheetsRequest } from './google-sheets-banking-sync.js';
+import { syncBankingEntriesToGoogleSheets, sheetsRequest, configureSheetsCoordinator } from './google-sheets-banking-sync.js';
 
-test('failed Sheets requests log the operation, range and Google explanation without credentials', async () => {
+function fixture(t, { rows = [], state = {} } = {}) {
+  const env = { GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID: 'fixture',
+    GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN: 'fake-refresh', GUILDSYNC_GOOGLE_OAUTH_CLIENT_ID: 'fake-client',
+    GUILDSYNC_GOOGLE_OAUTH_CLIENT_SECRET: 'fake-secret', GUILDSYNC_GOOGLE_SHEETS_BIWEEKLY_TAB: 'bi-weekly raffle', GUILDSYNC_GOOGLE_SHEETS_5050_TAB: '50/50' };
+  const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+  Object.assign(process.env, env);
   const originalFetch = globalThis.fetch;
-  const logs = [];
-  globalThis.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: { status: 'INVALID_ARGUMENT', message: 'Range exceeds grid limits. Max columns: 24' } }) });
-  try {
-    await assert.rejects(sheetsRequest('secret-token', 'https://sheets.googleapis.com/v4/spreadsheets/fixture/values/%2750%2F50%27!Y34%3AY', {}, message => logs.push(message)), /Range exceeds grid limits/);
-    assert.match(logs[0], /GET.*Y34:Y.*400.*INVALID_ARGUMENT/);
-    assert.ok(!logs[0].includes('secret-token'));
-  } finally { globalThis.fetch = originalFetch; }
+  const calls = [], writes = [], logs = [];
+  configureSheetsCoordinator(async operation => operation(state));
+  globalThis.fetch = async (url, init = {}) => {
+    const decoded = decodeURIComponent(String(url)); calls.push(decoded);
+    let body;
+    if (decoded.includes('oauth2.googleapis.com')) body = { access_token: 'test-token' };
+    else if (decoded.includes('?fields=sheets.properties')) body = { sheets: [
+      { properties: { title: 'bi-weekly raffle', sheetId: 7, gridProperties: { rowCount: 300, columnCount: 20 } } },
+      { properties: { title: '50/50', sheetId: 8, gridProperties: { rowCount: 300, columnCount: 20 } } }
+    ] };
+    else if (decoded.includes('/values/')) body = { values: typeof rows === 'function' ? rows(decoded) : rows };
+    else if (decoded.endsWith(':batchUpdate')) {
+      assert.equal(init.method, 'POST'); assert.match(logs.at(-1), /^Writing batch: entries=/);
+      writes.push(JSON.parse(init.body).requests); body = {};
+    } else throw new Error('Unexpected Google request: ' + decoded);
+    return { ok: true, json: async () => structuredClone(body) };
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    configureSheetsCoordinator(async operation => operation({}));
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  });
+  return { calls, writes, logs, run: entries => syncBankingEntriesToGoogleSheets(entries, { log: async value => logs.push(value), uploadedBy: 'EvaineFaye' }) };
+}
+const ticket = (extra = {}) => ({ type: 'biweekly', eventId: '123', displayName: 'Player', amount: 200001, ticketAmount: 200,
+  bonusEnabled: true, bonusTickets: 20, bonusPercent: 10, time: 1500, ...extra });
+const cellValues = request => request.updateCells.rows[0].values.map(cell => Object.values(cell.userEnteredValue)[0]);
+
+test('failed Sheets requests report operation, range and Google detail without credentials', async t => {
+  const originalFetch = globalThis.fetch, logs = [];
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: { status: 'INVALID_ARGUMENT', message: 'Range exceeds grid limits.' } }) });
+  await assert.rejects(sheetsRequest('secret-token', 'https://sheets.googleapis.com/v4/spreadsheets/fixture/values/%2750%2F50%27!D5%3AF254', {}, value => logs.push(value)), /Range exceeds grid limits/);
+  assert.match(logs[0], /GET.*D5:F254.*400.*INVALID_ARGUMENT/);
+  assert.equal(logs[0].includes('secret-token'), false);
 });
 
-test('writes only D/E and X at the first gap, logs before writing, preserves metadata destinations', async () => {
-  const originalFetch = globalThis.fetch;
-  const keys = ['GUILDSYNC_GOOGLE_SHEETS_ENABLED', 'GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID', 'GUILDSYNC_GOOGLE_SERVICE_ACCOUNT_JSON'];
-  const previous = keys.map(key => process.env[key]);
-  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  process.env[keys[0]] = 'true'; process.env[keys[1]] = 'fixture';
-  process.env[keys[2]] = JSON.stringify({ client_email: 'fixture@example.test', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) });
-  const logs = [], writes = [], metadata = [];
-  globalThis.fetch = async (url, options = {}) => {
-    const decoded = decodeURIComponent(url);
-    let response = {};
-    if (url.includes('oauth2')) response = { access_token: 'fixture-token' };
-    else if (url.endsWith(':batchUpdate')) {
-      assert.ok(logs.at(-1).startsWith('Writing '));
-      const body = JSON.parse(options.body);
-      assert.equal(body.valueInputOption, 'RAW');
-      writes.push(body.data);
-      response = { responses: body.data.map(item => ({ updatedRange: item.range })) };
-    } else if (options.method === 'PUT') {
-      assert.equal(JSON.parse(options.body).values[0][0], 'EvaineFaye (GuildSync)');
-      metadata.push(decoded);
-    }
-    else if (/![DKM]/.test(decoded)) response = { range: 'fixture', values: [['Alice', 'Bob', '', 'Later']] };
-    else if (decoded.includes('!W') || decoded.includes('!X')) response = { values: [['duplicate']] };
-    else throw new Error(decoded);
-    return { ok: true, json: async () => response };
-  };
-  try {
-    await syncBankingEntriesToGoogleSheets([
-      { type: 'biweekly', eventId: '123', displayName: 'Player', amount: 200001 },
-      { type: 'monthly', eventId: '124', displayName: 'Other', amount: 300003 },
-      { type: 'monthly', eventId: '125', displayName: 'Donor', amount: 500003, ticketAmount: 0 },
-      { type: 'biweekly', eventId: '126', displayName: 'ManualDonor', amount: 800000, ticketAmount: 0, dataSource: 'ManualBiweeklyTicket', note: 'Guild donation' },
-      { type: 'biweekly', eventId: '127', displayName: 'Winner', amount: 0, ticketAmount: 20, dataSource: 'ManualBiweeklyTicket', note: 'FFTG' },
-      { type: 'other', eventId: '128', displayName: 'Bank', amount: 999, ticketAmount: 0 },
-      { type: 'monthly', eventId: 'duplicate', displayName: 'Skip', amount: 10, ticketAmount: 0 }
-    ], { log: message => logs.push(message), uploadedBy: 'EvaineFaye' });
-    assert.deepEqual(writes[0], [
-      { range: "'bi-weekly raffle'!D7:E7", values: [['Player', 200000]] },
-      { range: "'bi-weekly raffle'!W7", values: [['123']] }
-    ]);
-    assert.equal(writes[1][0].range, "'50/50'!D7:E7");
-    assert.equal(writes[1][1].range, "'50/50'!W7");
-    assert.equal(writes.length, 5);
-    assert.deepEqual(writes[2], [
-      { range: "'50/50'!K36:L36", values: [['Donor', 500000]] },
-      { range: "'50/50'!X36", values: [['125']] }
-    ]);
-    assert.deepEqual(writes[3], [
-      { range: "'bi-weekly raffle'!M64:N64", values: [['ManualDonor (Guild donation)', 800000]] },
-      { range: "'bi-weekly raffle'!X64", values: [['126']] }
-    ]);
-    assert.equal(writes[4][0].values[0][0], 'Winner (FFTG)');
-    assert.equal(metadata.length, 2);
-    assert.ok(metadata[0].includes("'bi-weekly raffle'!N3:N4"));
-    assert.ok(metadata[1].includes("'50/50'!L3:L4"));
-    assert.ok(logs.some(line => line.includes('selected=D7')));
-    assert.ok(logs.some(line => line.includes('confirmedRanges')));
-  } finally {
-    globalThis.fetch = originalFetch;
-    keys.forEach((key, i) => { if (previous[i] === undefined) delete process.env[key]; else process.env[key] = previous[i]; });
+test('tickets write D/E/F in first fully empty row with G bonus note and correct atomic metadata', async t => {
+  const f = fixture(t, { rows: [['old', 'First', 100], ['', 'Manual existing', 200], []] });
+  assert.deepEqual(await f.run([ticket(), ticket({ type: 'monthly', eventId: '124', amount: 300003 })]), { enabled: true, synced: 2 });
+  assert.ok(f.calls.some(url => url.includes("'bi-weekly raffle'!D5:F254")));
+  assert.ok(f.calls.some(url => url.includes("'50/50'!D5:F254")));
+  for (const [index, id, gold] of [[0, 7, 200000], [1, 8, 300000]]) {
+    const requests = f.writes.flat().slice(index * 4, index * 4 + 4);
+    assert.deepEqual(requests[0].updateCells.start, { sheetId: id, rowIndex: 6, columnIndex: 3 });
+    assert.deepEqual(cellValues(requests[0]), [index ? '124' : '123', 'Player', gold]);
+    assert.equal(requests[0].updateCells.fields, 'userEnteredValue');
+    assert.deepEqual(requests[1].updateCells, {
+      range: { sheetId: id, startRowIndex: 6, endRowIndex: 7, startColumnIndex: 6, endColumnIndex: 7 },
+      rows: [{ values: [{ userEnteredValue: { numberValue: 20 }, note: 'Bonus: 10%' }] }], fields: 'userEnteredValue,note'
+    });
+    assert.deepEqual(requests[2].updateDimensionProperties, { range: { sheetId: id, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 }, properties: { hiddenByUser: false }, fields: 'hiddenByUser' });
+    const metadata = requests[3].updateCells;
+    assert.deepEqual(metadata.start, { sheetId: id, rowIndex: 2, columnIndex: index ? 11 : 13 });
+    assert.equal(metadata.rows[0].values[0].userEnteredValue.stringValue, 'EvaineFaye (GuildSync)');
+    assert.match(metadata.rows[1].values[0].userEnteredValue.stringValue, /^\d+\/\d+\/\d{4} \d+:\d{2}(am|pm) ET$/);
+    assert.equal(metadata.fields, 'userEnteredValue');
+    assert.equal(requests.length, 4);
   }
+});
+
+test('disabled bonus clears stale G value/note without hiding other rows; manual tickets have zero bonus', async t => {
+  const f = fixture(t);
+  await f.run([ticket({ bonusEnabled: false }), ticket({ eventId: 'manual', dataSource: 'ManualBiweeklyTicket', note: 'FFTG' })]);
+  const requests = f.writes.flat();
+  const disabled = requests.slice(0, 3);
+  assert.deepEqual(disabled[1].updateCells.rows, [{ values: [{}] }]);
+  assert.equal(disabled[1].updateCells.fields, 'userEnteredValue,note');
+  assert.equal(disabled.some(request => request.updateDimensionProperties), false);
+  assert.deepEqual(cellValues(requests[3]), ['manual', 'Player (FFTG)', 200000]);
+  assert.equal(requests[3].updateCells.start.rowIndex, 5);
+  assert.deepEqual(requests[4].updateCells.rows, [{ values: [{ userEnteredValue: { numberValue: 0 }, note: 'Bonus: 0%' }] }]);
+});
+
+test('zero-ticket donations use bounded O/P/Q and M/N/O ranges without bonus cells or notes', async t => {
+  const f = fixture(t, { rows: [['existing', 'Member', 50], []] });
+  await f.run([ticket({ ticketAmount: 0, note: 'Guild donation', dataSource: 'ManualBiweeklyTicket' }), ticket({ type: 'monthly', eventId: 'monthly', ticketAmount: 0, amount: 500003 })]);
+  assert.ok(f.calls.some(url => url.includes("'bi-weekly raffle'!O63:Q70")));
+  assert.ok(f.calls.some(url => url.includes("'50/50'!M36:O44")));
+  const requests = f.writes.flat();
+  assert.deepEqual(requests[0].updateCells.start, { sheetId: 7, rowIndex: 63, columnIndex: 14 });
+  assert.deepEqual(requests[2].updateCells.start, { sheetId: 8, rowIndex: 36, columnIndex: 12 });
+  assert.deepEqual(cellValues(requests[0]), ['123', 'Player (Guild donation)', 200000]);
+  assert.deepEqual(cellValues(requests[2]), ['monthly', 'Player', 500000]);
+  assert.equal(requests.length, 4);
+  assert.ok(f.writes.flat().every(request => request.updateCells.fields === 'userEnteredValue'));
+});
+
+test('existing transaction IDs skip all writes including bonus and metadata', async t => {
+  const f = fixture(t, { rows: [['123', 'Already present', 200000]] });
+  assert.equal((await f.run([ticket()])).synced, 0);
+  assert.equal(f.writes.length, 0);
+  assert.ok(f.logs.some(line => line.includes('Duplicate skipped: 123')));
+});
+
+for (const [type, ticketAmount, count, range] of [['biweekly', 200, 250, 'D5:F254'], ['biweekly', 0, 8, 'O63:Q70'], ['monthly', 0, 9, 'M36:O44']]) {
+  test(`full ${type} ${range} refuses overflow without writes`, async t => {
+    const f = fixture(t, { rows: Array.from({ length: count }, (_, index) => [String(index + 500), 'Occupied', 100]) });
+    await assert.rejects(f.run([ticket({ type, ticketAmount })]), /No empty row/);
+    assert.equal(f.writes.length, 0);
+    assert.ok(f.calls.some(url => url.includes(range)));
+  });
+}
+
+test('closed-period and missing-time entries never refill reset tabs; new entries still export', async t => {
+  const f = fixture(t, { state: { lastClosedSalesEnd: { biweekly: 1000 } } });
+  const result = await f.run([ticket({ eventId: 'past', time: 999 }), ticket({ eventId: 'boundary', time: 1000 }), ticket({ eventId: 'unknown', time: undefined }), ticket({ eventId: 'new', time: 1001 })]);
+  assert.equal(result.synced, 1);
+  assert.equal(f.writes.length, 1);
+  assert.equal(cellValues(f.writes[0][0])[0], 'new');
+  assert.equal(f.logs.filter(line => line.startsWith('Skipped closed-period')).length, 3);
+});
+
+test('non-raffle entries and disabled exports make no Google calls', async t => {
+  const f = fixture(t);
+  assert.deepEqual(await f.run([ticket({ type: 'other' })]), { enabled: true, synced: 0 });
+  process.env.GUILDSYNC_GOOGLE_SHEETS_ENABLED = 'false';
+  assert.deepEqual(await f.run([ticket()]), { enabled: false, synced: 0 });
+  assert.deepEqual(f.calls, []);
+});
+
+test('75-entry export reads each section once, reserves unique rows and batches 25 entries while skipping input duplicates', async t => {
+  const f = fixture(t);
+  const entries = Array.from({ length: 75 }, (_, index) => ticket({ eventId: String(1000 + index), displayName: 'Player ' + index }));
+  entries.splice(20, 0, { ...entries[0] });
+  entries.push({ ...entries[0] });
+  assert.deepEqual(await f.run(entries), { enabled: true, synced: 75 });
+  assert.equal(f.calls.filter(url => url.includes('/values/')).length, 1);
+  assert.equal(f.writes.length, 3);
+  assert.ok(f.writes.every(requests => requests.length === 25 * 4));
+  const ticketWrites = f.writes.flat().filter(request => request.updateCells?.start?.columnIndex === 3);
+  assert.deepEqual(ticketWrites.map(request => request.updateCells.start.rowIndex), Array.from({ length: 75 }, (_, index) => index + 4));
+  assert.deepEqual(ticketWrites.map(request => cellValues(request)[0]), Array.from({ length: 75 }, (_, index) => String(index + 1000)));
+  assert.equal(f.logs.filter(line => line.includes('Duplicate skipped: 1000')).length, 2);
 });
 

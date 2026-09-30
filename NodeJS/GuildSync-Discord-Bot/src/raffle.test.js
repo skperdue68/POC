@@ -79,3 +79,89 @@ test('no announcement is sent when pending state cannot be persisted', async () 
   await assert.rejects(announcer.tick(), /read-only state/);
   assert.equal(sent, 0);
 });
+
+function reminderFixture(extra = {}) {
+  let time = 1000, disk = null;
+  const sent = [];
+  const raffle = { id: 'b:1', type: 'biweekly', prizeGold: 200000, salesOpen: true, salesEnd: 20000,
+    bonusEnabled: true, bonusPercent: 25, bonusExpiresAt: 10000, nextBonusPercent: 10, nextBonusExpiresAt: 16000 };
+  const options = { channelId: 'c', intervalHours: 48, thresholds: { biweekly: 200000, monthly: 500000 },
+    now: () => time, loadState: async () => structuredClone(disk), saveState: async state => { disk = structuredClone(state); },
+    fetchRaffles: async () => ({ asOf: time, raffles: [raffle] }), send: async value => { sent.push(structuredClone(value)); }, ...extra };
+  return { options, raffle, sent, at: value => { time = value; }, disk: () => disk };
+}
+
+test('reminders fire at lead boundaries, persist dedup and preserve regular cadence', async () => {
+  const { createRaffleAnnouncer, formatRaffles } = await import('./raffle.js');
+  const f = reminderFixture();
+  let announcer = createRaffleAnnouncer(f.options);
+  await announcer.tick();
+  f.at(6399); await announcer.tick(); assert.equal(f.sent.length, 1);
+  f.at(6400); await announcer.tick(); assert.equal(f.sent.length, 2);
+  assert.match(formatRaffles(f.sent[1]), /25%.*10%.*<t:10000:F>/);
+  assert.equal(f.disk().raffles.biweekly.lastPostedAt, 1000);
+  announcer = createRaffleAnnouncer(f.options);
+  await announcer.tick(); assert.equal(f.sent.length, 2);
+  f.at(12800); await announcer.tick();
+  assert.match(formatRaffles(f.sent.at(-1)), /sales close.*<t:20000:F>/i);
+});
+
+test('multiple leads and raffles have independent warning identities; expired events never warn', async () => {
+  const { createRaffleAnnouncer } = await import('./raffle.js');
+  const f = reminderFixture({ bonusReminderHours: [2, 1], salesCloseReminderHours: [2] });
+  const announcer = createRaffleAnnouncer(f.options);
+  await announcer.tick();
+  f.at(2800); await announcer.tick(); assert.equal(f.sent.length, 2);
+  f.at(6400); await announcer.tick(); assert.equal(f.sent.length, 3);
+  f.raffle.bonusExpiresAt = 11000;
+  await announcer.tick(); assert.equal(f.sent.length, 4);
+  f.at(20000); await announcer.tick(); assert.equal(f.sent.length, 4);
+});
+
+test('pending warning retries expire at event time after restart', async () => {
+  const { createRaffleAnnouncer } = await import('./raffle.js');
+  const f = reminderFixture();
+  await createRaffleAnnouncer(f.options).tick();
+  f.at(6400);
+  await assert.rejects(createRaffleAnnouncer({ ...f.options, send: async () => { throw new Error('offline'); } }).tick(), /offline/);
+  f.at(20000);
+  await createRaffleAnnouncer(f.options).tick();
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.disk().pending, undefined);
+});
+
+test('reminder hours accept comma-separated positive finite values and reject malformed configuration', async () => {
+  const { parseReminderHours } = await import('./raffle.js');
+  assert.equal(typeof parseReminderHours, 'function');
+  assert.deepEqual(parseReminderHours(undefined, [1]), [1]);
+  assert.deepEqual(parseReminderHours('2, 1, 0.5, 2', [1]), [2, 1, 0.5]);
+  for (const input of ['', '1,', '0', '-1', 'NaN', 'Infinity', 'hello']) assert.throws(() => parseReminderHours(input, [1]), /reminder/i);
+});
+
+test('raffle formatting starts with full freshness line and shows bonus expiration warnings', async () => {
+  const { formatRaffles } = await import('./raffle.js');
+  const content = formatRaffles({ asOf: 100, raffles: [], reminders: [{ type: 'monthly', kind: 'bonus', percent: 10, nextPercent: 0, at: 500 }] });
+  assert.ok(content.startsWith('As of <t:100:f>. Based on the latest banking data received by GuildSync.'));
+  assert.match(content, /10%.*expires.*<t:500:F>/);
+});
+
+test('each raffle warns independently and only the current bonus boundary is announced', async () => {
+  const { createRaffleAnnouncer, formatRaffles } = await import('./raffle.js');
+  const f = reminderFixture({ bonusReminderHours: [2] });
+  const monthly = { ...f.raffle, id: 'm:1', type: 'monthly', bonusExpiresAt: 12000, nextBonusPercent: 0 };
+  f.options.fetchRaffles = async () => ({ asOf: 1000, raffles: [f.raffle, monthly] });
+  const announcer = createRaffleAnnouncer(f.options);
+  await announcer.tick();
+  f.at(2800); await announcer.tick();
+  f.at(4800); await announcer.tick();
+  assert.equal(f.sent.length, 3);
+  assert.equal(f.sent[2].reminders[0].type, 'monthly');
+  f.at(8800); await announcer.tick();
+  assert.equal(f.sent.length, 3); // The following tier may itself lead to another tier.
+  f.raffle.bonusPercent = 10; f.raffle.bonusExpiresAt = 16000; f.raffle.nextBonusPercent = 5;
+  f.raffle.nextBonusExpiresAt = 19000;
+  f.at(10000); await createRaffleAnnouncer(f.options).tick();
+  assert.equal(f.sent.length, 4);
+  assert.match(formatRaffles(f.sent.at(-1)), /10% ticket bonus changes to 5% at <t:16000:F>/);
+  assert.doesNotMatch(formatRaffles(f.sent.at(-1)), /10% ticket bonus expires/);
+});

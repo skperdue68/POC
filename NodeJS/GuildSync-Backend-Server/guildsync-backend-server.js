@@ -4,7 +4,9 @@ import cors from 'cors';
 import http from 'node:http';
 import fs from 'node:fs';
 import { registerRaffleSocket } from './raffle-socket.js';
-import { getActiveRaffleSummary, getRaffleUserTickets } from './guildsync-database-actions.js';
+import { getActiveRaffleSummary, getRaffleUserTickets, getSheetsRaffleWindows } from './guildsync-database-actions.js';
+import { startSheetsRollover } from './sheets-rollover-runtime.js';
+import { registerRaffleTestSocket } from './raffle-test-socket.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
@@ -95,10 +97,12 @@ const GUILDSYNC_APPLICATIONS_GUILD_ID = String(process.env.GUILDSYNC_APPLICATION
 const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
 let loginDB;
 let applicationDB;
+let sheetsRuntime;
 
 try {
   loginDB = await openLoginDB();
   applicationDB = await openAppDataDB();
+  sheetsRuntime = startSheetsRollover(applicationDB, getSheetsRaffleWindows);
 
   Log(`MariaDB database ready: ${GUILDSYNC_DB_NAME}`);
 } catch (error) {
@@ -440,6 +444,7 @@ io.use(async (socket, next) => {
 
 io.on('connection', (socket) => {
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
+  registerRaffleTestSocket(socket, applicationDB, { getActiveRaffleSummary, getBankingDataJSON, sheets: sheetsRuntime });
 
   const user = socket.guildSyncUser;
 

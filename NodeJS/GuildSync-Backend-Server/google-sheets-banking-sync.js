@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const backendRoot = path.dirname(fileURLToPath(import.meta.url));
-async function exportLog(message) {
+export async function exportLog(message) {
   const line = `${new Date().toISOString()} [GUILDSYNC-GOOGLE-SHEETS] ${message}`;
   console.log(line);
   const filename = path.resolve(backendRoot, process.env.GUILDSYNC_GOOGLE_SHEETS_LOG_FILE || 'logs/google-sheets.log');
@@ -14,7 +14,7 @@ async function exportLog(message) {
 }
 const sheetRange = (tab, cells) => `'${tab.replace(/'/g, "''")}'!${cells}`;
 
-function config() {
+export function config() {
   return {
     enabled: /^true$/i.test(String(process.env.GUILDSYNC_GOOGLE_SHEETS_ENABLED || '')),
     spreadsheetId: String(process.env.GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID || '').trim(),
@@ -35,20 +35,32 @@ async function credentials(settings) {
 
 function base64url(value) { return Buffer.from(value).toString('base64url'); }
 
-async function accessToken(account) {
+async function accessToken(account, drive = false) {
+  if (process.env.GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN) {
+    const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({
+      grant_type: 'refresh_token', refresh_token: process.env.GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN,
+      client_id: process.env.GUILDSYNC_GOOGLE_OAUTH_CLIENT_ID || '', client_secret: process.env.GUILDSYNC_GOOGLE_OAUTH_CLIENT_SECRET || ''
+    }), signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error(`Google OAuth refresh failed (${response.status}).`);
+    const token = (await response.json()).access_token;
+    if (!token) throw new Error('Google OAuth returned no access token.');
+    return token;
+  }
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const claim = base64url(JSON.stringify({ iss: account.client_email, scope: SHEETS_SCOPE, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
+  const claim = base64url(JSON.stringify({ iss: account.client_email, scope: drive ? `${SHEETS_SCOPE} https://www.googleapis.com/auth/drive` : SHEETS_SCOPE, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
   const signer = crypto.createSign('RSA-SHA256');
   signer.update(`${header}.${claim}`);
   const assertion = `${header}.${claim}.${signer.sign(account.private_key, 'base64url')}`;
-  const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }) });
+  const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }), signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw new Error(`Google token request failed (${response.status}).`);
-  return (await response.json()).access_token;
+  const token = (await response.json()).access_token;
+  if (!token) throw new Error('Google returned no access token.');
+  return token;
 }
 
 export async function sheetsRequest(token, url, init = {}, log = exportLog) {
-  const response = await fetch(url, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers || {}) } });
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000), ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers || {}) } });
   if (!response.ok) {
     let detail = 'Google returned no structured error details.';
     try {
@@ -63,8 +75,18 @@ export async function sheetsRequest(token, url, init = {}, log = exportLog) {
   return response.json();
 }
 
+export async function googleContext(drive = false) {
+  const settings = config();
+  const account = process.env.GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN ? null : await credentials(settings);
+  const token = await accessToken(account, drive);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(settings.spreadsheetId)}`;
+  return { settings, token, url };
+}
+
+let coordinate = async operation => operation({});
+export function configureSheetsCoordinator(run) { coordinate = run; }
+
 function tabFor(type, settings) { return type === 'biweekly' ? settings.biweeklyTab : type === 'monthly' ? settings.fiftyFiftyTab : ''; }
-function startRowFor(type, settings) { return type === 'biweekly' ? settings.biweeklyStartRow : settings.fiftyFiftyStartRow; }
 function sheetGoldAmount(amount) {
   const value = Number(amount) || 0;
   const marker = Math.abs(Math.trunc(value)) % 10;
@@ -76,67 +98,119 @@ function easternTimestamp() {
   return `${value.month}/${value.day}/${value.year} ${value.hour}:${value.minute}${value.dayPeriod.toLowerCase()} ET`;
 }
 
-async function updateSheetMetadata(token, base, tab, type, uploadedBy) {
-  const range = type === 'biweekly' ? 'N3:N4' : 'L3:L4';
-  const name = String(uploadedBy || '').trim();
-  await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, range))}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [[name ? `${name} (GuildSync)` : 'GuildSync'], [easternTimestamp()]] }) });
-}
-
-async function firstEmptyRow(token, base, tab, startRow, log, column = 'D') {
-  const result = await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, `${column}${startRow}:${column}`))}?majorDimension=COLUMNS&valueRenderOption=FORMATTED_VALUE`);
-  const values = result.values?.[0] || [];
-  const offset = values.findIndex(value => String(value ?? '').trim() === '');
-  const row = offset < 0 ? startRow + values.length : startRow + offset;
-  await log(`Scan ${JSON.stringify(tab)}: responseRange=${JSON.stringify(result.range)}, returnedCells=${values.length}, sample=${JSON.stringify(Array.from({ length: 8 }, (_, i) => ({ cell: `${column}${startRow + i}`, value: values[i] ?? '' })))}, selected=${column}${row}`);
-  return row;
-}
-
 export async function syncBankingEntriesToGoogleSheets(entries, { log = exportLog, uploadedBy = '' } = {}) {
   const settings = config();
   entries = (entries || []).filter(entry => tabFor(entry.type, settings));
-  if (!settings.enabled || !entries?.length) return { enabled: settings.enabled, synced: 0 };
-  await log(`Starting spreadsheet update: entries=${entries.length}, spreadsheet=${JSON.stringify(settings.spreadsheetId)}`);
-  if (!settings.spreadsheetId) throw new Error('Google Sheets is enabled but GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID is missing.');
-  const account = await credentials(settings);
-  const token = await accessToken(account);
-  const base = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(settings.spreadsheetId)}/values`;
+  if (!settings.enabled || !entries.length) return { enabled: settings.enabled, synced: 0 };
+  return coordinate(async state => {
+    try {
+      return await writeEntries(entries, uploadedBy, state, log);
+    } catch (error) {
+      await log('Export stopped: ' + error.message);
+      throw error;
+    }
+  });
+}
+
+export function entryLayout(entry) {
+  const donation = entry.ticketAmount != null && Number(entry.ticketAmount) === 0;
+  return donation
+    ? entry.type === 'biweekly'
+      ? { donation, first: 63, last: 70, id: 'O', name: 'P', gold: 'Q', index: 14 }
+      : { donation, first: 36, last: 44, id: 'M', name: 'N', gold: 'O', index: 12 }
+    : { donation, first: 5, last: 254, id: 'D', name: 'E', gold: 'F', index: 3 };
+}
+
+async function writeEntries(entries, uploadedBy, state, log) {
+  const { settings, token, url } = await googleContext();
+  if (!settings.spreadsheetId) throw new Error('Google spreadsheet ID is missing.');
+  await log('Starting spreadsheet update: entries=' + entries.length);
+  const info = await sheetsRequest(token, url + '?fields=sheets.properties');
   let synced = 0;
-  const metadataUpdated = new Set();
+  const sections = new Map();
+  let pending = [];
+  const flush = async () => {
+    if (!pending.length) return;
+    await log('Writing batch: entries=' + pending.length);
+    await sheetsRequest(token, url + ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: pending.flatMap(item => item.requests) }) });
+    for (const item of pending) await log('Added transaction ' + item.eventId + ' to ' + JSON.stringify(item.tab) + ' row ' + item.row);
+    synced += pending.length;
+    pending = [];
+  };
   for (const entry of entries) {
+    if (!entry.eventId) continue;
     const tab = tabFor(entry.type, settings);
-    if (!tab || !entry.eventId) continue;
-    const donation = entry.ticketAmount !== null && entry.ticketAmount !== undefined && Number(entry.ticketAmount) === 0;
-    const startRow = donation ? (entry.type === 'biweekly' ? 62 : 34) : startRowFor(entry.type, settings);
-    const nameColumn = donation ? (entry.type === 'biweekly' ? 'M' : 'K') : 'D';
-    const goldColumn = donation ? (entry.type === 'biweekly' ? 'N' : 'L') : 'E';
-    const idColumn = donation ? 'X' : 'W';
-    await log(`Checking transaction ${JSON.stringify(String(entry.eventId))}: sheet=${JSON.stringify(tab)}, donation=${donation}, duplicateRange=${sheetRange(tab, `${idColumn}${startRow}:${idColumn}`)}, nameScan=${nameColumn}${startRow}:${nameColumn}`);
-    const existing = await sheetsRequest(token, `${base}/${encodeURIComponent(sheetRange(tab, `${idColumn}${startRow}:${idColumn}`))}?majorDimension=COLUMNS`);
-    const ids = existing.values?.[0] || [];
-    if (ids.some(value => String(value) === String(entry.eventId))) continue;
-    const values = [];
-    values[0] = entry.displayName || '';
-    if (/^manual/i.test(String(entry.dataSource || '')) && String(entry.note || '').trim()) {
-      values[0] += ` (${String(entry.note).trim()})`;
+    // The live tab is already prepared for the next period. Never backfill old data into it.
+    const lastClosed = state.lastClosedSalesEnd?.[entry.type];
+    if (lastClosed && (!Number.isFinite(Number(entry.time)) || Number(entry.time) <= lastClosed)) {
+      await log('Skipped closed-period entry ' + JSON.stringify(entry.eventId) + ' on ' + JSON.stringify(tab));
+      continue;
     }
-    values[1] = sheetGoldAmount(entry.amount);
-    // The sheet calculates ticket quantity itself. Keep ticket and bonus fields
-    // on the backend entry payload for future integrations without writing them here.
-    values[20] = String(entry.eventId);
-    const row = await firstEmptyRow(token, base, tab, startRow, log, nameColumn);
-    const data = [
-      { range: sheetRange(tab, `${nameColumn}${row}:${goldColumn}${row}`), values: [[values[0], values[1]]] },
-      { range: sheetRange(tab, `${idColumn}${row}`), values: [[values[20]]] }
+    const sheet = info.sheets?.find(item => item.properties.title === tab)?.properties;
+    if (!sheet) throw new Error('Worksheet not found: ' + tab);
+    const layout = entryLayout(entry);
+    if (sheet.gridProperties.rowCount < layout.last || sheet.gridProperties.columnCount < layout.index + 3) {
+      throw new Error('Worksheet grid is too small for ' + tab + ' ' + layout.id + layout.first + ':' + layout.gold + layout.last);
+    }
+    const range = sheetRange(tab, layout.id + layout.first + ':' + layout.gold + layout.last);
+    if (!sections.has(range)) {
+      await log('Reading ' + range + ' for transaction ' + JSON.stringify(String(entry.eventId)));
+      const existing = await sheetsRequest(token, url + '/values/' + encodeURIComponent(range) + '?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE');
+      sections.set(range, existing.values || []);
+    }
+    const rows = sections.get(range);
+    if (rows.some(row => String(row[0] ?? '') === String(entry.eventId))) {
+      await log('Duplicate skipped: ' + entry.eventId);
+      continue;
+    }
+    // A row is reusable only when both transaction ID and member name are blank.
+    const offset = Array.from({ length: layout.last - layout.first + 1 }, (_, i) => i)
+      .find(i => !String(rows[i]?.[0] ?? '').trim() && !String(rows[i]?.[1] ?? '').trim());
+    if (offset === undefined) throw new Error('No empty row in ' + range + '; entry ' + entry.eventId + ' was not exported.');
+    const row = layout.first + offset;
+    let name = String(entry.displayName || '');
+    if (/^manual/i.test(String(entry.dataSource || '')) && String(entry.note || '').trim()) name += ' (' + String(entry.note).trim() + ')';
+    const manual = /^manual/i.test(String(entry.dataSource || ''));
+    const bonusEnabled = entry.bonusEnabled === true;
+    const bonusTickets = manual ? 0 : Math.max(0, Math.floor(Number(entry.bonusTickets) || 0));
+    const bonusPercent = manual ? 0 : Number(entry.bonusPercent) || 0;
+    const values = [
+      { userEnteredValue: { stringValue: String(entry.eventId) } },
+      { userEnteredValue: { stringValue: name } },
+      { userEnteredValue: { numberValue: sheetGoldAmount(entry.amount) } }
     ];
-    await log(`Writing ${JSON.stringify(tab)} row ${row}: ${JSON.stringify(data)}`);
-    const written = await sheetsRequest(token, `${base}:batchUpdate`, { method: 'POST', body: JSON.stringify({ valueInputOption: 'RAW', data }) });
-    await log(`Added ${JSON.stringify(tab)} row ${row}; confirmedRanges=${JSON.stringify(written.responses?.map(item => item.updatedRange) || [])}`);
-    if (!metadataUpdated.has(tab)) {
-      await updateSheetMetadata(token, base, tab, entry.type, uploadedBy);
-      metadataUpdated.add(tab);
+    const requests = [{
+      updateCells: { start: { sheetId: sheet.sheetId, rowIndex: row - 1, columnIndex: layout.index },
+        rows: [{ values }], fields: 'userEnteredValue' }
+    }];
+    if (!layout.donation) {
+      requests.push({ updateCells: {
+        range: { sheetId: sheet.sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 6, endColumnIndex: 7 },
+        rows: [{ values: [bonusEnabled
+          ? { userEnteredValue: { numberValue: bonusTickets }, note: 'Bonus: ' + bonusPercent + '%' }
+          : {}] }], fields: 'userEnteredValue,note'
+      } });
+      if (bonusEnabled) requests.push({ updateDimensionProperties: {
+        range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 },
+        properties: { hiddenByUser: false }, fields: 'hiddenByUser'
+      } });
     }
-    synced += 1;
+    const attribution = String(uploadedBy || '').trim();
+    requests.push({ updateCells: {
+      start: { sheetId: sheet.sheetId, rowIndex: 2, columnIndex: entry.type === 'biweekly' ? 13 : 11 },
+      rows: [{ values: [{ userEnteredValue: { stringValue: attribution ? attribution + ' (GuildSync)' : 'GuildSync' } }] },
+        { values: [{ userEnteredValue: { stringValue: easternTimestamp() } }] }],
+      fields: 'userEnteredValue'
+    } });
+    await log('Writing ' + JSON.stringify({ tab, row, range: layout.id + row + ':' + layout.gold + row,
+      eventId: String(entry.eventId), name, gold: sheetGoldAmount(entry.amount), bonusEnabled, bonusPercent, bonusTickets }));
+    // Reserve the row locally; bulk replay reads each section only once and
+    // batches writes to stay below per-user Sheets API quotas.
+    rows[offset] = [String(entry.eventId), name, sheetGoldAmount(entry.amount)];
+    pending.push({ requests, eventId: entry.eventId, tab, row });
+    if (pending.length >= 25) await flush();
   }
+  await flush();
   return { enabled: true, synced };
 }
 

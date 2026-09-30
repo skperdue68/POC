@@ -1950,6 +1950,15 @@ export async function saveRaffleBonusSettings(applicationDB, input) {
   return settings;
 }
 
+export function getSheetsRaffleWindows(now = Math.floor(Date.now() / 1000)) {
+  return ['biweekly', 'monthly'].map(type => {
+    const salesEnd = type === 'monthly'
+      ? getDepositMailMonthlySalesEndAtOrAfter(now)
+      : getDepositMailBiweeklySalesEndAtOrAfter(now);
+    return { type, salesEnd, drawTime: salesEnd + BANKING_RAFFLE_AFTER_SALES_SECONDS };
+  });
+}
+
 export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Date.now() / 1000)) {
   const entries = await getBankingDataJSON(applicationDB);
   const bonusVersions = await getRaffleBonusVersions(applicationDB);
@@ -1996,7 +2005,7 @@ export async function getActiveRaffleSummary(applicationDB, now = Math.floor(Dat
 }
 
 function getCurrentRaffleBonusInfo(type, salesEnd, salesStart, now, versions, overrides) {
-  const policy = selectRaffleBonusSettings(versions, overrides, type, salesEnd);
+  const policy = selectRaffleBonusSettings(versions, overrides, type, salesEnd, now);
   if (!policy?.enabled || now >= salesEnd || now < salesStart || !Array.isArray(policy.tiers)) {
     return { enabled: false, percent: 0, expiresAt: salesEnd, nextPercent: 0, nextExpiresAt: salesEnd };
   }
@@ -3551,12 +3560,16 @@ export async function addManualBiweeklyTicketEntry(applicationDB, payload = {}) 
 
   await setSetting(applicationDB, 'banking_refresh', new Date().toISOString());
 
-  if (result.affectedRows) {
+  if (result.affectedRows && googleSheetsBankingConfig().enabled) {
     try {
-      await syncBankingEntriesToGoogleSheets([{
+      const entry = {
         type: transactionType, eventId: event_id, displayName: accountName,
-        amount: goldValue, ticketAmount: tickets, dataSource, note: auditedNote,
-        purchasedTickets: tickets, bonusTickets: 0, bonusPercent: 0, totalTickets: tickets
+        amount: goldValue, ticketAmount: tickets, dataSource, note: auditedNote, time: timestamp
+      };
+      const versions = await getRaffleBonusVersions(applicationDB);
+      const overrides = await getRaffleBonusOverrides(applicationDB);
+      await syncBankingEntriesToGoogleSheets([{
+        ...entry, ...calculateBankingEntryBonus(entry, versions, overrides)
       }], { uploadedBy: addedBy });
     } catch (error) { console.error(`Google Sheets manual entry sync failed: ${error.message}`); }
   }

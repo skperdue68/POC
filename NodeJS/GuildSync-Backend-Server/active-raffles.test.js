@@ -47,3 +47,12 @@ test('empty raffles advertise zero prize gold and zero draws', async () => {
   assert.equal(result.raffles[0].drawCount, 0);
   assert.equal(result.raffles[1].prizeGold, 0);
 });
+
+test('Sheets cutoff windows advance immediately after sales end while public draw remains pending', () => {
+  assert.equal(typeof actions.getSheetsRaffleWindows, 'function');
+  const closing = actions.getSheetsRaffleWindows(cutoff);
+  assert.deepEqual(closing.map(window => window.salesEnd), [cutoff, cutoff]);
+  assert.deepEqual(closing.map(window => window.drawTime), [draw, draw]);
+  const next = actions.getSheetsRaffleWindows(cutoff + 1);
+  assert.ok(next.every(window => window.salesEnd > cutoff));
+});

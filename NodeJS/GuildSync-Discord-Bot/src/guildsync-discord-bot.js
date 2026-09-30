@@ -27,6 +27,7 @@ import {
 
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
+import * as raffleTest from './commands/raffle-test.js';
 import { startRaffleAnnouncements } from './raffle-announcements.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -179,6 +180,7 @@ const gsaCommand = {
 const commands = [
   roles,
   raffle,
+  raffleTest,
   gsaCommand
 ];
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRaffleAnnouncer, requestActiveRaffles, formatRaffles } from './raffle.js';
+import { createRaffleAnnouncer, requestActiveRaffles, formatRaffles, parseReminderHours } from './raffle.js';
 import { PermissionFlagsBits } from 'discord.js';
 
 export async function sendRaffleAnnouncement(client, channelId, guildId, snapshot, delivery) {
@@ -28,6 +28,8 @@ export async function sendRaffleAnnouncement(client, channelId, guildId, snapsho
       before = oldest.id;
     }
   }
+  // Channel/history lookups can outlive the warning window.
+  if (delivery.expiresAt !== undefined && Date.now() >= delivery.expiresAt * 1000) return;
   await channel.send({ content, allowedMentions: { parse: [] }, nonce: delivery.id, enforceNonce: true });
 }
 
@@ -41,6 +43,8 @@ export function startRaffleAnnouncements(client, socket, log, env = process.env)
     announcer = createRaffleAnnouncer({
       channelId,
       intervalHours: Number(env.GUILDSYNC_RAFFLE_INTERVAL_HOURS || 48),
+      bonusReminderHours: parseReminderHours(env.GUILDSYNC_RAFFLE_BONUS_REMINDER_HOURS, [1]),
+      salesCloseReminderHours: parseReminderHours(env.GUILDSYNC_RAFFLE_SALES_CLOSE_REMINDER_HOURS, [2]),
       thresholds: {
         biweekly: Number(env.GUILDSYNC_RAFFLE_BIWEEKLY_THRESHOLD || 200000),
         monthly: Number(env.GUILDSYNC_RAFFLE_MONTHLY_THRESHOLD || 500000)
