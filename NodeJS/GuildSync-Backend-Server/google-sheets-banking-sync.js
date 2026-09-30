@@ -197,7 +197,7 @@ async function writeEntries(entries, uploadedBy, state, log) {
     }
     const attribution = String(uploadedBy || '').trim();
     requests.push({ updateCells: {
-      start: { sheetId: sheet.sheetId, rowIndex: 2, columnIndex: 16 },
+      start: { sheetId: sheet.sheetId, rowIndex: 2, columnIndex: entry.type === 'biweekly' ? 16 : 14 },
       rows: [{ values: [{ userEnteredValue: { stringValue: attribution ? attribution + ' (GuildSync)' : 'GuildSync' } }] },
         { values: [{ userEnteredValue: { stringValue: easternTimestamp() } }] }],
       fields: 'userEnteredValue'
