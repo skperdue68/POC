@@ -25,7 +25,7 @@ tickets and 0%. G becomes visible for a bonus entry. No purchased/total ticket
 count is written; the sheet calculates it. Disabled bonuses clear G's value and
 note on the newly written row. Other formulas and formatting are preserved.
 
-Each successful entry write updates bi-weekly N3/N4 or 50/50 L3/L4 with uploader
+Each successful entry write updates Q3/Q4 on either raffle sheet with uploader
 `name (GuildSync)` and Eastern time, e.g. `9/27/2026 11:07am ET`.
 Entry values, bonus note, and metadata form one atomic Sheets batch.
 Normal exports still require a successful database insertion/commit.
