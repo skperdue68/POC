@@ -125,7 +125,7 @@ export async function refreshBankingEntriesToGoogleSheets(loadEntries, { uploade
   if (!config().enabled) throw new Error('Enable Google Sheets on the backend first.');
   // Refresh is an append-only replay. The normal writer reads transaction IDs,
   // skips duplicates, and reserves the next empty row without clearing sheets.
-  return coordinate(async state => writeEntries(await loadEntries(), uploadedBy, state, log, false));
+  return coordinate(async state => writeEntries(await loadEntries(), uploadedBy, state, log, false, true));
 }
 
 function attributionRequest(sheetId, type, uploadedBy) {
@@ -138,7 +138,7 @@ function attributionRequest(sheetId, type, uploadedBy) {
   } };
 }
 
-async function writeEntries(entries, uploadedBy, state, log, replace = false) {
+async function writeEntries(entries, uploadedBy, state, log, replace = false, includeClosed = false) {
   const { settings, token, url } = await googleContext();
   if (!settings.spreadsheetId) throw new Error('Google spreadsheet ID is missing.');
   await log('Starting spreadsheet update: entries=' + entries.length);
@@ -180,7 +180,7 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false) {
     const tab = tabFor(entry.type, settings);
     // The live tab is already prepared for the next period. Never backfill old data into it.
     const lastClosed = state.lastClosedSalesEnd?.[entry.type];
-    if (!replace && lastClosed && (!Number.isFinite(Number(entry.time)) || Number(entry.time) <= lastClosed)) {
+    if (!replace && !includeClosed && lastClosed && (!Number.isFinite(Number(entry.time)) || Number(entry.time) <= lastClosed)) {
       await log('Skipped closed-period entry ' + JSON.stringify(entry.eventId) + ' on ' + JSON.stringify(tab));
       continue;
     }
