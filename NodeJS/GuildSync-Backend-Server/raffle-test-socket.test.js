@@ -55,7 +55,7 @@ test('test reset requires explicit confirmation and a single raffle', async t =>
     assert.equal((await f.request(payload)).ok, false);
   }
   assert.deepEqual(f.calls, []);
-  const result = await f.request({ action: 'close', raffleType: 'monthly', confirm: true });
+  const result = await f.request({ action: 'close', raffleType: 'monthly', confirm: true, requestedBy: 'Evaine' });
   assert.equal(result.ok, true);
   assert.deepEqual(f.calls, [['close', 'monthly']]);
   assert.match(result.message, /260926 raffle/);
