@@ -1,40 +1,14 @@
 import 'dotenv/config';
-import { REST, Routes, SlashCommandBuilder } from 'discord.js';
+import { REST, Routes } from 'discord.js';
 
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
-import * as raffleTest from './commands/raffle-test.js';
-
-const gsaCommandData = new SlashCommandBuilder()
-  .setName('gsa')
-  .setDescription('Manage GuildSync application Discord posting')
-  .addSubcommand((subcommand) =>
-    subcommand
-      .setName('post')
-      .setDescription('Post saved GuildSync application record(s) to Discord')
-      .addStringOption((option) =>
-        option
-          .setName('name')
-          .setDescription('Full or partial ESO account name from GuildSyncApplications')
-          .setRequired(true)
-      )
-  )
-  .addSubcommand((subcommand) =>
-    subcommand
-      .setName('stop')
-      .setDescription('Stop automatic GuildSync application posts to Discord')
-  )
-  .addSubcommand((subcommand) =>
-    subcommand
-      .setName('start')
-      .setDescription('Resume automatic GuildSync application posts to Discord')
-  );
+import { createGsaCommandData } from './commands/gsa-raffle.js';
 
 const commands = [
   roles.data.toJSON(),
   raffle.data.toJSON(),
-  ...raffleTest.registrationData(),
-  gsaCommandData.toJSON(),
+  createGsaCommandData().toJSON(),
 ];
 
 const {

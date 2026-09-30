@@ -1958,6 +1958,47 @@ export async function saveRaffleBonusSettings(applicationDB, input) {
   return settings;
 }
 
+// Refresh dates use the same schedule's calendar boundaries, at 19:00 Eastern.
+// Convert each boundary separately so daylight-saving changes do not shift it.
+const raffleLocalParts = timestamp => Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23'
+}).formatToParts(new Date(timestamp * 1000)).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+function raffleEvening({ year, month, day }) {
+  const target = Date.UTC(year, month - 1, day, 19) / 1000;
+  let timestamp = target;
+  for (let i = 0; i < 2; i++) {
+    const local = raffleLocalParts(timestamp);
+    timestamp += target - Date.UTC(local.year, local.month - 1, local.day, local.hour) / 1000;
+  }
+  return timestamp;
+}
+export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 1000)) {
+  let lookupAt = now;
+  if (date !== undefined) {
+    if (typeof date !== 'string' || !/^\d{6}$/.test(date)) throw new Error('Enter a valid date in MMDDYY format.');
+    const month = Number(date.slice(0, 2)), day = Number(date.slice(2, 4)), year = 2000 + Number(date.slice(4));
+    const check = new Date(Date.UTC(year, month - 1, day));
+    if (check.getUTCFullYear() !== year || check.getUTCMonth() + 1 !== month || check.getUTCDate() !== day) {
+      throw new Error('Enter a valid calendar date in MMDDYY format.');
+    }
+    lookupAt = raffleEvening({ year, month, day });
+  }
+  const local = raffleLocalParts(lookupAt);
+  const noon = Date.UTC(local.year, local.month - 1, local.day, 12) / 1000;
+  const raffles = ['biweekly', 'monthly'].map(type => {
+    const next = type === 'biweekly' ? getDepositMailBiweeklySalesEndAtOrAfter : getDepositMailMonthlySalesEndAtOrAfter;
+    let cutoff = next(noon);
+    let end = raffleEvening(raffleLocalParts(cutoff));
+    if (lookupAt >= end) {
+      cutoff = next(cutoff + 1);
+      end = raffleEvening(raffleLocalParts(cutoff));
+    }
+    const previous = type === 'biweekly' ? cutoff - BANKING_BIWEEKLY_INTERVAL_SECONDS : getDepositMailPreviousMonthlySalesEnd(cutoff);
+    return { type, label: type === 'biweekly' ? 'Bi-Weekly' : '50/50', start: raffleEvening(raffleLocalParts(previous)), end };
+  });
+  return { asOf: now, lookupAt, timeZone: 'America/New_York', raffles };
+}
+
 export function getSheetsRaffleWindows(now = Math.floor(Date.now() / 1000)) {
   return ['biweekly', 'monthly'].map(type => {
     const salesEnd = type === 'monthly'

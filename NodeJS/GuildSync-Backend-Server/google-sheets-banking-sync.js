@@ -121,7 +121,23 @@ export function entryLayout(entry) {
     : { donation, first: 5, last: 254, id: 'D', name: 'E', gold: 'F', index: 3 };
 }
 
-async function writeEntries(entries, uploadedBy, state, log) {
+export async function refreshBankingEntriesToGoogleSheets(loadEntries, { uploadedBy = '', log = exportLog } = {}) {
+  if (!config().enabled) throw new Error('Enable Google Sheets on the backend first.');
+  // Load committed rows inside the same lock used by live exports and rollover.
+  return coordinate(async state => writeEntries(await loadEntries(), uploadedBy, state, log, true));
+}
+
+function attributionRequest(sheetId, type, uploadedBy) {
+  const attribution = String(uploadedBy || '').trim();
+  return { updateCells: {
+    start: { sheetId, rowIndex: 2, columnIndex: type === 'biweekly' ? 17 : 15 },
+    rows: [{ values: [{ userEnteredValue: { stringValue: attribution ? attribution + ' (GuildSync)' : 'GuildSync' } }] },
+      { values: [{ userEnteredValue: { stringValue: easternTimestamp() } }] }],
+    fields: 'userEnteredValue'
+  } };
+}
+
+async function writeEntries(entries, uploadedBy, state, log, replace = false) {
   const { settings, token, url } = await googleContext();
   if (!settings.spreadsheetId) throw new Error('Google spreadsheet ID is missing.');
   await log('Starting spreadsheet update: entries=' + entries.length);
@@ -129,10 +145,31 @@ async function writeEntries(entries, uploadedBy, state, log) {
   let synced = 0;
   const sections = new Map();
   let pending = [];
+  let preparation = [];
+  if (replace) {
+    for (const type of ['biweekly', 'monthly']) {
+      const tab = tabFor(type, settings);
+      const sheet = info.sheets?.find(item => item.properties.title === tab)?.properties;
+      if (!sheet || sheet.gridProperties.rowCount < 254 || sheet.gridProperties.columnCount < (type === 'biweekly' ? 18 : 16)) {
+        throw new Error('Missing worksheet or grid too small for refresh: ' + tab);
+      }
+      const range = (r1, r2, c1, c2) => ({ sheetId: sheet.sheetId, startRowIndex: r1, endRowIndex: r2, startColumnIndex: c1, endColumnIndex: c2 });
+      preparation.push(
+        { updateCells: { range: range(4, 254, 3, 6), fields: 'userEnteredValue' } },
+        { updateCells: { range: range(4, 254, 7, 8), fields: 'userEnteredValue,note' } },
+        { updateCells: { range: type === 'biweekly' ? range(62, 70, 15, 18) : range(35, 44, 13, 16), fields: 'userEnteredValue' } },
+        { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 },
+          properties: { hiddenByUser: !entries.some(entry => entry.type === type && entry.bonusEnabled === true) }, fields: 'hiddenByUser' } },
+        attributionRequest(sheet.sheetId, type, uploadedBy)
+      );
+      await log('Refreshing ' + JSON.stringify(tab) + ': replacing exported tickets, donations and bonus notes.');
+    }
+  }
   const flush = async () => {
-    if (!pending.length) return;
+    if (!pending.length && !preparation.length) return;
     await log('Writing batch: entries=' + pending.length);
-    await sheetsRequest(token, url + ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: pending.flatMap(item => item.requests) }) });
+    await sheetsRequest(token, url + ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [...preparation, ...pending.flatMap(item => item.requests)] }) });
+    preparation = [];
     for (const item of pending) await log('Added transaction ' + item.eventId + ' to ' + JSON.stringify(item.tab) + ' row ' + item.row);
     synced += pending.length;
     pending = [];
@@ -142,7 +179,7 @@ async function writeEntries(entries, uploadedBy, state, log) {
     const tab = tabFor(entry.type, settings);
     // The live tab is already prepared for the next period. Never backfill old data into it.
     const lastClosed = state.lastClosedSalesEnd?.[entry.type];
-    if (lastClosed && (!Number.isFinite(Number(entry.time)) || Number(entry.time) <= lastClosed)) {
+    if (!replace && lastClosed && (!Number.isFinite(Number(entry.time)) || Number(entry.time) <= lastClosed)) {
       await log('Skipped closed-period entry ' + JSON.stringify(entry.eventId) + ' on ' + JSON.stringify(tab));
       continue;
     }
@@ -155,7 +192,7 @@ async function writeEntries(entries, uploadedBy, state, log) {
     const range = sheetRange(tab, layout.id + layout.first + ':' + layout.gold + layout.last);
     if (!sections.has(range)) {
       await log('Reading ' + range + ' for transaction ' + JSON.stringify(String(entry.eventId)));
-      const existing = await sheetsRequest(token, url + '/values/' + encodeURIComponent(range) + '?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE');
+      const existing = replace ? {} : await sheetsRequest(token, url + '/values/' + encodeURIComponent(range) + '?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE');
       sections.set(range, existing.values || []);
     }
     const rows = sections.get(range);
@@ -190,11 +227,11 @@ async function writeEntries(entries, uploadedBy, state, log) {
           ? { userEnteredValue: { numberValue: bonusTickets }, note: 'Bonus: ' + bonusPercent + '%' }
           : {}] }], fields: 'userEnteredValue,note'
       } });
-      if (bonusEnabled) requests.push({ updateDimensionProperties: {
+      if (!replace && bonusEnabled) requests.push({ updateDimensionProperties: {
         range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 },
         properties: { hiddenByUser: false }, fields: 'hiddenByUser'
       } });
-      else {
+      else if (!replace) {
         requests.push({ updateCells: {
           range: { sheetId: sheet.sheetId, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 7, endColumnIndex: 8 },
           fields: 'userEnteredValue,note'
@@ -205,20 +242,16 @@ async function writeEntries(entries, uploadedBy, state, log) {
         } });
       }
     }
-    const attribution = String(uploadedBy || '').trim();
-    requests.push({ updateCells: {
-      start: { sheetId: sheet.sheetId, rowIndex: 2, columnIndex: entry.type === 'biweekly' ? 17 : 15 },
-      rows: [{ values: [{ userEnteredValue: { stringValue: attribution ? attribution + ' (GuildSync)' : 'GuildSync' } }] },
-        { values: [{ userEnteredValue: { stringValue: easternTimestamp() } }] }],
-      fields: 'userEnteredValue'
-    } });
+    if (!replace) requests.push(attributionRequest(sheet.sheetId, entry.type, uploadedBy));
     await log('Writing ' + JSON.stringify({ tab, row, range: layout.id + row + ':' + layout.gold + row,
       eventId: String(entry.eventId), name, gold: sheetGoldAmount(entry.amount), bonusEnabled, bonusPercent, bonusTickets }));
     // Reserve the row locally; bulk replay reads each section only once and
     // batches writes to stay below per-user Sheets API quotas.
     rows[offset] = [String(entry.eventId), name, sheetGoldAmount(entry.amount)];
     pending.push({ requests, eventId: entry.eventId, tab, row });
-    if (pending.length >= 25) await flush();
+    // A replacement must clear and repopulate both tabs atomically, after all
+    // capacity checks succeed. Live append exports keep their existing batching.
+    if (!replace && pending.length >= 25) await flush();
   }
   await flush();
   return { enabled: true, synced };

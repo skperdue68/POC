@@ -21,13 +21,12 @@ import {
   ChannelType,
   GatewayIntentBits,
   MessageFlags,
-  Partials,
-  SlashCommandBuilder
+  Partials
 } from 'discord.js';
 
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
-import * as raffleTest from './commands/raffle-test.js';
+import * as gsaRaffle from './commands/gsa-raffle.js';
 import { startRaffleAnnouncements } from './raffle-announcements.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -95,31 +94,9 @@ client.commands = new Collection();
 let guildSyncApplicationDiscordPostingEnabled = true;
 
 const gsaCommand = {
-  data: new SlashCommandBuilder()
-    .setName('gsa')
-    .setDescription('Manage GuildSync application Discord posting')
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('post')
-        .setDescription('Post saved GuildSync application record(s) to Discord')
-        .addStringOption((option) =>
-          option
-            .setName('name')
-            .setDescription('Full or partial ESO account name from GuildSyncApplications')
-            .setRequired(true)
-        )
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('stop')
-        .setDescription('Stop automatic GuildSync application posts to Discord')
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName('start')
-        .setDescription('Resume automatic GuildSync application posts to Discord')
-    ),
+  data: gsaRaffle.createGsaCommandData(),
   async execute(interaction, guildSyncSocket) {
+    if (interaction.options.getSubcommandGroup(false) === 'raffle') return gsaRaffle.execute(interaction, guildSyncSocket);
     const subcommand = interaction.options.getSubcommand();
 
     if (subcommand === 'stop') {
@@ -180,7 +157,6 @@ const gsaCommand = {
 const commands = [
   roles,
   raffle,
-  raffleTest,
   gsaCommand
 ];
 

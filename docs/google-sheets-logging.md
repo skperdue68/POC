@@ -138,26 +138,16 @@ GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED=true
 ```
 
 Restart both processes. From `NodeJS/GuildSync-Discord-Bot`, run `npm run deploy`
-to register `/raffle-test`. Execution requires a Consigliere, Capo, or Caporegieme
-role in the configured server. Every response is ephemeral.
+to register `/gsa raffle test-preview` and `/gsa raffle test-close`. The previous
+standalone `/raffle-test` command is removed. All raffle administration now
+requires the exact **Consigliere** role and replies privately.
 
-- `/raffle-test export raffle:Bi-Weekly` (or `50/50`/`Both`) exports current-period
-  database entries, including donations, through the normal writer with duplicate
-  checks, bonus handling, and bounds. It does not insert database rows or grant tickets.
-- `/raffle-test preview kind:Bonus change or expiration raffle:Bi-Weekly`, or choose
-  `Sales close`, previews the warning with current raffle data. It does not change
-  settings, clocks, announcement state, or post publicly. No active bonus produces
-  an explanatory response.
-- `/raffle-test close raffle:Bi-Weekly confirm:true` (or `50/50`) makes a real
-  archive and clears only the selected tab in the configured original. The name
-  uses that raffle's draw date. It does not advance actual dates, close sales, or
-  change automatic rollover progress. Keep automatic rollover disabled for an
-  isolated test; export again to refill from the database after testing reset.
+Use `/gsa raffle refresh` to replace both current raffle exports, or supply an
+optional `date:MMDDYY` to refresh historical periods. This production command
+replaces the old test export and works even when test commands are disabled.
 
-If a command times out, check the sheet and backend log before retrying; a running
-operation may still finish. Each explicit close test can create another archive.
-When done, set the test flag to `false` in both files, restart, and run
-`npm run deploy` again to remove the command from Discord.
+See [raffle refresh and test-command setup](raffle-refresh.md) for examples,
+permissions, date boundaries, replacement behavior, and deployment instructions.
 
 ## Diagnostics
 

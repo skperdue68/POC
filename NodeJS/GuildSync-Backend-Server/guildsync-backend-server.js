@@ -4,9 +4,9 @@ import cors from 'cors';
 import http from 'node:http';
 import fs from 'node:fs';
 import { registerRaffleSocket } from './raffle-socket.js';
-import { getActiveRaffleSummary, getRaffleUserTickets, getSheetsRaffleWindows } from './guildsync-database-actions.js';
+import { getActiveRaffleSummary, getRaffleUserTickets, getSheetsRaffleWindows, getRaffleRefreshSelection } from './guildsync-database-actions.js';
 import { startSheetsRollover } from './sheets-rollover-runtime.js';
-import { registerRaffleTestSocket } from './raffle-test-socket.js';
+import { registerRaffleTestSocket, registerRaffleRefreshSocket } from './raffle-test-socket.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
@@ -445,6 +445,7 @@ io.use(async (socket, next) => {
 io.on('connection', (socket) => {
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerRaffleTestSocket(socket, applicationDB, { getActiveRaffleSummary, getBankingDataJSON, sheets: sheetsRuntime });
+  registerRaffleRefreshSocket(socket, applicationDB, { getRaffleRefreshSelection, getBankingDataJSON });
 
   const user = socket.guildSyncUser;
 
