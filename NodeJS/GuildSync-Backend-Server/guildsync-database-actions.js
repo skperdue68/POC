@@ -1926,6 +1926,14 @@ export async function saveRaffleBonusSettings(applicationDB, input) {
     biweekly: parseBonusTiers(input.biweekly.map(({ hours, percent }) => `${hours}:${percent}`).join(',')),
     monthly: parseBonusTiers(input.monthly.map(({ hours, percent }) => `${hours}:${percent}`).join(','))
   };
+  for (const [type, tiers] of Object.entries(settings)) {
+    if (!['biweekly', 'monthly'].includes(type)) continue;
+    const availableHours = type === 'biweekly' ? 14 * 24 : 28 * 24;
+    const configuredHours = tiers.reduce((sum, tier) => sum + tier.hours, 0);
+    if (configuredHours > availableHours) {
+      throw new Error(`${type === 'biweekly' ? 'Bi-weekly' : '50/50'} bonus periods total ${configuredHours} hours, but this raffle is only ${availableHours} hours long. Reduce the period hours and save again.`);
+    }
+  }
   const connection = await applicationDB.getConnection();
   try {
     await connection.beginTransaction();
