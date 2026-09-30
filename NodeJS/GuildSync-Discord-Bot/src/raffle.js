@@ -114,6 +114,16 @@ export function createRaffleAnnouncer({ channelId, intervalHours, thresholds, fe
             }
           }
         }
+        // The 50/50 and bi-weekly sales cutoff is shared. If the 50/50
+        // warning becomes due first, include both raffle names in that post.
+        const monthlySales = reminders.find(item => item.kind === 'sales' && item.type === 'monthly');
+        if (monthlySales) {
+          for (let index = reminders.length - 1; index >= 0; index -= 1) {
+            if (reminders[index].kind === 'sales' && reminders[index].type === 'biweekly') reminders.splice(index, 1);
+          }
+          reminders.push({ key: JSON.stringify(['biweekly', snapshot.raffles.find(item => item.type === 'biweekly')?.id, 'sales-combined', monthlySales.at]),
+            type: 'biweekly', kind: 'sales', at: monthlySales.at });
+        }
         if (!due && !reminders.length) return;
         // One combined update even if both raffles cross several thresholds.
         const next = { channelId, raffles: { ...state.raffles }, reminders: { ...state.reminders } };
