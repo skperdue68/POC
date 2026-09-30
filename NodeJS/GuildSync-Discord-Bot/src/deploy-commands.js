@@ -3,6 +3,7 @@ import { REST, Routes, SlashCommandBuilder } from 'discord.js';
 
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
+import * as raffleTest from './commands/raffle-test.js';
 
 const gsaCommandData = new SlashCommandBuilder()
   .setName('gsa')
@@ -32,6 +33,7 @@ const gsaCommandData = new SlashCommandBuilder()
 const commands = [
   roles.data.toJSON(),
   raffle.data.toJSON(),
+  ...raffleTest.registrationData(),
   gsaCommandData.toJSON(),
 ];
 

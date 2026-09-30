@@ -27,3 +27,9 @@ test('slash responses do not suppress announcements and history errors do not ca
   await assert.rejects(sendRaffleAnnouncement(f.client, 'channel', 'guild', snapshot, delivery), /history unavailable/);
   assert.equal(f.sends(), 1);
 });
+
+test('a reminder that expires during channel lookup is not posted', async () => {
+  const f = fixture([]);
+  await sendRaffleAnnouncement(f.client, 'channel', 'guild', snapshot, { ...delivery, reconcile: false, expiresAt: 1 });
+  assert.equal(f.sends(), 0);
+});
