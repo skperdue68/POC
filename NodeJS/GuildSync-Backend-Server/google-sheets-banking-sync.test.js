@@ -62,7 +62,7 @@ test('tickets write D/E/F in first fully empty row with G bonus note and correct
     });
     assert.deepEqual(requests[2].updateDimensionProperties, { range: { sheetId: id, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 }, properties: { hiddenByUser: false }, fields: 'hiddenByUser' });
     const metadata = requests[3].updateCells;
-    assert.deepEqual(metadata.start, { sheetId: id, rowIndex: 2, columnIndex: index ? 11 : 13 });
+    assert.deepEqual(metadata.start, { sheetId: id, rowIndex: 2, columnIndex: 16 });
     assert.equal(metadata.rows[0].values[0].userEnteredValue.stringValue, 'EvaineFaye (GuildSync)');
     assert.match(metadata.rows[1].values[0].userEnteredValue.stringValue, /^\d+\/\d+\/\d{4} \d+:\d{2}(am|pm) ET$/);
     assert.equal(metadata.fields, 'userEnteredValue');
