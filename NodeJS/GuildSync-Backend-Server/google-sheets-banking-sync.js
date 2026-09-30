@@ -123,8 +123,9 @@ export function entryLayout(entry) {
 
 export async function refreshBankingEntriesToGoogleSheets(loadEntries, { uploadedBy = '', log = exportLog } = {}) {
   if (!config().enabled) throw new Error('Enable Google Sheets on the backend first.');
-  // Load committed rows inside the same lock used by live exports and rollover.
-  return coordinate(async state => writeEntries(await loadEntries(), uploadedBy, state, log, true));
+  // Refresh is an append-only replay. The normal writer reads transaction IDs,
+  // skips duplicates, and reserves the next empty row without clearing sheets.
+  return coordinate(async state => writeEntries(await loadEntries(), uploadedBy, state, log, false));
 }
 
 function attributionRequest(sheetId, type, uploadedBy) {
