@@ -35,9 +35,9 @@ The response shows the lookup date and both selected periods.
 
 ## What refresh replaces
 
-Refresh uses the configured original spreadsheet and existing tab names. It
-replaces **both** tabs' exported rows in one Google Sheets batch, even if one
-period has no entries. It reuses the live writer's member names, manual notes,
+Refresh uses the configured original spreadsheet and existing tab names. It is
+append-only: it preserves existing cells and asks the live writer to append only
+transaction IDs that are not already present. It reuses the live writer's member names, manual notes,
 gold-marker removal, bonus handling, and update attribution:
 
 | Data | Bi-Weekly | 50/50 |
@@ -48,17 +48,13 @@ gold-marker removal, bonus handling, and update attribution:
 | Updater / Eastern timestamp | R3 / R4 | P3 / P4 |
 
 Column G formulas and other cells are preserved. Bonus columns G/H are shown
-when exported entries have bonuses enabled. All capacity checks finish before
-the replacement batch is submitted. Repeating a refresh replaces old values,
-including changed amounts/bonuses, rather than accumulating duplicate IDs.
-An empty result clears the exported ranges and still updates the attribution.
-Do not store unrelated manual spreadsheet data inside these managed ranges.
+when exported entries have bonuses enabled. Repeating a refresh skips existing
+transaction IDs. An empty result makes no sheet writes, so protected cells are
+left alone. Do not store unrelated manual spreadsheet data inside managed ranges.
 
 Live writes and scheduled archive/reset retain their existing behavior.
-Historical refresh is a snapshot, not a permanent switch of the live raffle:
-subsequent deposits can append current data, and rollover can archive/reset the
-displayed tabs. Review historical exports promptly and run refresh **without a
-date** to restore current periods before leaving the spreadsheet in live use.
+Historical refresh appends the selected snapshot's missing data; subsequent
+deposits and rollover continue normally.
 Refresh does not change database entries, raffle dates, or award tickets.
 
 ## Environment and migration

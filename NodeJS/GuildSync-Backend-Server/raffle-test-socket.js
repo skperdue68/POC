@@ -1,4 +1,5 @@
 import { syncBankingEntriesToGoogleSheets, refreshBankingEntriesToGoogleSheets, googleSheetsBankingConfig, exportLog } from './google-sheets-banking-sync.js';
+import { randomUUID } from 'node:crypto';
 
 export async function isConsigliere(db, discordUserId) {
   if (typeof discordUserId !== 'string' || !discordUserId) return false;
@@ -45,6 +46,39 @@ export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelect
       await log('REFRESH failed: ' + error.message).catch(console.error);
       callback({ ok: false, message: 'Raffle refresh failed: ' + error.message });
     } finally { running = false; }
+  });
+}
+
+export function registerSyntheticTestSocket(socket, db, { getActiveRaffleSummary,
+  exportEntries = syncBankingEntriesToGoogleSheets, authorize = isConsigliere, log = exportLog }) {
+  socket.on('guildsync:test-add', async (payload = {}, callback) => {
+    if (typeof callback !== 'function') return;
+    if (!socket.guildSyncAuthenticated || socket.guildSyncAuthType !== 'discord-bot') return callback({ ok: false, message: 'Discord bot authentication is required.' });
+    try {
+      if (!await authorize(db, payload.discordUserId)) throw new Error('Only users with the exact Consigliere role can add test data.');
+      const type = payload.raffleType;
+      if (!['biweekly', 'monthly'].includes(type)) throw new Error('Choose Bi-Weekly or 50/50.');
+      const name = String(payload.name || '').trim().slice(0, 100);
+      const gold = Math.floor(Number(payload.gold));
+      if (!name || !Number.isSafeInteger(gold) || gold < 0) throw new Error('Provide a name and a non-negative gold amount.');
+      const now = Math.floor(Date.now() / 1000);
+      const raffle = (await getActiveRaffleSummary(db, now)).raffles.find(item => item.type === type);
+      if (!raffle || now < raffle.salesStart || now >= raffle.salesEnd) throw new Error('That raffle is not currently in its ticket-sales period.');
+      const donation = payload.donation === true;
+      const cost = type === 'biweekly' ? 500 : 2500;
+      const marker = type === 'biweekly' ? 1 : 3;
+      const ticketAmount = donation ? 0 : Math.max(0, Math.floor((gold - (gold % 10 === marker ? marker : 0)) / cost));
+      if (!donation && ticketAmount < 1) throw new Error(`Gold must include at least one ${type === 'biweekly' ? '500' : '2,500'}-gold ticket.`);
+      const bonusEnabled = !donation && raffle.bonusEnabled === true;
+      const bonusPercent = bonusEnabled ? Number(raffle.bonusPercent) || 0 : 0;
+      const bonusTickets = bonusEnabled ? Math.floor(ticketAmount * bonusPercent / 100) : 0;
+      const entry = { type, eventId: `Test-${randomUUID()}`, time: now, displayName: name, amount: gold,
+        ticketAmount, dataSource: 'GuildSyncTest', note: donation ? 'Test donation' : 'Test entry',
+        bonusEnabled, bonusPercent, bonusTickets };
+      const result = await exportEntries([entry], { uploadedBy: String(payload.requestedBy || '').trim() });
+      await log('TEST ADD wrote ' + JSON.stringify({ eventId: entry.eventId, type, name, gold, ticketAmount, bonusEnabled, bonusPercent, bonusTickets, donation }));
+      callback({ ok: true, message: `Test ${donation ? 'donation' : 'ticket entry'} added to ${type === 'biweekly' ? 'Bi-Weekly' : '50/50'}: ${name}, ${gold.toLocaleString('en-US')} gold, ${ticketAmount} tickets, ${bonusEnabled ? `${bonusPercent}% bonus (+${bonusTickets})` : 'bonuses disabled'}. Transaction ID: ${entry.eventId}` });
+    } catch (error) { await log('TEST ADD failed: ' + error.message).catch(console.error); callback({ ok: false, message: error.message }); }
   });
 }
 

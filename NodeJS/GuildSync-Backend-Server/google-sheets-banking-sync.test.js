@@ -38,27 +38,18 @@ const ticket = (extra = {}) => ({ type: 'biweekly', eventId: '123', displayName:
   bonusEnabled: true, bonusTickets: 20, bonusPercent: 10, time: 1500, ...extra });
 const cellValues = request => request.updateCells.rows[0].values.map(cell => Object.values(cell.userEnteredValue)[0]);
 
-test('refresh replaces both tabs atomically, including empty periods, and repeated exports update existing IDs', async t => {
-  const f = fixture(t, { rows: [['123', 'Old name', 100]], state: { lastClosedSalesEnd: { biweekly: 2000 } } });
+test('refresh appends missing IDs and never clears or replaces protected existing cells', async t => {
+  const f = fixture(t, { rows: [['123', 'Old name', 100]] });
   assert.equal(typeof sheets.refreshBankingEntriesToGoogleSheets, 'function');
   const refresh = entries => sheets.refreshBankingEntriesToGoogleSheets(async () => entries,
     { uploadedBy: 'Officer', log: async value => f.logs.push(value) });
-  await refresh([ticket()]);
-  await refresh([ticket({ displayName: 'Corrected', bonusTickets: 40, bonusPercent: 20 })]);
+  await refresh([ticket({ eventId: '124' })]);
+  await refresh([ticket({ eventId: '124', displayName: 'Corrected' })]);
   assert.equal(f.writes.length, 2);
-  for (const batch of f.writes) {
-    for (const sheetId of [7, 8]) {
-      assert.ok(batch.some(r => r.updateCells?.range?.sheetId === sheetId && r.updateCells.range.startColumnIndex === 3 && r.updateCells.range.endColumnIndex === 6 && !r.updateCells.rows));
-      assert.ok(batch.some(r => r.updateCells?.range?.sheetId === sheetId && r.updateCells.fields.includes('note')));
-      assert.ok(batch.some(r => r.updateCells?.start?.sheetId === sheetId && r.updateCells.start.rowIndex === 2));
-    }
-    const data = batch.filter(r => r.updateCells?.start?.columnIndex === 3);
-    assert.equal(data.length, 1);
-    assert.equal(data[0].updateCells.start.rowIndex, 4);
-    assert.ok(!batch.some(r => r.updateCells?.range?.startColumnIndex === 6)); // preserve G formulas
+  for (const requests of f.writes) {
+    assert.ok(requests.every(r => !r.updateCells?.range || r.updateCells.range.startColumnIndex !== 3 || r.updateCells.range.endColumnIndex !== 6 || r.updateCells.rows));
   }
-  assert.equal(cellValues(f.writes[1].find(r => r.updateCells?.start?.columnIndex === 3))[1], 'Corrected');
-  assert.equal(f.calls.some(url => url.includes('/values/')), false);
+  assert.ok(f.calls.some(url => url.includes('/values/')));
 });
 
 test('refresh preflights capacity for both raffles and performs no clears on overflow', async t => {

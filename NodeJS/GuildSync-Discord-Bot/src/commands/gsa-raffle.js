@@ -14,7 +14,7 @@ export function createGsaCommandData(env = process.env) {
     .addSubcommand(sub => sub.setName('start').setDescription('Resume automatic GuildSync application posts to Discord'))
     .addSubcommandGroup(group => {
       group.setName('raffle').setDescription('Consigliere raffle administration')
-        .addSubcommand(sub => sub.setName('refresh').setDescription('Replace both raffle worksheets with selected-period data.')
+        .addSubcommand(sub => sub.setName('refresh').setDescription('Append selected-period data not already in the worksheets.')
           .addStringOption(option => option.setName('date').setDescription('MMDDYY; omitted uses current periods. Transition dates select the new raffle.')));
       if (testsEnabled(env)) group
         .addSubcommand(sub => sub.setName('test-preview').setDescription('Privately preview a raffle reminder without posting it.')
@@ -25,7 +25,14 @@ export function createGsaCommandData(env = process.env) {
           .addStringOption(option => raffleOption(option))
           .addBooleanOption(option => option.setName('confirm').setDescription('True archives and clears this raffle worksheet now.').setRequired(true)));
       return group;
-    });
+    })
+    .addSubcommandGroup(group => group.setName('test').setDescription('Consigliere-only test data tools')
+      .addSubcommand(sub => sub.setName('add').setDescription('Append a synthetic raffle entry to the spreadsheet.')
+        .addStringOption(option => option.setName('name').setDescription('ESO account name').setRequired(true))
+        .addIntegerOption(option => option.setName('gold').setDescription('Gold paid').setMinValue(0).setRequired(true))
+        .addStringOption(option => option.setName('raffle').setDescription('Raffle type').setRequired(true)
+          .addChoices(...choices))
+        .addBooleanOption(option => option.setName('donation').setDescription('Record as a donation with zero tickets.'))));
 }
 
 function requestRefresh(socket, payload) {
@@ -57,6 +64,17 @@ function requestTest(socket, payload) {
   });
 }
 
+function requestSynthetic(socket, payload) {
+  return new Promise((resolve, reject) => {
+    if (!socket?.connected) return reject(new Error('GuildSync is temporarily unavailable.'));
+    socket.timeout(120000).emit('guildsync:test-add', payload, (error, response) => {
+      if (error) return reject(new Error('The test add timed out. Check the backend log before retrying.'));
+      if (!response?.ok) return reject(new Error(response?.message || 'GuildSync could not add the test entry.'));
+      resolve(response);
+    });
+  });
+}
+
 export async function execute(interaction, socket) {
   const reply = content => interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   if (!interaction.guildId || (process.env.DISCORD_GUILD_ID && interaction.guildId !== process.env.DISCORD_GUILD_ID)) {
@@ -66,6 +84,21 @@ export async function execute(interaction, socket) {
     return reply('Only users with the exact Consigliere role can use these raffle commands.');
   }
   const subcommand = interaction.options.getSubcommand();
+  if (interaction.options.getSubcommandGroup?.(false) === 'test' && subcommand === 'add') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const result = await requestSynthetic(socket, {
+        name: interaction.options.getString('name', true),
+        gold: interaction.options.getInteger('gold', true),
+        raffleType: interaction.options.getString('raffle', true),
+        donation: interaction.options.getBoolean('donation') === true,
+        discordUserId: interaction.user.id,
+        requestedBy: String(interaction.member.displayName || '').trim()
+      });
+      await interaction.editReply({ content: result.message, allowedMentions: { parse: [] } });
+    } catch (error) { await interaction.editReply({ content: error.message, allowedMentions: { parse: [] } }); }
+    return;
+  }
   if (subcommand === 'refresh') {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
@@ -77,7 +110,7 @@ export async function execute(interaction, socket) {
       await interaction.editReply({ content: selectionMessage(plan.selection) + '\n\nExporting the selected raffle data to the spreadsheet...', allowedMentions: { parse: [] } });
       const result = await requestRefresh(socket, { ...payload, action: 'export' });
       await interaction.editReply({ content: selectionMessage(result.selection) + `\n\nRefresh complete: ${result.synced} entries written across both raffle worksheets.` +
-        '\nThis replaces the displayed data. Live updates and scheduled rollover remain enabled as configured; run this command without a date to restore current periods.', allowedMentions: { parse: [] } });
+        '\nExisting rows were preserved; only missing transaction IDs were appended. Live updates and scheduled rollover remain enabled as configured.', allowedMentions: { parse: [] } });
     } catch (error) {
       await interaction.editReply({ content: error.message, allowedMentions: { parse: [] } });
     }
