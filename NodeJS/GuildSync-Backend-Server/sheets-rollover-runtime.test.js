@@ -6,11 +6,11 @@ import path from 'node:path';
 import { resetRequests, startSheetsRollover } from './sheets-rollover-runtime.js';
 import { configureSheetsCoordinator } from './google-sheets-banking-sync.js';
 
-for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [14, 17]], ['monthly', [35, 44], [12, 15]]]) {
+for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15, 18]], ['monthly', [35, 44], [13, 16]]]) {
   test(`${type} reset touches exact values/notes ranges, hides G and replaces only prior markers`, () => {
     const requests = resetRequests(7, type, 'next-key', [{ metadataId: 23 }]);
     assert.deepEqual(requests, [
-      { updateCells: { range: { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 3, endColumnIndex: 7 }, fields: 'userEnteredValue' } },
+      { updateCells: { range: { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 3, endColumnIndex: 8 }, fields: 'userEnteredValue' } },
       { updateCells: { range: { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 6, endColumnIndex: 8 }, fields: 'userEnteredValue,note' } },
       { updateDimensionProperties: { range: { sheetId: 7, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
       { updateCells: { range: { sheetId: 7, startRowIndex: donationRows[0], endRowIndex: donationRows[1], startColumnIndex: donationColumns[0], endColumnIndex: donationColumns[1] }, fields: 'userEnteredValue' } },

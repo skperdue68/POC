@@ -116,8 +116,8 @@ export function entryLayout(entry) {
   const donation = entry.ticketAmount != null && Number(entry.ticketAmount) === 0;
   return donation
     ? entry.type === 'biweekly'
-      ? { donation, first: 63, last: 70, id: 'O', name: 'P', gold: 'Q', index: 14 }
-      : { donation, first: 36, last: 44, id: 'M', name: 'N', gold: 'O', index: 12 }
+      ? { donation, first: 63, last: 70, id: 'P', name: 'Q', gold: 'R', index: 15 }
+      : { donation, first: 36, last: 44, id: 'N', name: 'O', gold: 'P', index: 13 }
     : { donation, first: 5, last: 254, id: 'D', name: 'E', gold: 'F', index: 3 };
 }
 
@@ -185,7 +185,7 @@ async function writeEntries(entries, uploadedBy, state, log) {
     }];
     if (!layout.donation) {
       requests.push({ updateCells: {
-        range: { sheetId: sheet.sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 6, endColumnIndex: 7 },
+        range: { sheetId: sheet.sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 7, endColumnIndex: 8 },
         rows: [{ values: [bonusEnabled
           ? { userEnteredValue: { numberValue: bonusTickets }, note: 'Bonus: ' + bonusPercent + '%' }
           : {}] }], fields: 'userEnteredValue,note'
