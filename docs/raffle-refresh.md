@@ -4,10 +4,20 @@ After updating the backend and Discord bot, restart both. In
 `NodeJS/GuildSync-Discord-Bot`, run `npm run deploy` to replace the guild's command
 registrations. This removes `/raffle-test` and adds:
 
-- `/gsa raffle refresh` — refresh both Bi-Weekly and 50/50 using the current time.
-- `/gsa raffle refresh date:091526` — refresh both periods containing September 15, 2026.
-- `/gsa raffle test-preview kind:Sales close raffle:Both` — privately preview reminders.
-- `/gsa raffle test-close raffle:Bi-Weekly confirm:true` — actually archive/reset that tab.
+Raffle administration has moved from `/gsa` to `/gsr`. Deployment replaces the
+guild command list, removing the old `/gsa raffle` and `/gsa test` paths while
+retaining `/gsa post`, `/gsa start`, and `/gsa stop` for applications.
+Restart the bot as well as running `npm run deploy` so routing matches registration.
+
+- `/gsr raffle refresh` — refresh both Bi-Weekly and 50/50 using the current time.
+- `/gsr raffle refresh date:091526` — refresh both periods containing September 15, 2026.
+- `/gsr raffle test-preview kind:Sales close raffle:Both` — privately preview reminders.
+- `/gsr raffle test-close raffle:Bi-Weekly confirm:true` — actually archive/reset that tab.
+- `/gsr test add name:tester gold:5000 raffle:Bi-Weekly` — append synthetic data
+  using a generated transaction ID and the current bonus. The name can be invented;
+  it needs no GuildSync member or application record. Add `donation:true` to use
+  the donation area with zero tickets. This writes only to the spreadsheet and
+  returns an ephemeral result; the exact Consigliere role is required.
 
 Every raffle action requires the **exact `Consigliere` role** in the configured
 Discord server. Capo, Caporegieme, and differently capitalized role names are not

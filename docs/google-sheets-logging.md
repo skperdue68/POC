@@ -138,11 +138,11 @@ GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED=true
 ```
 
 Restart both processes. From `NodeJS/GuildSync-Discord-Bot`, run `npm run deploy`
-to register `/gsa raffle test-preview` and `/gsa raffle test-close`. The previous
+to register `/gsr raffle test-preview` and `/gsr raffle test-close`. The previous
 standalone `/raffle-test` command is removed. All raffle administration now
 requires the exact **Consigliere** role and replies privately.
 
-Use `/gsa raffle refresh` to replace both current raffle exports, or supply an
+Use `/gsr raffle refresh` to replace both current raffle exports, or supply an
 optional `date:MMDDYY` to refresh historical periods. This production command
 replaces the old test export and works even when test commands are disabled.
 

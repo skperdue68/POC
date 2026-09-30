@@ -11,7 +11,11 @@ export function createGsaCommandData(env = process.env) {
     .addSubcommand(sub => sub.setName('post').setDescription('Post saved GuildSync application record(s) to Discord')
       .addStringOption(option => option.setName('name').setDescription('Full or partial ESO account name from GuildSyncApplications').setRequired(true)))
     .addSubcommand(sub => sub.setName('stop').setDescription('Stop automatic GuildSync application posts to Discord'))
-    .addSubcommand(sub => sub.setName('start').setDescription('Resume automatic GuildSync application posts to Discord'))
+    .addSubcommand(sub => sub.setName('start').setDescription('Resume automatic GuildSync application posts to Discord'));
+}
+
+export function createGsrCommandData(env = process.env) {
+  return new SlashCommandBuilder().setName('gsr').setDescription('GuildSync raffle administration').setDMPermission(false)
     .addSubcommandGroup(group => {
       group.setName('raffle').setDescription('Consigliere raffle administration')
         .addSubcommand(sub => sub.setName('refresh').setDescription('Append selected-period data not already in the worksheets.')
@@ -33,6 +37,10 @@ export function createGsaCommandData(env = process.env) {
         .addStringOption(option => option.setName('raffle').setDescription('Raffle type').setRequired(true)
           .addChoices(...choices))
         .addBooleanOption(option => option.setName('donation').setDescription('Record as a donation with zero tickets.'))));
+}
+
+export function createGsrCommand(env = process.env) {
+  return { data: createGsrCommandData(env), execute };
 }
 
 function requestRefresh(socket, payload) {

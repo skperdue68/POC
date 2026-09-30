@@ -96,7 +96,9 @@ let guildSyncApplicationDiscordPostingEnabled = true;
 const gsaCommand = {
   data: gsaRaffle.createGsaCommandData(),
   async execute(interaction, guildSyncSocket) {
-    if (interaction.options.getSubcommandGroup(false) === 'raffle') return gsaRaffle.execute(interaction, guildSyncSocket);
+    if (interaction.options.getSubcommandGroup(false)) {
+      return interaction.reply({ content: 'Raffle commands moved to /gsr. Please use /gsr raffle or /gsr test.', flags: MessageFlags.Ephemeral });
+    }
     const subcommand = interaction.options.getSubcommand();
 
     if (subcommand === 'stop') {
@@ -157,6 +159,7 @@ const gsaCommand = {
 const commands = [
   roles,
   raffle,
+  gsaRaffle.createGsrCommand(),
   gsaCommand
 ];
 
