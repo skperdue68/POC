@@ -100,8 +100,8 @@ export function registerRaffleTestSocket(socket, db, { getActiveRaffleSummary, g
       if (!googleSheetsBankingConfig().enabled || !sheets) throw new Error('Enable Google Sheets on the backend first.');
       const type = payload.raffleType;
       if (!['biweekly', 'monthly', 'both'].includes(type)) throw new Error('Choose a valid raffle.');
-      if (!['export', 'close'].includes(payload.action)) throw new Error('Unknown raffle test action.');
-      if (payload.action === 'close' && (type === 'both' || payload.confirm !== true)) throw new Error('Select one raffle and confirm the archive/reset test.');
+      if (!['export', 'close', 'reset'].includes(payload.action)) throw new Error('Unknown raffle test action.');
+      if (['close', 'reset'].includes(payload.action) && (type === 'both' || payload.confirm !== true)) throw new Error('Select one raffle and confirm the archive/reset test.');
       const requestedBy = String(payload.requestedBy || '').trim().slice(0, 100);
       if (!requestedBy) throw new Error('The initiating Discord display name is required.');
       await log('TEST ' + payload.action + ' requested by ' + JSON.stringify(requestedBy) + ' for ' + type);
@@ -110,6 +110,9 @@ export function registerRaffleTestSocket(socket, db, { getActiveRaffleSummary, g
         const entries = currentRaffleEntries(await getBankingDataJSON(db), snapshot, type);
         const result = await exportEntries(entries, { uploadedBy: requestedBy });
         callback({ ok: true, message: `Export complete: ${result.synced} of ${entries.length} current-period entries added. Existing IDs and closed periods are skipped; see the Sheets log for details.` });
+      } else if (payload.action === 'reset') {
+        await sheets.testReset(type);
+        callback({ ok: true, message: `Reset complete: cleared only ${type === 'biweekly' ? 'Bi-Weekly' : '50/50'} closure fields. No archive was created. Raffle dates and database entries are unchanged.` });
       } else {
         const result = await sheets.testClose(type);
         callback({ ok: true, message: `Archive/reset test complete: copied the spreadsheet as "${result.name}" (file ID ${result.archiveId}) and reset only ${type === 'biweekly' ? 'bi-weekly' : '50/50'} in the original. Raffle dates and database entries are unchanged.` });

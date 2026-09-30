@@ -3,6 +3,45 @@ import assert from 'node:assert/strict';
 import { MessageFlags } from 'discord.js';
 import { createGsrCommand, createGsaCommandData } from './gsa-raffle.js';
 
+test('gsr test reset registers with test opt-in and requires confirmation, Consigliere and private replies', async t => {
+  const key = 'GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED';
+  const old = process.env[key];
+  t.after(() => old === undefined ? delete process.env[key] : process.env[key] = old);
+  const options = env => createGsrCommand(env).data.toJSON().options.find(group => group.name === 'test').options;
+  assert.equal(options({}).some(sub => sub.name === 'reset'), false);
+  const reset = options({ [key]: 'true' }).find(sub => sub.name === 'reset');
+  assert.deepEqual(reset.options.filter(option => option.required).map(option => option.name), ['raffle', 'confirm']);
+  const replies = [], calls = [];
+  let confirm = false;
+  const interaction = {
+    guildId: process.env.DISCORD_GUILD_ID || 'guild', user: { id: '123' },
+    member: { displayName: 'Officer', roles: { cache: [{ name: 'Consigliere' }] } },
+    options: { getSubcommandGroup: () => 'test', getSubcommand: () => 'reset', getString: () => 'monthly', getBoolean: () => confirm },
+    reply: async value => replies.push(value), deferReply: async value => replies.push(value), editReply: async value => replies.push(value)
+  };
+  const socket = { connected: true, timeout() { return this; }, emit(event, payload, callback) {
+    calls.push({ event, payload }); callback(null, { ok: true, message: 'Reset complete. No archive was created.' });
+  } };
+  const command = createGsrCommand();
+  process.env[key] = 'true';
+  await command.execute(interaction, socket);
+  assert.match(replies.at(-1).content, /confirm:true/);
+  assert.equal(calls.length, 0);
+  confirm = true;
+  await command.execute(interaction, socket);
+  assert.equal(calls[0].event, 'guildsync:raffle-test');
+  assert.deepEqual(calls[0].payload, { action: 'reset', raffleType: 'monthly', confirm: true, requestedBy: 'Officer', discordUserId: '123' });
+  assert.equal(replies.at(-2).flags, MessageFlags.Ephemeral);
+  interaction.member.roles.cache = [{ name: 'consigliere' }];
+  await command.execute(interaction, socket);
+  assert.match(replies.at(-1).content, /Consigliere/);
+  interaction.member.roles.cache = [{ name: 'Consigliere' }];
+  process.env[key] = 'false';
+  await command.execute(interaction, socket);
+  assert.match(replies.at(-1).content, /disabled/);
+  assert.equal(calls.length, 1);
+});
+
 test('gsr test add routes invented names directly to the synthetic endpoint and replies privately', async () => {
   const command = createGsrCommand({});
   assert.equal(command.data.name, 'gsr');

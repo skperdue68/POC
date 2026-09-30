@@ -30,13 +30,19 @@ export function createGsrCommandData(env = process.env) {
           .addBooleanOption(option => option.setName('confirm').setDescription('True archives and clears this raffle worksheet now.').setRequired(true)));
       return group;
     })
-    .addSubcommandGroup(group => group.setName('test').setDescription('Consigliere-only test data tools')
+    .addSubcommandGroup(group => {
+      group.setName('test').setDescription('Consigliere-only test data tools')
       .addSubcommand(sub => sub.setName('add').setDescription('Append a synthetic raffle entry to the spreadsheet.')
         .addStringOption(option => option.setName('name').setDescription('ESO account name').setRequired(true))
         .addIntegerOption(option => option.setName('gold').setDescription('Gold paid').setMinValue(0).setRequired(true))
         .addStringOption(option => option.setName('raffle').setDescription('Raffle type').setRequired(true)
           .addChoices(...choices))
-        .addBooleanOption(option => option.setName('donation').setDescription('Record as a donation with zero tickets.'))));
+        .addBooleanOption(option => option.setName('donation').setDescription('Record as a donation with zero tickets.')));
+      if (testsEnabled(env)) group.addSubcommand(sub => sub.setName('reset').setDescription('Clear one raffle worksheet without archiving; requires confirmation.')
+        .addStringOption(option => raffleOption(option))
+        .addBooleanOption(option => option.setName('confirm').setDescription('True clears this raffle worksheet without an archive.').setRequired(true)));
+      return group;
+    });
 }
 
 export function createGsrCommand(env = process.env) {
@@ -125,14 +131,15 @@ export async function execute(interaction, socket) {
     return;
   }
   if (!testsEnabled()) return reply('Temporary raffle test commands are disabled.');
-  const action = { 'test-preview': 'preview', 'test-close': 'close' }[subcommand];
+  const action = subcommand === 'reset' && interaction.options.getSubcommandGroup?.(false) === 'test'
+    ? 'reset' : { 'test-preview': 'preview', 'test-close': 'close' }[subcommand];
   const raffleType = interaction.options.getString('raffle');
-  if (!['preview', 'close'].includes(action) ||
+  if (!['preview', 'close', 'reset'].includes(action) ||
       !['biweekly', 'monthly', ...(action === 'preview' ? ['both'] : [])].includes(raffleType)) {
     return reply('Choose a supported raffle test and raffle.');
   }
-  if (action === 'close' && interaction.options.getBoolean('confirm') !== true) {
-    return reply('Set confirm:true to archive and clear the selected raffle worksheet.');
+  if (['close', 'reset'].includes(action) && interaction.options.getBoolean('confirm') !== true) {
+    return reply(action === 'reset' ? 'Set confirm:true to clear the selected raffle worksheet without an archive.' : 'Set confirm:true to archive and clear the selected raffle worksheet.');
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {

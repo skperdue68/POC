@@ -73,7 +73,7 @@ No new environment variables, credentials, dependencies, or database migrations
 are required. Refresh uses the existing backend Google Sheets configuration and
 does **not** depend on `GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED`.
 
-For `test-preview` and `test-close`, retain
+For `test-preview`, `test-close`, and `/gsr test reset`, retain
 `GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED=true` in the bot `.env`; close also requires
 the flag in the backend `.env`. Set it in both for testing. When finished, set
 both to `false`, restart, and run `npm run deploy` again: refresh remains available
@@ -83,3 +83,19 @@ test spreadsheet while testing it.
 Failures and written rows appear in the existing backend Sheets log. A timeout
 can occur after a write was accepted; inspect the log before retrying. Refresh
 is safe to repeat, while every confirmed test-close may create another archive.
+
+## Reset without archiving
+
+Use `/gsr test reset raffle:Bi-Weekly confirm:true` or select `50/50` to clear
+only that worksheet's closure fields, remove bonus notes, and hide G/H, using
+the same ranges as test-close. This actually clears the sheet without a backup.
+It requires the exact Consigliere role and the existing test-command flag in
+both bot and backend `.env`; responses are ephemeral. No new settings are needed.
+Restart both services and run `npm run deploy` from the Discord bot directory
+to register the command.
+
+Reset needs Sheets editing access but no archive folder or Drive copy access.
+It leaves database entries, raffle dates, and rollover completion markers intact,
+and refuses to run while an archive/reset is pending. Protected ranges must
+allow the configured Google identity to edit them. Normal scheduled rollover
+continues independently according to its existing configuration.
