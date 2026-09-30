@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { syncBankingEntriesToGoogleSheets, sheetsRequest, configureSheetsCoordinator } from './google-sheets-banking-sync.js';
+import * as sheets from './google-sheets-banking-sync.js';
 
 function fixture(t, { rows = [], state = {} } = {}) {
   const env = { GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID: 'fixture',
@@ -36,6 +37,37 @@ function fixture(t, { rows = [], state = {} } = {}) {
 const ticket = (extra = {}) => ({ type: 'biweekly', eventId: '123', displayName: 'Player', amount: 200001, ticketAmount: 200,
   bonusEnabled: true, bonusTickets: 20, bonusPercent: 10, time: 1500, ...extra });
 const cellValues = request => request.updateCells.rows[0].values.map(cell => Object.values(cell.userEnteredValue)[0]);
+
+test('refresh replaces both tabs atomically, including empty periods, and repeated exports update existing IDs', async t => {
+  const f = fixture(t, { rows: [['123', 'Old name', 100]], state: { lastClosedSalesEnd: { biweekly: 2000 } } });
+  assert.equal(typeof sheets.refreshBankingEntriesToGoogleSheets, 'function');
+  const refresh = entries => sheets.refreshBankingEntriesToGoogleSheets(async () => entries,
+    { uploadedBy: 'Officer', log: async value => f.logs.push(value) });
+  await refresh([ticket()]);
+  await refresh([ticket({ displayName: 'Corrected', bonusTickets: 40, bonusPercent: 20 })]);
+  assert.equal(f.writes.length, 2);
+  for (const batch of f.writes) {
+    for (const sheetId of [7, 8]) {
+      assert.ok(batch.some(r => r.updateCells?.range?.sheetId === sheetId && r.updateCells.range.startColumnIndex === 3 && r.updateCells.range.endColumnIndex === 6 && !r.updateCells.rows));
+      assert.ok(batch.some(r => r.updateCells?.range?.sheetId === sheetId && r.updateCells.fields.includes('note')));
+      assert.ok(batch.some(r => r.updateCells?.start?.sheetId === sheetId && r.updateCells.start.rowIndex === 2));
+    }
+    const data = batch.filter(r => r.updateCells?.start?.columnIndex === 3);
+    assert.equal(data.length, 1);
+    assert.equal(data[0].updateCells.start.rowIndex, 4);
+    assert.ok(!batch.some(r => r.updateCells?.range?.startColumnIndex === 6)); // preserve G formulas
+  }
+  assert.equal(cellValues(f.writes[1].find(r => r.updateCells?.start?.columnIndex === 3))[1], 'Corrected');
+  assert.equal(f.calls.some(url => url.includes('/values/')), false);
+});
+
+test('refresh preflights capacity for both raffles and performs no clears on overflow', async t => {
+  const f = fixture(t);
+  assert.equal(typeof sheets.refreshBankingEntriesToGoogleSheets, 'function');
+  const entries = [ticket(), ...Array.from({ length: 10 }, (_, i) => ticket({ type: 'monthly', eventId: 'd' + i, ticketAmount: 0 }))];
+  await assert.rejects(sheets.refreshBankingEntriesToGoogleSheets(async () => entries, { log: async value => f.logs.push(value) }), /No empty row/);
+  assert.deepEqual(f.writes, []);
+});
 
 test('failed Sheets requests report operation, range and Google detail without credentials', async t => {
   const originalFetch = globalThis.fetch, logs = [];

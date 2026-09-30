@@ -1,14 +1,55 @@
-import { syncBankingEntriesToGoogleSheets, googleSheetsBankingConfig, exportLog } from './google-sheets-banking-sync.js';
+import { syncBankingEntriesToGoogleSheets, refreshBankingEntriesToGoogleSheets, googleSheetsBankingConfig, exportLog } from './google-sheets-banking-sync.js';
 
-export function currentRaffleEntries(entries, snapshot, type) {
-  const windows = snapshot.raffles.filter(raffle => type === 'both' || raffle.type === type);
-  return entries.filter(entry => windows.some(raffle => entry.type === raffle.type &&
-    Number(entry.time) >= raffle.salesStart && Number(entry.time) <= raffle.salesEnd && Number(entry.time) <= snapshot.asOf))
+export async function isConsigliere(db, discordUserId) {
+  if (typeof discordUserId !== 'string' || !discordUserId) return false;
+  const [rows] = await db.execute(`SELECT r.role_name FROM discord_member_roles m
+    JOIN discord_roles r ON r.role_id = m.role_id WHERE m.discord_id = ?`, [discordUserId]);
+  return rows.some(row => row.role_name === 'Consigliere');
+}
+
+export function entriesForRafflePeriods(entries, periods, asOf) {
+  return entries.filter(entry => periods.some(period => entry.type === period.type &&
+    Number(entry.time) >= period.start && Number(entry.time) < period.end && Number(entry.time) <= asOf))
     .sort((a, b) => Number(a.time) - Number(b.time) || String(a.eventId).localeCompare(String(b.eventId)));
 }
 
+export function currentRaffleEntries(entries, snapshot, type) {
+  const windows = snapshot.raffles.filter(raffle => type === 'both' || raffle.type === type);
+  return entriesForRafflePeriods(entries, windows.map(raffle => ({ type: raffle.type, start: raffle.salesStart, end: raffle.salesEnd + 1 })), snapshot.asOf);
+}
+
+export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelection, getBankingDataJSON,
+  authorize = isConsigliere, refreshEntries = refreshBankingEntriesToGoogleSheets, log = exportLog }) {
+  let running = false;
+  socket.on('guildsync:raffle-refresh', async (payload = {}, callback) => {
+    if (typeof callback !== 'function') return;
+    if (!socket.guildSyncAuthenticated || socket.guildSyncAuthType !== 'discord-bot') {
+      callback({ ok: false, message: 'Discord bot authentication is required.' }); return;
+    }
+    if (running) { callback({ ok: false, message: 'A raffle refresh is already running. Please wait for it to finish.' }); return; }
+    running = true;
+    try {
+      if (!await authorize(db, payload.discordUserId)) throw new Error('Only users with the exact Consigliere role can refresh raffles. Check Discord role synchronization if necessary.');
+      if (!['plan', 'export'].includes(payload.action)) throw new Error('Unknown raffle refresh action.');
+      let selection = getRaffleRefreshSelection(payload.date);
+      if (payload.action === 'plan') { callback({ ok: true, selection }); return; }
+      const requestedBy = String(payload.requestedBy || '').trim().slice(0, 100);
+      if (!requestedBy) throw new Error('The initiating Discord display name is required.');
+      const result = await refreshEntries(async () => {
+        selection = getRaffleRefreshSelection(payload.date);
+        await log('REFRESH requested by ' + JSON.stringify(requestedBy) + ': ' + JSON.stringify(selection));
+        return entriesForRafflePeriods(await getBankingDataJSON(db), selection.raffles, selection.asOf);
+      }, { uploadedBy: requestedBy });
+      callback({ ok: true, selection, synced: result.synced });
+    } catch (error) {
+      await log('REFRESH failed: ' + error.message).catch(console.error);
+      callback({ ok: false, message: 'Raffle refresh failed: ' + error.message });
+    } finally { running = false; }
+  });
+}
+
 export function registerRaffleTestSocket(socket, db, { getActiveRaffleSummary, getBankingDataJSON, sheets,
-  exportEntries = syncBankingEntriesToGoogleSheets, log = exportLog }) {
+  exportEntries = syncBankingEntriesToGoogleSheets, log = exportLog, authorize = isConsigliere }) {
   let running = false;
   socket.on('guildsync:raffle-test', async (payload = {}, callback) => {
     if (typeof callback !== 'function') return;
@@ -21,6 +62,7 @@ export function registerRaffleTestSocket(socket, db, { getActiveRaffleSummary, g
     if (running) { callback({ ok: false, message: 'A raffle test is already running. Check the backend log before retrying.' }); return; }
     running = true;
     try {
+      if (!await authorize(db, payload.discordUserId)) throw new Error('Only users with the exact Consigliere role can run raffle tests.');
       if (!googleSheetsBankingConfig().enabled || !sheets) throw new Error('Enable Google Sheets on the backend first.');
       const type = payload.raffleType;
       if (!['biweekly', 'monthly', 'both'].includes(type)) throw new Error('Choose a valid raffle.');
