@@ -9,9 +9,9 @@ const escapeQuery = value => String(value).replace(/\\/g, '\\\\').replace(/'/g, 
 export function resetRequests(sheetId, type, key, oldMetadata = []) {
   const range = (r1, r2, c1, c2) => ({ sheetId, startRowIndex: r1, endRowIndex: r2, startColumnIndex: c1, endColumnIndex: c2 });
   const requests = [
-    { updateCells: { range: range(4, 254, 3, 8), fields: 'userEnteredValue' } },
-    { updateCells: { range: range(4, 254, 6, 8), fields: 'userEnteredValue,note' } },
-    { updateCells: { range: range(4, 254, 9, 11), fields: 'userEnteredValue' } },
+    { updateCells: { range: range(4, 254, 3, 6), fields: 'userEnteredValue' } },
+    { updateCells: { range: range(4, 254, 7, 8), fields: 'userEnteredValue,note' } },
+    ...(type === 'biweekly' ? [{ updateCells: { range: range(4, 254, 9, 11), fields: 'userEnteredValue' } }] : []),
     { updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 }, properties: { hiddenByUser: true }, fields: 'hiddenByUser' } },
     { updateCells: { range: type === 'biweekly' ? range(61, 70, 15, 18) : range(35, 44, 13, 16), fields: 'userEnteredValue' } },
     ...(type === 'biweekly'

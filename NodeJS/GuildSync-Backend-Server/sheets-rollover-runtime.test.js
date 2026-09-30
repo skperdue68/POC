@@ -10,8 +10,15 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
   test(`${type} reset touches exact values/notes ranges, hides G and replaces only prior markers`, () => {
     const requests = resetRequests(7, type, 'next-key', [{ metadataId: 23 }]);
     const ranges = requests.filter(request => request.updateCells).map(request => request.updateCells.range);
-    assert.ok(ranges.some(range => range.startRowIndex === 4 && range.endRowIndex === 254 && range.startColumnIndex === 3 && range.endColumnIndex === 8));
-    assert.ok(ranges.some(range => range.startRowIndex === 4 && range.endRowIndex === 254 && range.startColumnIndex === 9 && range.endColumnIndex === 11));
+    assert.ok(ranges.some(range => range.startRowIndex === 4 && range.endRowIndex === 254 && range.startColumnIndex === 3 && range.endColumnIndex === 6));
+    assert.equal(ranges.some(range => range.startRowIndex === 4 && range.endRowIndex === 254 && range.startColumnIndex === 9 && range.endColumnIndex === 11), type === 'biweekly');
+    const touches = column => ranges.some(range => range.startRowIndex < 254 && range.endRowIndex > 4 && range.startColumnIndex <= column && range.endColumnIndex > column);
+    assert.equal(touches(6), false, 'preserve G values, formulas and notes');
+    if (type === 'monthly') {
+      assert.equal(touches(9), false, 'preserve 50/50 J');
+      assert.equal(touches(10), false, 'preserve 50/50 K');
+    }
+    assert.ok(requests.some(({ updateCells: cell }) => cell?.range.startRowIndex === 4 && cell.range.endRowIndex === 254 && cell.range.startColumnIndex === 7 && cell.range.endColumnIndex === 8 && cell.fields === 'userEnteredValue,note'));
     assert.ok(ranges.some(range => range.startRowIndex === donationRows[0] && range.endRowIndex === donationRows[1] && range.startColumnIndex === donationColumns[0] && range.endColumnIndex === donationColumns[1]));
     if (type === 'biweekly') {
       assert.ok(ranges.some(range => range.startRowIndex === 2 && range.endRowIndex === 4 && range.startColumnIndex === 17 && range.endColumnIndex === 18));
