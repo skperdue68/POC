@@ -3,6 +3,26 @@ import assert from 'node:assert/strict';
 import { currentRaffleEntries, registerRaffleTestSocket } from './raffle-test-socket.js';
 import * as endpoints from './raffle-test-socket.js';
 
+test('synthetic add accepts an invented account without database lookup or insertion', async () => {
+  let handler;
+  const written = [];
+  const now = Math.floor(Date.now() / 1000);
+  const socket = { guildSyncAuthenticated: true, guildSyncAuthType: 'discord-bot', on(event, callback) {
+    assert.equal(event, 'guildsync:test-add'); handler = callback;
+  } };
+  endpoints.registerSyntheticTestSocket(socket, { execute() { throw new Error('Unexpected member lookup or database write'); } }, {
+    authorize: async () => true,
+    getActiveRaffleSummary: async () => ({ raffles: [{ type: 'biweekly', salesStart: now - 10, salesEnd: now + 3600, bonusEnabled: true, bonusPercent: 20 }] }),
+    exportEntries: async rows => { written.push(...rows); return { synced: rows.length }; }, log: async () => {}
+  });
+  const result = await new Promise(resolve => handler({ name: 'InventedTester', gold: 5000, raffleType: 'biweekly', discordUserId: '123', requestedBy: 'Officer' }, resolve));
+  assert.equal(result.ok, true);
+  assert.equal(written[0].displayName, 'InventedTester');
+  assert.equal(written[0].ticketAmount, 10);
+  assert.equal(written[0].bonusTickets, 2);
+  assert.match(written[0].eventId, /^Test-[0-9a-f-]{36}$/);
+});
+
 const snapshot = { asOf: 200, raffles: [
   { type: 'biweekly', salesStart: 101, salesEnd: 250 },
   { type: 'monthly', salesStart: 50, salesEnd: 250 }

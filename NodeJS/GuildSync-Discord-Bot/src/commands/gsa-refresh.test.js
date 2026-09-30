@@ -21,9 +21,11 @@ function fixture({ role = 'Consigliere', action = 'refresh', date = '091526' } =
 test('shared gsa registration always contains refresh and only opt-in test subcommands', () => {
   assert.equal(typeof command.createGsaCommandData, 'function');
   for (const enabled of [false, true]) {
-    const data = command.createGsaCommandData({ GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED: String(enabled) }).toJSON();
-    assert.equal(data.name, 'gsa');
-    assert.deepEqual(data.options.slice(0, 3).map(o => o.name), ['post', 'stop', 'start']);
+    const applications = command.createGsaCommandData().toJSON();
+    assert.deepEqual(applications.options.map(o => o.name), ['post', 'stop', 'start']);
+    const data = command.createGsrCommandData({ GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED: String(enabled) }).toJSON();
+    assert.equal(data.name, 'gsr');
+    assert.deepEqual(data.options.map(o => o.name), ['raffle', 'test']);
     const group = data.options.find(o => o.name === 'raffle');
     assert.deepEqual(group.options.map(o => o.name), enabled ? ['refresh', 'test-preview', 'test-close'] : ['refresh']);
     assert.deepEqual(group.options[0].options.map(o => o.name), ['date']);

@@ -3,12 +3,13 @@ import { REST, Routes } from 'discord.js';
 
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
-import { createGsaCommandData } from './commands/gsa-raffle.js';
+import { createGsaCommandData, createGsrCommandData } from './commands/gsa-raffle.js';
 
 const commands = [
   roles.data.toJSON(),
   raffle.data.toJSON(),
   createGsaCommandData().toJSON(),
+  createGsrCommandData().toJSON(),
 ];
 
 const {
