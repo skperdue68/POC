@@ -26,7 +26,7 @@ ticket count is written; the sheet calculates it. Disabled bonuses clear H5:H254
 values and notes, clear the new row's G value/note, and hide G:H. Other formulas
 and formatting are preserved.
 
-Each successful entry write updates bi-weekly Q3/Q4 or 50/50 O3/O4 with uploader
+Each successful entry write updates bi-weekly R3/R4 or 50/50 P3/P4 with uploader
 `name (GuildSync)` and Eastern time, e.g. `9/27/2026 11:07am ET`.
 Entry values, bonus note, and metadata form one atomic Sheets batch.
 Normal exports still require a successful database insertion/commit.
