@@ -141,7 +141,8 @@ test('reminder hours accept comma-separated positive finite values and reject ma
 test('raffle formatting starts with full freshness line and shows bonus expiration warnings', async () => {
   const { formatRaffles } = await import('./raffle.js');
   const content = formatRaffles({ asOf: 100, raffles: [], reminders: [{ type: 'monthly', kind: 'bonus', percent: 10, nextPercent: 0, at: 500 }] });
-  assert.ok(content.startsWith('As of <t:100:f>. Based on the latest banking data received by GuildSync.'));
+  assert.ok(content.startsWith('**50/50 reminder:**'));
+  assert.match(content, /As of <t:100:f>\. Based on the latest banking data received by GuildSync\./);
   assert.match(content, /10%.*expires.*<t:500:F>/);
 });
 
@@ -164,4 +165,18 @@ test('each raffle warns independently and only the current bonus boundary is ann
   assert.equal(f.sent.length, 4);
   assert.match(formatRaffles(f.sent.at(-1)), /10% ticket bonus changes to 5% at <t:16000:F>/);
   assert.doesNotMatch(formatRaffles(f.sent.at(-1)), /10% ticket bonus expires/);
+});
+
+test('groups simultaneous reminders by purpose and puts them before freshness line', async () => {
+  const { formatRaffles } = await import('./raffle.js');
+  const content = formatRaffles({ asOf: 100, raffles: [], reminders: [
+    { type: 'biweekly', kind: 'sales', at: 500 },
+    { type: 'monthly', kind: 'sales', at: 500 },
+    { type: 'biweekly', kind: 'bonus', percent: 20, nextPercent: 10, at: 700 },
+    { type: 'monthly', kind: 'bonus', percent: 20, nextPercent: 10, at: 700 }
+  ] });
+  assert.equal((content.match(/Ticket sales close/g) || []).length, 1);
+  assert.equal((content.match(/ticket bonus changes to/g) || []).length, 1);
+  assert.ok(content.indexOf('Ticket sales close') < content.indexOf('As of'));
+  assert.match(content, /Bi-Weekly and 50\/50 reminder/);
 });

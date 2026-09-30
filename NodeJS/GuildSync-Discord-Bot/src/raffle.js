@@ -18,14 +18,23 @@ export function requestActiveRaffles(socket, options = {}) {
 }
 export function formatRaffles(snapshot, { includeTickets = false, verifyName = '' } = {}) {
   const number = value => Number(value || 0).toLocaleString('en-US');
-  return [`As of <t:${snapshot.asOf}:f>. Based on the latest banking data received by GuildSync.`,
-    ...(snapshot.reminders || []).map(reminder => {
-      const label = reminder.type === 'biweekly' ? 'Bi-Weekly' : '50/50';
-      const event = reminder.kind === 'sales' ? 'Ticket sales close' : reminder.nextPercent > 0
-        ? `${number(reminder.percent)}% ticket bonus changes to ${number(reminder.nextPercent)}%`
-        : `${number(reminder.percent)}% ticket bonus expires`;
-      return `**${label} reminder:** ${event} at <t:${reminder.at}:F> (<t:${reminder.at}:R>).`;
-    }), '**GuildSync active raffle prizes**', ...snapshot.raffles.map(raffle => [
+  const reminders = [...(snapshot.reminders || [])].sort((a, b) => a.at - b.at);
+  const grouped = new Map();
+  for (const reminder of reminders) {
+    const key = `${reminder.kind}:${reminder.at}:${reminder.percent || 0}:${reminder.nextPercent || 0}`;
+    const group = grouped.get(key) || { ...reminder, types: [] };
+    group.types.push(reminder.type);
+    grouped.set(key, group);
+  }
+  const reminderLines = [...grouped.values()].map(reminder => {
+    const labels = [...new Set(reminder.types)].map(type => type === 'biweekly' ? 'Bi-Weekly' : '50/50');
+    const label = labels.length > 1 ? labels.join(' and ') : labels[0];
+    const event = reminder.kind === 'sales' ? 'Ticket sales close' : reminder.nextPercent > 0
+      ? `${number(reminder.percent)}% ticket bonus changes to ${number(reminder.nextPercent)}%`
+      : `${number(reminder.percent)}% ticket bonus expires`;
+    return `**${label} reminder:** ${event} at <t:${reminder.at}:F> (<t:${reminder.at}:R>).`;
+  });
+  return [...reminderLines, `As of <t:${snapshot.asOf}:f>. Based on the latest banking data received by GuildSync.`, '**GuildSync active raffle prizes**', ...snapshot.raffles.map(raffle => [
     `**${raffle.type === 'biweekly' ? 'Bi-Weekly' : '50/50'}: ${number(raffle.prizeGold)} gold available for the draw**`,
     ...(raffle.type === 'biweekly' ? [`${number(raffle.drawCount)} draws × 200,000 gold each (rounded up).`] : []),
     `Tickets: ${number(raffle.totalTickets)}${raffle.bonusEnabled ? ` (includes ${number(raffle.bonusTickets || 0)} bonus; ${number(raffle.bonusPercent || 0)}% bonus expires <t:${raffle.bonusExpiresAt}:R>${raffle.nextBonusPercent ? `, then ${number(raffle.nextBonusPercent)}% until <t:${raffle.nextBonusExpiresAt}:R>` : ''})` : ''} · Draw: <t:${raffle.drawTime}:F>`,
