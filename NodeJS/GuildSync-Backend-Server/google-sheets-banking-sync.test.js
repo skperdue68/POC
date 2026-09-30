@@ -60,7 +60,7 @@ test('tickets write D/E/F in first fully empty row with G bonus note and correct
       range: { sheetId: id, startRowIndex: 6, endRowIndex: 7, startColumnIndex: 6, endColumnIndex: 7 },
       rows: [{ values: [{ userEnteredValue: { numberValue: 20 }, note: 'Bonus: 10%' }] }], fields: 'userEnteredValue,note'
     });
-    assert.deepEqual(requests[2].updateDimensionProperties, { range: { sheetId: id, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 }, properties: { hiddenByUser: false }, fields: 'hiddenByUser' });
+    assert.deepEqual(requests[2].updateDimensionProperties, { range: { sheetId: id, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 }, properties: { hiddenByUser: false }, fields: 'hiddenByUser' });
     const metadata = requests[3].updateCells;
     assert.deepEqual(metadata.start, { sheetId: id, rowIndex: 2, columnIndex: index ? 14 : 16 });
     assert.equal(metadata.rows[0].values[0].userEnteredValue.stringValue, 'EvaineFaye (GuildSync)');
@@ -74,13 +74,15 @@ test('disabled bonus clears stale G value/note without hiding other rows; manual
   const f = fixture(t);
   await f.run([ticket({ bonusEnabled: false }), ticket({ eventId: 'manual', dataSource: 'ManualBiweeklyTicket', note: 'FFTG' })]);
   const requests = f.writes.flat();
-  const disabled = requests.slice(0, 3);
+  const disabled = requests.slice(0, 4);
   assert.deepEqual(disabled[1].updateCells.rows, [{ values: [{}] }]);
   assert.equal(disabled[1].updateCells.fields, 'userEnteredValue,note');
-  assert.equal(disabled.some(request => request.updateDimensionProperties), false);
-  assert.deepEqual(cellValues(requests[3]), ['manual', 'Player (FFTG)', 200000]);
-  assert.equal(requests[3].updateCells.start.rowIndex, 5);
-  assert.deepEqual(requests[4].updateCells.rows, [{ values: [{ userEnteredValue: { numberValue: 0 }, note: 'Bonus: 0%' }] }]);
+  assert.deepEqual(disabled[2].updateCells.range, { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 7, endColumnIndex: 8 });
+  assert.equal(disabled[2].updateCells.fields, 'userEnteredValue,note');
+  assert.deepEqual(disabled[3].updateDimensionProperties.range, { sheetId: 7, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 });
+  assert.deepEqual(cellValues(requests[5]), ['manual', 'Player (FFTG)', 200000]);
+  assert.equal(requests[5].updateCells.start.rowIndex, 5);
+  assert.deepEqual(requests[6].updateCells.rows, [{ values: [{ userEnteredValue: { numberValue: 0 }, note: 'Bonus: 0%' }] }]);
 });
 
 test('zero-ticket donations use bounded O/P/Q and M/N/O ranges without bonus cells or notes', async t => {

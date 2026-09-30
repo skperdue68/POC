@@ -21,11 +21,12 @@ unchanged. Manual entries append their note in parentheses after the name.
 
 G contains the awarded bonus-ticket count with a cell note `Bonus: N%` when that
 raffle's bonus policy is enabled. Manual tickets always receive 0 extra bonus
-tickets and 0%. G becomes visible for a bonus entry. No purchased/total ticket
-count is written; the sheet calculates it. Disabled bonuses clear G's value and
-note on the newly written row. Other formulas and formatting are preserved.
+tickets and 0%. G and H become visible when bonuses are enabled. No purchased/total
+ticket count is written; the sheet calculates it. Disabled bonuses clear H5:H254
+values and notes, clear the new row's G value/note, and hide G:H. Other formulas
+and formatting are preserved.
 
-Each successful entry write updates Q3/Q4 on either raffle sheet with uploader
+Each successful entry write updates bi-weekly Q3/Q4 or 50/50 O3/O4 with uploader
 `name (GuildSync)` and Eastern time, e.g. `9/27/2026 11:07am ET`.
 Entry values, bonus note, and metadata form one atomic Sheets batch.
 Normal exports still require a successful database insertion/commit.

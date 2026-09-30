@@ -191,9 +191,19 @@ async function writeEntries(entries, uploadedBy, state, log) {
           : {}] }], fields: 'userEnteredValue,note'
       } });
       if (bonusEnabled) requests.push({ updateDimensionProperties: {
-        range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 },
+        range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 },
         properties: { hiddenByUser: false }, fields: 'hiddenByUser'
       } });
+      else {
+        requests.push({ updateCells: {
+          range: { sheetId: sheet.sheetId, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 7, endColumnIndex: 8 },
+          fields: 'userEnteredValue,note'
+        } });
+        requests.push({ updateDimensionProperties: {
+          range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 },
+          properties: { hiddenByUser: true }, fields: 'hiddenByUser'
+        } });
+      }
     }
     const attribution = String(uploadedBy || '').trim();
     requests.push({ updateCells: {
