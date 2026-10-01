@@ -35,20 +35,10 @@ async function credentials(settings) {
 
 function base64url(value) { return Buffer.from(value).toString('base64url'); }
 
-async function accessToken(account, drive = false) {
-  if (process.env.GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN) {
-    const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({
-      grant_type: 'refresh_token', refresh_token: process.env.GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN,
-      client_id: process.env.GUILDSYNC_GOOGLE_OAUTH_CLIENT_ID || '', client_secret: process.env.GUILDSYNC_GOOGLE_OAUTH_CLIENT_SECRET || ''
-    }), signal: AbortSignal.timeout(30000) });
-    if (!response.ok) throw new Error(`Google OAuth refresh failed (${response.status}).`);
-    const token = (await response.json()).access_token;
-    if (!token) throw new Error('Google OAuth returned no access token.');
-    return token;
-  }
+async function accessToken(account) {
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const claim = base64url(JSON.stringify({ iss: account.client_email, scope: drive ? `${SHEETS_SCOPE} https://www.googleapis.com/auth/drive` : SHEETS_SCOPE, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
+  const claim = base64url(JSON.stringify({ iss: account.client_email, scope: SHEETS_SCOPE, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
   const signer = crypto.createSign('RSA-SHA256');
   signer.update(`${header}.${claim}`);
   const assertion = `${header}.${claim}.${signer.sign(account.private_key, 'base64url')}`;
@@ -75,16 +65,22 @@ export async function sheetsRequest(token, url, init = {}, log = exportLog) {
   return response.json();
 }
 
-export async function googleContext(drive = false) {
+export async function googleContext() {
   const settings = config();
-  const account = process.env.GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN ? null : await credentials(settings);
-  const token = await accessToken(account, drive);
+  const account = await credentials(settings);
+  const token = await accessToken(account);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(settings.spreadsheetId)}`;
   return { settings, token, url };
 }
 
 let coordinate = async operation => operation({});
 export function configureSheetsCoordinator(run) { coordinate = run; }
+
+// Called only by rollover while it already holds the export lock; never re-enter the queue.
+export async function replayBankingEntries(entries, state, log = exportLog) {
+  if (!entries.length) return { synced: 0 };
+  return writeEntries(entries, '', state, log);
+}
 
 function tabFor(type, settings) { return type === 'biweekly' ? settings.biweeklyTab : type === 'monthly' ? settings.fiftyFiftyTab : ''; }
 function sheetGoldAmount(amount) {

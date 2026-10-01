@@ -25,7 +25,8 @@ function archiveName(drawTime) {
  * State is bound by the caller to the configured source spreadsheet.
  */
 export function createRollover({ loadState, saveState, getWindows, archive, reset,
-  now = () => Math.floor(Date.now() / 1000), log = () => {} }) {
+  delaySeconds = 0, now = () => Math.floor(Date.now() / 1000), log = () => {} }) {
+  if (!Number.isSafeInteger(delaySeconds) || delaySeconds < 0) throw new Error('Invalid rollover delay');
   return {
     async tick() {
       const timestamp = Math.floor(now());
@@ -48,6 +49,7 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
           const following = validateWindows(getWindows(cutoff + 1), cutoff);
           state.pending = {
             key: `raffle-rollover-${cutoff}`, salesEnd: cutoff,
+            readyAt: cutoff + delaySeconds,
             name: archiveName(Math.min(...raffles.map((window) => window.drawTime))),
             raffles, archiveId: null,
             nextWindows: state.windows.map((window) => window.salesEnd === cutoff
@@ -56,16 +58,19 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
           await saveState(structuredClone(state));
         }
         const job = state.pending;
+        // Legacy pending jobs have already begun; do not delay their recovery.
+        if (job.readyAt != null && timestamp < job.readyAt) return state;
         if (!job.archiveId) {
           const archiveId = await archive({ key: job.key, name: job.name, raffles: structuredClone(job.raffles) });
           if (typeof archiveId !== 'string' || !archiveId.trim()) throw new Error('Archive did not return a verified copy ID');
           job.archiveId = archiveId;
           await saveState(structuredClone(state));
         }
-        await reset({ key: job.key, archiveId: job.archiveId, raffles: structuredClone(job.raffles) });
+        await reset({ key: job.key, archiveId: job.archiveId, raffles: structuredClone(job.raffles), nextWindows: structuredClone(job.nextWindows) });
         for (const raffle of job.raffles) state.lastClosedSalesEnd[raffle.type] = raffle.salesEnd;
         state.windows = job.nextWindows;
         state.pending = null;
+        state.catchupRequired = true;
         await saveState(structuredClone(state));
         await log(`Raffle spreadsheet rollover completed: ${job.key} (${job.archiveId})`);
       }

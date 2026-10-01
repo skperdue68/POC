@@ -1,12 +1,13 @@
 import test from 'node:test';
+import { generateKeyPairSync } from 'node:crypto';
+const testAccount = JSON.stringify({ client_email: 'test@example.invalid', private_key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) });
 import assert from 'node:assert/strict';
 import { syncBankingEntriesToGoogleSheets, sheetsRequest, configureSheetsCoordinator } from './google-sheets-banking-sync.js';
 import * as sheets from './google-sheets-banking-sync.js';
 
 function fixture(t, { rows = [], state = {} } = {}) {
   const env = { GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID: 'fixture',
-    GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN: 'fake-refresh', GUILDSYNC_GOOGLE_OAUTH_CLIENT_ID: 'fake-client',
-    GUILDSYNC_GOOGLE_OAUTH_CLIENT_SECRET: 'fake-secret', GUILDSYNC_GOOGLE_SHEETS_BIWEEKLY_TAB: 'bi-weekly raffle', GUILDSYNC_GOOGLE_SHEETS_5050_TAB: '50/50' };
+    GUILDSYNC_GOOGLE_SERVICE_ACCOUNT_JSON: testAccount, GUILDSYNC_GOOGLE_SHEETS_BIWEEKLY_TAB: 'bi-weekly raffle', GUILDSYNC_GOOGLE_SHEETS_5050_TAB: '50/50' };
   const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
   const originalFetch = globalThis.fetch;
@@ -37,6 +38,20 @@ function fixture(t, { rows = [], state = {} } = {}) {
 const ticket = (extra = {}) => ({ type: 'biweekly', eventId: '123', displayName: 'Player', amount: 200001, ticketAmount: 200,
   bonusEnabled: true, bonusTickets: 20, bonusPercent: 10, time: 1500, ...extra });
 const cellValues = request => request.updateCells.rows[0].values.map(cell => Object.values(cell.userEnteredValue)[0]);
+
+test('rollover replay uses existing lock, skips archived/duplicate IDs and preserves bonus data', async t => {
+  const f = fixture(t, { rows: [['existing', 'Already added', 100]] });
+  configureSheetsCoordinator(() => assert.fail('replay must not reacquire its own lock'));
+  const result = await sheets.replayBankingEntries([
+    ticket({ eventId: 'closed', time: 1000 }), ticket({ eventId: 'existing' }), ticket({ eventId: 'new' })
+  ], { lastClosedSalesEnd: { biweekly: 1000 } }, async value => f.logs.push(value));
+  assert.equal(result.synced, 1);
+  const requests = f.writes.flat();
+  assert.ok(requests.some(request => request.updateCells?.start?.columnIndex === 3 && cellValues(request)[0] === 'new'));
+  const bonus = requests.find(request => request.updateCells?.range?.startColumnIndex === 7);
+  assert.equal(bonus.updateCells.rows[0].values[0].userEnteredValue.numberValue, 20);
+  assert.match(bonus.updateCells.rows[0].values[0].note, /10%/);
+});
 
 for (const dataSource of ['GuildSyncBanking', 'GuildSyncTest']) {
   test(`${dataSource} biweekly donations begin at P62/Q62/R62 and skip occupied rows`, async t => {

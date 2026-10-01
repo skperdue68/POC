@@ -1999,6 +1999,14 @@ export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 10
   return { asOf: now, lookupAt, timeZone: 'America/New_York', raffles };
 }
 
+export function selectSheetsCatchupEntries(entries, now = Math.floor(Date.now() / 1000)) {
+  const windows = getSheetsRaffleWindows(now);
+  return entries.filter(entry => {
+    const period = getAssociateTicketReportRaffleWindow(entry);
+    return Number(entry.time) <= now && period && windows.some(window => window.type === period.type && window.salesEnd === period.salesEnd);
+  }).sort((a, b) => Number(a.time) - Number(b.time) || String(a.eventId).localeCompare(String(b.eventId)));
+}
+
 export function getSheetsRaffleWindows(now = Math.floor(Date.now() / 1000)) {
   return ['biweekly', 'monthly'].map(type => {
     const salesEnd = type === 'monthly'

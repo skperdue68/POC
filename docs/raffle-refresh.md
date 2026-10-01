@@ -95,6 +95,9 @@ Restart both services and run `npm run deploy` from the Discord bot directory
 to register the command.
 
 Reset needs Sheets editing access but no archive folder or Drive copy access.
+All spreadsheet-writing commands are blocked during a scheduled rollover hold
+or recovery. Test-close now archives through the Apps Script web app; see
+[archive setup](google-sheets-logging.md#delayed-archivereset-personal-my-drive).
 Both reset and archive/close preserve G5:G254, clear ticket values in D5:F254,
 and clear values and notes in H5:H254. They still hide G/H. J5:K254 is cleared
 only for Bi-Weekly and preserved for 50/50. Other closure ranges are unchanged.
