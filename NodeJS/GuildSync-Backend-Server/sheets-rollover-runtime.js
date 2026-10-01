@@ -1,10 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { requestArchive } from './apps-script-archive.js';
 import { createRollover } from './raffle-sheet-rollover.js';
-import { config, googleContext, sheetsRequest, configureSheetsCoordinator, exportLog } from './google-sheets-banking-sync.js';
+import { config, googleContext, sheetsRequest, configureSheetsCoordinator, replayBankingEntries, exportLog } from './google-sheets-banking-sync.js';
 
 const MARKER = 'guildsync_last_rollover';
-const driveBase = 'https://www.googleapis.com/drive/v3/files';
-const escapeQuery = value => String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
 export function resetRequests(sheetId, type, key, oldMetadata = []) {
   const range = (r1, r2, c1, c2) => ({ sheetId, startRowIndex: r1, endRowIndex: r2, startColumnIndex: c1, endColumnIndex: c2 });
@@ -30,19 +29,31 @@ export function resetRequests(sheetId, type, key, oldMetadata = []) {
   return requests;
 }
 
-export function startSheetsRollover(db, getWindows, { now, schedule = true } = {}) {
+export function drawDateRequest(sheetId, type, drawTime) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(drawTime * 1000));
+  const value = kind => Number(parts.find(part => part.type === kind).value);
+  const serial = Date.UTC(value('year'), value('month') - 1, value('day')) / 86400000 + 25569;
+  const column = type === 'biweekly' ? 17 : 15;
+  return { updateCells: { range: { sheetId, startRowIndex: 6, endRowIndex: 7, startColumnIndex: column, endColumnIndex: column + 1 },
+    rows: [{ values: [{ userEnteredValue: { numberValue: serial }, userEnteredFormat: { numberFormat: { type: 'DATE', pattern: 'mm/dd/yy' } } }] }],
+    fields: 'userEnteredValue,userEnteredFormat.numberFormat' } };
+}
+
+export function startSheetsRollover(db, getWindows, { now, schedule = true, loadCatchupEntries } = {}) {
   const settings = config();
   if (!settings.enabled) return;
   const enabled = /^true$/i.test(process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED || 'false');
-  const folder = String(process.env.GUILDSYNC_GOOGLE_SHEETS_ARCHIVE_FOLDER_ID || '').trim();
+  const hours = Number(String(process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS ?? '').trim() || 4);
+  if (!Number.isFinite(hours) || hours < 0 || !Number.isSafeInteger(hours * 3600)) throw new Error('Invalid rollover delay hours.');
   const hash = createHash('sha256').update(settings.spreadsheetId).digest('hex').slice(0, 32);
   const stateKey = 'sheets_rollover_' + hash;
   let connection;
   let context;
-  const contextNow = async () => context ||= await googleContext(true);
+  const contextNow = async () => context ||= await googleContext();
   const tabFor = type => type === 'biweekly' ? settings.biweeklyTab : settings.fiftyFiftyTab;
   const io = {
     now,
+    delaySeconds: hours * 3600,
     getWindows,
     loadState: async () => {
       const [rows] = await connection.execute('SELECT value FROM guildsync_settings WHERE setting_key = ?', [stateKey]);
@@ -55,29 +66,12 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true } = {
       await connection.execute('INSERT INTO guildsync_settings (setting_key, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)', [stateKey, JSON.stringify(state)]);
     },
     archive: async ({ key, name }) => {
-      if (!folder) throw new Error('Set GUILDSYNC_GOOGLE_SHEETS_ARCHIVE_FOLDER_ID before enabling rollover. No sheet was cleared.');
-      const { token } = await contextNow();
-      const archiveKey = hash + ':' + key;
-      const q = `'${escapeQuery(folder)}' in parents and trashed = false and appProperties has { key='guildsyncArchive' and value='${escapeQuery(archiveKey)}' }`;
-      const found = await sheetsRequest(token, driveBase + '?supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name,mimeType,appProperties)&q=' + encodeURIComponent(q));
-      let file = found.files?.[0];
-      if (!file) {
-        await exportLog('Archiving original spreadsheet as ' + JSON.stringify(name));
-        file = await sheetsRequest(token, driveBase + '/' + encodeURIComponent(settings.spreadsheetId) + '/copy?supportsAllDrives=true&fields=id', {
-          method: 'POST', body: JSON.stringify({ name, parents: [folder], appProperties: { guildsyncArchive: archiveKey } })
-        });
-      }
-      if (!file?.id || file.id === settings.spreadsheetId) throw new Error('Archive copy did not return a distinct file ID.');
-      const verified = await sheetsRequest(token, driveBase + '/' + encodeURIComponent(file.id) + '?supportsAllDrives=true&fields=id,name,mimeType,trashed,appProperties');
-      if (verified.trashed || verified.mimeType !== 'application/vnd.google-apps.spreadsheet' || verified.appProperties?.guildsyncArchive !== archiveKey) throw new Error('Archive verification failed; original remains intact.');
-      await exportLog('Verified archive ' + verified.id + ' (' + verified.name + ')');
-      return verified.id;
+      await exportLog('Requesting Apps Script archive ' + JSON.stringify(name));
+      return requestArchive('archive', { sourceId: settings.spreadsheetId, key: hash + ':' + key, name });
     },
-    reset: async ({ key, archiveId, raffles }) => {
+    reset: async ({ key, archiveId, raffles, nextWindows }) => {
+      await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId });
       const { token, url } = await contextNow();
-      // Confirm the archive still exists even when resuming a pending reset after restart.
-      const copy = await sheetsRequest(token, driveBase + '/' + encodeURIComponent(archiveId) + '?supportsAllDrives=true&fields=id,trashed,mimeType,appProperties');
-      if (copy.trashed || copy.id === settings.spreadsheetId || copy.mimeType !== 'application/vnd.google-apps.spreadsheet' || copy.appProperties?.guildsyncArchive !== hash + ':' + key) throw new Error('Cannot reset without verified archive.');
       const book = await sheetsRequest(token, url + '?fields=sheets(properties,developerMetadata)');
       const requests = [];
       for (const raffle of raffles) {
@@ -87,6 +81,8 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true } = {
         const metadata = (tab.developerMetadata || []).filter(item => item.metadataKey === MARKER && item.location?.sheetId === sheet.sheetId);
         if (metadata.some(item => item.metadataValue === key)) continue;
         requests.push(...resetRequests(sheet.sheetId, raffle.type, key, metadata));
+        const next = nextWindows?.find(item => item.type === raffle.type);
+        if (next) requests.push(drawDateRequest(sheet.sheetId, raffle.type, next.drawTime));
       }
       if (requests.length) {
         await exportLog('Resetting only closed tabs after archive ' + archiveId + ': ' + raffles.map(item => tabFor(item.type)).join(', '));
@@ -111,7 +107,17 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true } = {
         const advance = enabled && processRollover;
         const [saved] = advance ? [[]] : await conn.execute('SELECT value FROM guildsync_settings WHERE setting_key = ?', [stateKey]);
         const state = advance ? await coordinator.tick() : (saved.length ? JSON.parse(saved[0].value) : {});
-        if (!advance && state.pending) throw new Error('A raffle reset is pending; finish rollover before continuing.');
+        if (state.pending || (!advance && state.catchupRequired) || (!processRollover && enabled && state.windows?.some(window => window.salesEnd <= Math.floor(now ? now() : Date.now() / 1000)))) {
+          throw new Error('Spreadsheet writes are on hold until delayed archive/reset completes. Banking records remain in the database.');
+        }
+        if (advance && state.catchupRequired) {
+          if (!loadCatchupEntries) throw new Error('Rollover catchup loader is unavailable; writes remain paused.');
+          const entries = await loadCatchupEntries(Math.floor(now ? now() : Date.now() / 1000));
+          await replayBankingEntries(entries, state);
+          state.catchupRequired = false;
+          await io.saveState(state);
+          await exportLog('Rollover database catchup completed; spreadsheet writes resumed.');
+        }
         return operation ? await operation(state) : state;
       } finally {
         try {
@@ -135,9 +141,9 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true } = {
     const job = { key: 'raffle-test-' + randomUUID(), name: `${part('year')}${part('month')}${part('day')} raffle`, raffles: [raffle] };
     await exportLog('TEST close requested for ' + type + '; live raffle dates will not change.');
     const archiveId = await io.archive(job);
-    await io.reset({ ...job, archiveId });
+    await io.reset({ ...job, archiveId, nextWindows: getWindows(raffle.salesEnd + 1) });
     return { archiveId, name: job.name };
-  });
+  }, { processRollover: false });
   const testReset = async type => {
     if (!/^true$/i.test(process.env.GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED || '')) throw new Error('Raffle testing is disabled.');
     if (!['biweekly', 'monthly'].includes(type)) throw new Error('Select biweekly or monthly.');

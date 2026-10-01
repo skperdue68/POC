@@ -35,83 +35,132 @@ Normal exports still require a successful database insertion/commit.
 names, and gold to the new columns, or use a fresh test copy with this layout.
 This code does not migrate old cells. Duplicate detection uses the new ID columns.
 
-## Automatic archive/reset
+## Delayed archive/reset (personal My Drive)
 
-Backend `.env`:
+The original spreadsheet and public link stay unchanged. At sales cutoff,
+automatic writes to **both tabs** stop, while committed banking entries continue
+to accumulate in MariaDB. After a default four-hour hold, Apps Script copies
+the whole spreadsheet as `YYMMDD raffle` using the closed raffle's Eastern draw
+date. Only after verifying the copy and its sharing does the backend clear the
+closed tab(s), set their next draw dates, and replay missing current-period
+database records with the normal bonus policy and transaction-ID deduplication.
+
+Bi-Weekly-only closure preserves the ongoing 50/50 tab. Both closing together
+produce one archive. Replay also catches up held entries for an ongoing 50/50.
+Entries from closed periods are not inserted into the new raffle. Manually
+entered spreadsheet results during the hold are included in the archive.
+Keep GuildSync running before cutoff: first enablement arms the next cutoff,
+rather than retroactively archiving an unknown existing sheet.
+
+### Apps Script setup
+
+1. In your personal Google Drive, create an archive folder. Prefer a private
+   folder so inherited folder permissions do not broaden archive access.
+   Copy its ID from the part after `/folders/` in its URL.
+2. Open [Apps Script](https://script.google.com/) as the Google account that owns
+   the original spreadsheet. Create a standalone project and paste the contents
+   of [Archive.gs](../scripts/google-apps-script/Archive.gs) into its code editor.
+3. Beside **Services**, click **+**, select **Drive API**, version **v3**, and
+   click **Add**. The script uses this advanced service to attach a closure ID
+   when creating the copy, so retries can find an already-created archive.
+   For a default Apps Script Cloud project the API is enabled automatically;
+   for a linked standard Cloud project also enable Google Drive API there.
+4. In **Project Settings → Script Properties**, set:
+   - `SOURCE_SPREADSHEET_ID`: the existing raffle spreadsheet ID.
+   - `ARCHIVE_FOLDER_ID`: the folder ID from step 1.
+   - `ARCHIVE_SECRET`: a long random secret (for example 32 random bytes as hex).
+   Generate it locally with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+5. Choose **Deploy → New deployment → Web app**. Set **Execute as: Me** and
+   **Who has access: Anyone**. Authorize the requested Google permissions.
+   Copy the deployed URL ending in `/exec`, not the editor or `/dev` URL.
+   The endpoint checks the secret in the POST body and only accepts the
+   configured source spreadsheet. Do not put the secret in a query string.
+6. Keep the service account as an Editor on the original spreadsheet and allow
+   it to edit all reset fields, including Bi-Weekly R7 and 50/50 P7.
+   Apps Script creates the copy as you; service-account credentials still
+   perform normal writes and reset the original.
+7. For later script changes, use **Deploy → Manage deployments → Edit → New
+   version → Deploy**, retaining the same deployment URL and Script Properties.
+
+The script recreates and checks source user/group/domain/link sharing on the
+archive, including anyone-with-link viewer access when present on the source.
+It does not change original permissions. Google copying preserves the workbook
+content; inspect protected-range behavior during the first live test. It does
+not transfer ownership away from your personal account. Sharing or copy failures
+block clearing and are detailed in Apps Script's **Executions** log.
+
+### Backend environment
+
+All of these belong in `NodeJS/GuildSync-Backend-Server/.env`:
 
 ```dotenv
-GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED=true
-GUILDSYNC_GOOGLE_SHEETS_ARCHIVE_FOLDER_ID=your_destination_folder_id
+# Keep existing Sheets ID, service-account file/JSON and tab configuration.
+GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED=false
+GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS=4
+GUILDSYNC_GOOGLE_ARCHIVE_WEB_APP_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec
+GUILDSYNC_GOOGLE_ARCHIVE_SECRET=THE_SAME_SECRET_AS_SCRIPT_PROPERTIES
 ```
 
-The folder ID is the part after `/folders/` in its Drive URL, not its name.
-Enable **Google Drive API** as well as **Google Sheets API** in your Cloud project.
-Configure one of the authentication options below before enabling rollover.
-Ordinary exports work with rollover disabled (the default).
+The delay is measured from **ticket-sales cutoff**, not draw time. It accepts
+non-negative hours (fractions must resolve to whole seconds); 0 means immediate
+rollover. A hold's deadline is saved once, so changing the setting does not
+shorten an already-started hold. No new bot environment settings are needed.
 
-At sales cutoff, checked every minute, the backend copies the entire spreadsheet
-as `YYMMDD raffle`, using the just-closed raffle's Eastern draw date. For example,
-September 26, 2026 becomes `260926 raffle`. It verifies the archive before
-resetting the original. A copy failure never clears the original. When both
-raffles close together, one archive preserves both before both reset.
-
-Only the closing raffle tab is cleared:
-
-- D5:H254 values and H5:H254 notes; columns G:H are hidden.
-- Bi-weekly P62:R70 values, or 50/50 N36:P44 values.
-
-Other cells, formatting, metadata fields, and the non-closing tab stay intact.
-New entries keep using the original spreadsheet ID. Archives are snapshots;
-GuildSync does not write subsequent entries into them.
-
-First enablement arms the next cutoff without clearing existing data. Preserve
-the `sheets_rollover_*` records in `guildsync_settings`, which track progress
-across restarts. A database lock serializes exports and rollover; atomic sheet
-markers prevent repeat clearing after a lost response. Failed rollover blocks
-exports until it finishes. Late entries for already archived periods are logged
-and skipped; reconcile these in the archive manually. No manual schema changes
-are required.
-
-## Personal Drive authentication
-
-A service account can edit an existing spreadsheet shared with it, but cannot
-own new Drive files. To archive in your personal **My Drive**, use your Google
-account's OAuth credentials: the backend then makes copies as you. The source
-spreadsheet ID stays the same and the spreadsheet need not be public.
-
-1. Enable Sheets API and Drive API. Configure the Google Auth Platform consent
-   screen; while testing, add your own account as a test user.
-2. Create an OAuth client of type **Web application** with authorized redirect URI
-   `https://developers.google.com/oauthplayground`.
-3. Open [Google OAuth Playground](https://developers.google.com/oauthplayground/).
-   In settings, select **Use your own OAuth credentials**, enter the client ID
-   and secret, and use offline access with consent prompted.
-4. Authorize these two scopes, signing in with the account that can edit the
-   source spreadsheet and create files in the archive folder:
-   `https://www.googleapis.com/auth/spreadsheets` and
-   `https://www.googleapis.com/auth/drive`.
-5. Exchange the authorization code for tokens. Put the **refresh token**, not
-   the short-lived access token, in the backend `.env`:
+Remove these obsolete backend settings; the backend no longer reads them:
 
 ```dotenv
-GUILDSYNC_GOOGLE_OAUTH_CLIENT_ID=your_client_id
-GUILDSYNC_GOOGLE_OAUTH_CLIENT_SECRET=your_client_secret
-GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN=your_refresh_token
+GUILDSYNC_GOOGLE_OAUTH_CLIENT_ID
+GUILDSYNC_GOOGLE_OAUTH_CLIENT_SECRET
+GUILDSYNC_GOOGLE_OAUTH_REFRESH_TOKEN
+GUILDSYNC_GOOGLE_SHEETS_ARCHIVE_FOLDER_ID
 ```
 
-A refresh token takes precedence over service-account JSON. Keep these credentials
-private on the backend. External OAuth apps in **Testing** mode normally issue
-refresh tokens expiring after seven days for these scopes; configure the consent
-screen appropriately before ongoing production use.
+The archive folder ID now lives in Apps Script's `ARCHIVE_FOLDER_ID` property.
+Keep `GUILDSYNC_GOOGLE_SERVICE_ACCOUNT_FILE` (or JSON) configured. OAuth-only
+installations must configure service-account credentials before restarting.
+No database schema migration is required. Preserve existing `sheets_rollover_*`
+records in `guildsync_settings`: they hold deadlines, archive IDs and recovery
+progress. Do not change the source ID or delete recovery state during rollover.
+Finish any pending legacy Drive archive/reset before upgrading: its private
+archive markers belong to the old application and cannot be verified by the new script.
 
-Alternatively, keep service-account authentication and use an archive folder in
-a Google Workspace **Shared Drive**, granting the service account permission to
-create files there and edit the source. A shared folder in personal My Drive is
-**not** a Shared Drive. Leave the OAuth variables empty for this option.
+### Test, then enable
 
-Google references: [Shared Drive ownership](https://developers.google.com/workspace/drive/api/guides/about-shareddrives),
-[offline OAuth](https://developers.google.com/identity/protocols/oauth2/web-server#offline),
-[refresh-token expiration](https://developers.google.com/identity/protocols/oauth2#expiration).
+Use a test spreadsheet first. With automatic rollover disabled, enable
+`GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED=true` in both backend and bot,
+restart the services, then run
+`/gsr raffle test-close raffle:Bi-Weekly confirm:true`.
+This performs an immediate real archive/reset, bypassing the four-hour wait;
+it does not advance saved raffle schedules or automatically replay the database.
+Inspect the dated archive and the original tab, including R7/P7. Use
+`/gsr raffle refresh` to test deduplicated database export afterward.
+Test-close writes the next scheduled draw date only on the selected tab;
+`/gsr test reset` continues to clear fields without archiving or changing dates.
+
+Once the test succeeds, set `GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED=true`
+and restart the backend. The existing one-minute scheduler checks whether the
+saved deadline has arrived. All spreadsheet-writing commands (including refresh,
+test-add, test-close and test-reset) are blocked during a live hold or pending
+recovery. Read-only raffle commands and announcement previews remain available.
+
+Archive/reset/replay failures keep writes paused and retry on subsequent ticks.
+Retries reuse the archive and atomic reset markers; replay skips IDs already
+written. A failed or partial replay is retried before accepting new live writes.
+The database remains the durable source for held entries. Backend details are in
+`logs/google-sheets.log`; script failures are in Apps Script **Executions**.
+
+### Cleared fields
+
+Both tabs clear D5:F254 values and H5:H254 values/notes, preserve G5:G254,
+and hide G/H. Bi-Weekly additionally clears J5:K254, P62:R70, R3:R4 and Q33:Q52.
+50/50 additionally clears N36:P44, P3:P4, P25 and M28, preserving J5:K254.
+After automatic archive/reset, the next draw date goes in Bi-Weekly R7 and/or
+50/50 P7 as a real date formatted `mm/dd/yy`, using America/New_York.
+Only closing tabs are prepared. The original file is never renamed or replaced.
+
+References: [Apps Script web apps](https://developers.google.com/apps-script/guides/web),
+[advanced Drive service](https://developers.google.com/apps-script/advanced/drive),
+[enabling advanced services](https://developers.google.com/apps-script/guides/services/advanced).
 
 ## Discord reminders
 
@@ -122,39 +171,26 @@ GUILDSYNC_RAFFLE_BONUS_REMINDER_HOURS=1
 GUILDSYNC_RAFFLE_SALES_CLOSE_REMINDER_HOURS=2
 ```
 
-Comma-separated positive hours enable multiple warnings: e.g. sales close
-`2,0.5` for two hours and thirty minutes before cutoff. Messages use the existing
-`GUILDSYNC_RAFFLE_CHANNEL_ID`. Bonus reminders describe the active tier's next
-change/expiration. Deliveries use durable deduplication alongside regular
-announcements. The “As of” line appears first.
+Comma-separated positive hours enable multiple warnings, such as `6,4,2`.
+Messages use the existing `GUILDSYNC_RAFFLE_CHANNEL_ID`. Bonus reminders describe
+the active tier's next change/expiration. Reminders appear before the “As of”
+line. Simultaneous reminders of the same kind are combined.
 
-## Temporary Discord test commands
+## Discord command registration
 
-Use a **test spreadsheet ID and archive folder** while testing: export and close
-commands write to the configured sheet. Enable this in **both** `.env` files:
-
-```dotenv
-GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED=true
-```
-
-Restart both processes. From `NodeJS/GuildSync-Discord-Bot`, run `npm run deploy`
-to register `/gsr raffle test-preview` and `/gsr raffle test-close`. The previous
-standalone `/raffle-test` command is removed. All raffle administration now
-requires the exact **Consigliere** role and replies privately.
-
-Use `/gsr raffle refresh` to replace both current raffle exports, or supply an
-optional `date:MMDDYY` to refresh historical periods. This production command
-replaces the old test export and works even when test commands are disabled.
-
-See [raffle refresh and test-command setup](raffle-refresh.md) for examples,
-permissions, date boundaries, replacement behavior, and deployment instructions.
+From `NodeJS/GuildSync-Discord-Bot`, run `npm run deploy` if test commands need
+registering after enabling the existing test flag. The prior `/raffle-test`
+command is removed. Raffle administration requires the exact **Consigliere**
+role and replies privately. `/gsr raffle refresh [date:MMDDYY]` appends missing
+selected-period entries and remains available with test commands disabled,
+but sheet writes are blocked during a rollover hold. See
+[raffle command documentation](raffle-refresh.md) for other commands and examples.
 
 ## Diagnostics
 
 Backend stdout and `NodeJS/GuildSync-Backend-Server/logs/google-sheets.log` record
-export starts, reads, chosen rows, exact written columns/values, duplicates,
-bounds errors, archive IDs, resets, and Google error details.
-`GUILDSYNC_GOOGLE_SHEETS_LOG_FILE` overrides the path (absolute, or relative to
-the backend directory). The backend needs write permission. Logs contain member
-names and transaction details; keep them private.
+export starts, reads, rows, written values, duplicates, bounds errors and rollover
+progress. `GUILDSYNC_GOOGLE_SHEETS_LOG_FILE` overrides the path (absolute or
+relative to the backend directory). The backend needs write permission.
+Logs contain member names and transaction details; keep them private.
 

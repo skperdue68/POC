@@ -11,6 +11,7 @@ function fixture(deadlines = [100, 100]) {
     return { type, salesEnd: cutoff, drawTime: Date.parse('2026-10-01T02:00:00Z') / 1000 };
   });
   io.engine = () => createRollover({
+    delaySeconds: io.delaySeconds || 0,
     now: () => io.time, getWindows: (time) => io.getWindows(time),
     log: () => io.log?.(),
     loadState: async () => structuredClone(state),
@@ -40,6 +41,20 @@ test('first boot arms the next period without clearing historical or exact-cutof
   assert.equal(io.copies.length, 0);
   assert.equal(io.clears.length, 0);
   assert.deepEqual(io.state().windows.map((w) => w.salesEnd), [200, 200]);
+});
+
+test('holds until persisted deadline across restart then archives and marks catchup required', async () => {
+  const io = fixture([100, 150]); io.delaySeconds = 40;
+  await io.engine().tick(); io.time = 100;
+  await io.engine().tick();
+  assert.equal(io.state().pending.readyAt, 140);
+  assert.equal(io.copies.length, 0);
+  io.delaySeconds = 0; io.time = 139;
+  await io.engine().tick(); assert.equal(io.copies.length, 0);
+  io.time = 140; await io.engine().tick();
+  assert.equal(io.copies.length, 1);
+  assert.equal(io.state().catchupRequired, true);
+  assert.deepEqual(io.clears[0].nextWindows.map(w => w.salesEnd), [200, 150]);
 });
 
 test('same cutoff archives the whole spreadsheet once, names using Eastern draw date, then resets both tabs', async () => {

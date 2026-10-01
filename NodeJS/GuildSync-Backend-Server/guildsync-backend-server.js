@@ -4,7 +4,7 @@ import cors from 'cors';
 import http from 'node:http';
 import fs from 'node:fs';
 import { registerRaffleSocket } from './raffle-socket.js';
-import { getActiveRaffleSummary, getRaffleUserTickets, getSheetsRaffleWindows, getRaffleRefreshSelection } from './guildsync-database-actions.js';
+import { getActiveRaffleSummary, getRaffleUserTickets, getSheetsRaffleWindows, getRaffleRefreshSelection, selectSheetsCatchupEntries } from './guildsync-database-actions.js';
 import { startSheetsRollover } from './sheets-rollover-runtime.js';
 import { registerRaffleTestSocket, registerRaffleRefreshSocket, registerSyntheticTestSocket } from './raffle-test-socket.js';
 import path from 'node:path';
@@ -102,7 +102,9 @@ let sheetsRuntime;
 try {
   loginDB = await openLoginDB();
   applicationDB = await openAppDataDB();
-  sheetsRuntime = startSheetsRollover(applicationDB, getSheetsRaffleWindows);
+  sheetsRuntime = startSheetsRollover(applicationDB, getSheetsRaffleWindows, {
+    loadCatchupEntries: async now => selectSheetsCatchupEntries(await getBankingDataJSON(applicationDB), now)
+  });
 
   Log(`MariaDB database ready: ${GUILDSYNC_DB_NAME}`);
 } catch (error) {

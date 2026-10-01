@@ -6,6 +6,23 @@ const actions = await import('./guildsync-database-actions.js');
 
 const cutoff = 1781996400;
 const draw = cutoff + 3600;
+
+test('rollover catchup uses banking sales periods, includes held entries and ongoing 50/50, excludes closed/future/nonraffle', () => {
+  const now = cutoff + 4 * 3600;
+  const candidates = [
+    { type: 'biweekly', eventId: 'closed', time: cutoff },
+    { type: 'biweekly', eventId: 'new', time: cutoff + 1, bonusEnabled: true, bonusPercent: 20, bonusTickets: 2 },
+    { type: 'monthly', eventId: 'monthly', time: cutoff + 2 },
+    { type: 'biweekly', eventId: 'future', time: now + 1 },
+    { type: 'other', eventId: 'bank', time: cutoff + 1 }
+  ];
+  const selected = actions.selectSheetsCatchupEntries(candidates, now);
+  assert.deepEqual(selected.map(entry => entry.eventId), ['new', 'monthly']);
+  assert.equal(selected[0].bonusTickets, 2);
+  // Two weeks later Bi-Weekly closes again while the same 50/50 period continues.
+  const later = cutoff + 14 * 86400 + 4 * 3600;
+  assert.ok(actions.selectSheetsCatchupEntries(candidates, later).some(entry => entry.eventId === 'monthly'));
+});
 function db(entries) {
   return { async execute(sql) {
     if (sql.includes('JSON_ARRAYAGG')) return [[{ banking_json: entries }]];
