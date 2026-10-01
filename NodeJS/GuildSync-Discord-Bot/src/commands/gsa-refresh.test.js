@@ -18,16 +18,16 @@ function fixture({ role = 'Consigliere', action = 'refresh', date = '091526' } =
   } };
   return { interaction, socket, replies, calls };
 }
-test('shared gsa registration always contains refresh and only opt-in test subcommands', () => {
+test('registration only exposes production commands regardless of obsolete test flag', () => {
   assert.equal(typeof command.createGsaCommandData, 'function');
   for (const enabled of [false, true]) {
     const applications = command.createGsaCommandData().toJSON();
     assert.deepEqual(applications.options.map(o => o.name), ['post', 'stop', 'start']);
     const data = command.createGsrCommandData({ GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED: String(enabled) }).toJSON();
     assert.equal(data.name, 'gsr');
-    assert.deepEqual(data.options.map(o => o.name), ['raffle', 'test']);
+    assert.deepEqual(data.options.map(o => o.name), ['raffle']);
     const group = data.options.find(o => o.name === 'raffle');
-    assert.deepEqual(group.options.map(o => o.name), enabled ? ['refresh', 'test-preview', 'test-close'] : ['refresh']);
+    assert.deepEqual(group.options.map(o => o.name), ['refresh', 'clear', 'archive']);
     assert.deepEqual(group.options[0].options.map(o => o.name), ['date']);
     assert.ok(!group.options[0].options[0].required);
   }
@@ -44,9 +44,11 @@ test('production refresh is private, independent of test flag, and identifies bo
   const text = f.replies.at(-1).content;
   for (const expected of ['September 15, 2026', 'Bi-Weekly', '50/50', 'September 12, 2026', 'August 29, 2026', 'September 26, 2026']) assert.ok(text.includes(expected), text);
   assert.match(f.replies[1].content, /Exporting/);
+  assert.match(text, /Both worksheets were cleared/);
+  assert.match(text, /Bi-Weekly R7 and 50\/50 P7/);
 });
 test('all gsa raffle actions require the exact Consigliere role', async () => {
-  for (const role of ['Capo', 'caporegieme', 'consigliere', 'Member']) for (const action of ['refresh', 'test-preview', 'test-close']) {
+  for (const role of ['Capo', 'caporegieme', 'consigliere', 'Member']) for (const action of ['refresh', 'clear', 'archive']) {
     const f = fixture({ role, action }); await command.execute(f.interaction, f.socket);
     assert.deepEqual(f.calls, []);
     assert.equal(f.replies[0].flags, MessageFlags.Ephemeral);

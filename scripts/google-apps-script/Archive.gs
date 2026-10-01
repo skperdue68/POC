@@ -11,7 +11,7 @@ function doPost(e) {
   const sourceId = properties.getProperty('SOURCE_SPREADSHEET_ID');
   const folderId = properties.getProperty('ARCHIVE_FOLDER_ID');
   if (!secret || request.secret !== secret || !sourceId || request.sourceId !== sourceId || !folderId ||
-      !['archive', 'verify'].includes(request.action) || !/^[a-f0-9]{32}:(raffle-rollover-\d+|raffle-test-[a-f0-9-]+)$/.test(request.key || '')) return json({ ok: false });
+      !['archive', 'verify'].includes(request.action) || !/^[a-f0-9]{32}:(raffle-rollover-\d+|raffle-manual-[a-f0-9-]+)$/.test(request.key || '')) return json({ ok: false });
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return json({ ok: false });
   try {

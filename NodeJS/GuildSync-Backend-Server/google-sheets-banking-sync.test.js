@@ -64,25 +64,47 @@ for (const dataSource of ['GuildSyncBanking', 'GuildSyncTest']) {
   });
 }
 
-test('refresh appends missing IDs and never clears or replaces protected existing cells', async t => {
+const refreshPeriods = [
+  { type: 'biweekly', end: Date.parse('2026-09-26T23:00:00Z') / 1000 },
+  { type: 'monthly', end: Date.parse('2026-10-24T23:00:00Z') / 1000 }
+];
+test('refresh clears both closure ranges then replaces entries and dates atomically on every run', async t => {
   const f = fixture(t, { rows: [['123', 'Old name', 100]] });
-  assert.equal(typeof sheets.refreshBankingEntriesToGoogleSheets, 'function');
-  const refresh = entries => sheets.refreshBankingEntriesToGoogleSheets(async () => entries,
+  const refresh = entries => sheets.refreshBankingEntriesToGoogleSheets(async () => ({ entries, periods: refreshPeriods }),
     { uploadedBy: 'Officer', log: async value => f.logs.push(value) });
-  await refresh([ticket({ eventId: '124' })]);
+  await refresh([ticket({ eventId: '124' }), ticket({ eventId: '124' })]);
   await refresh([ticket({ eventId: '124', displayName: 'Corrected' })]);
   assert.equal(f.writes.length, 2);
   for (const requests of f.writes) {
-    assert.ok(requests.every(r => !r.updateCells?.range || r.updateCells.range.startColumnIndex !== 3 || r.updateCells.range.endColumnIndex !== 6 || r.updateCells.rows));
+    const clears = requests.filter(r => r.updateCells?.range && !r.updateCells.rows);
+    for (const id of [7, 8]) assert.ok(clears.some(r => r.updateCells.range.sheetId === id && r.updateCells.range.startColumnIndex === 3 && r.updateCells.range.endColumnIndex === 6));
+    assert.ok(clears.every(r => !(r.updateCells.range.startColumnIndex <= 6 && r.updateCells.range.endColumnIndex > 6)));
+    assert.ok(clears.every(r => !(r.updateCells.range.sheetId === 8 && r.updateCells.range.startColumnIndex <= 10 && r.updateCells.range.endColumnIndex > 9)));
+    const dates = requests.filter(r => r.updateCells?.range?.startRowIndex === 6 && r.updateCells.rows);
+    assert.equal(dates.length, 2);
+    assert.deepEqual(dates.map(r => r.updateCells.range.startColumnIndex), [17, 15]);
+    assert.deepEqual(dates.map(r => r.updateCells.rows[0].values[0].userEnteredValue.numberValue),
+      [Date.UTC(2026, 8, 26), Date.UTC(2026, 9, 24)].map(date => date / 86400000 + 25569));
+    const entries = requests.filter(r => r.updateCells?.start?.columnIndex === 3);
+    assert.equal(entries.length, 1); assert.equal(entries[0].updateCells.start.rowIndex, 4);
   }
-  assert.ok(f.calls.some(url => url.includes('/values/')));
+  assert.equal(f.calls.some(url => url.includes('/values/')), false);
+});
+
+test('empty refresh still clears both sheets and sets dates; missing periods never clears', async t => {
+  const f = fixture(t);
+  await sheets.refreshBankingEntriesToGoogleSheets(async () => ({ entries: [], periods: refreshPeriods }), { log: async value => f.logs.push(value) });
+  assert.equal(f.writes.length, 1);
+  assert.equal(f.writes[0].filter(r => r.updateCells?.range?.startRowIndex === 6 && r.updateCells.rows).length, 2);
+  await assert.rejects(sheets.refreshBankingEntriesToGoogleSheets(async () => ({ entries: [], periods: [] })), /period/i);
+  assert.equal(f.writes.length, 1);
 });
 
 test('refresh preflights capacity for both raffles and performs no clears on overflow', async t => {
   const f = fixture(t);
   assert.equal(typeof sheets.refreshBankingEntriesToGoogleSheets, 'function');
   const entries = [ticket(), ...Array.from({ length: 10 }, (_, i) => ticket({ type: 'monthly', eventId: 'd' + i, ticketAmount: 0 }))];
-  await assert.rejects(sheets.refreshBankingEntriesToGoogleSheets(async () => entries, { log: async value => f.logs.push(value) }), /No empty row/);
+  await assert.rejects(sheets.refreshBankingEntriesToGoogleSheets(async () => ({ entries, periods: refreshPeriods }), { log: async value => f.logs.push(value) }), /No empty row/);
   assert.deepEqual(f.writes, []);
 });
 

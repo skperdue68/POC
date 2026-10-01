@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 process.env.MARIADB_USER ||= 'test';
 process.env.MARIADB_PASSWORD ||= 'test';
 const actions = await import('./guildsync-database-actions.js');
-const { entriesForRafflePeriods } = await import('./raffle-test-socket.js');
+const { entriesForRafflePeriods } = await import('./raffle-admin-socket.js');
 const seconds = text => Date.parse(text) / 1000;
 const now = seconds('2026-09-30T16:00:00Z');
 function select(date, at = now) {

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 const TYPES = ['biweekly', 'monthly'];
 
 function validateWindows(windows, after = -Infinity) {
@@ -28,7 +29,7 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
   delaySeconds = 0, now = () => Math.floor(Date.now() / 1000), log = () => {} }) {
   if (!Number.isSafeInteger(delaySeconds) || delaySeconds < 0) throw new Error('Invalid rollover delay');
   return {
-    async tick() {
+    async tick({ archiveNow = false } = {}) {
       const timestamp = Math.floor(now());
       if (!Number.isSafeInteger(timestamp)) throw new Error('Invalid rollover time');
       let state = structuredClone(await loadState());
@@ -36,7 +37,7 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
         state = { version: 1, windows: validateWindows(getWindows(timestamp + 1), timestamp),
           lastClosedSalesEnd: {}, pending: null };
         await saveState(structuredClone(state));
-        return state;
+        if (!archiveNow) return state;
       }
       if (state.version !== 1 || !state.lastClosedSalesEnd) throw new Error('Invalid rollover state');
       validateWindows(state.windows);
@@ -44,30 +45,33 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
       for (let count = 0; count < 100; count += 1) {
         if (!state.pending) {
           const cutoff = Math.min(...state.windows.map((window) => window.salesEnd));
-          if (cutoff > timestamp) return state;
+          if (cutoff > timestamp && !archiveNow) return state;
+          const manual = cutoff > timestamp;
           const raffles = state.windows.filter((window) => window.salesEnd === cutoff);
-          const following = validateWindows(getWindows(cutoff + 1), cutoff);
+          const following = manual ? state.windows : validateWindows(getWindows(cutoff + 1), cutoff);
           state.pending = {
-            key: `raffle-rollover-${cutoff}`, salesEnd: cutoff,
-            readyAt: cutoff + delaySeconds,
+            key: manual ? `raffle-manual-${randomUUID()}` : `raffle-rollover-${cutoff}`, salesEnd: cutoff,
+            manual, readyAt: manual ? timestamp : cutoff + delaySeconds,
             name: archiveName(Math.min(...raffles.map((window) => window.drawTime))),
             raffles, archiveId: null,
-            nextWindows: state.windows.map((window) => window.salesEnd === cutoff
+            nextWindows: state.windows.map((window) => !manual && window.salesEnd === cutoff
               ? following.find((next) => next.type === window.type) : window),
           };
           await saveState(structuredClone(state));
         }
         const job = state.pending;
         // Legacy pending jobs have already begun; do not delay their recovery.
-        if (job.readyAt != null && timestamp < job.readyAt) return state;
+        if (!archiveNow && job.readyAt != null && timestamp < job.readyAt) return state;
+        archiveNow = false;
         if (!job.archiveId) {
           const archiveId = await archive({ key: job.key, name: job.name, raffles: structuredClone(job.raffles) });
           if (typeof archiveId !== 'string' || !archiveId.trim()) throw new Error('Archive did not return a verified copy ID');
           job.archiveId = archiveId;
           await saveState(structuredClone(state));
         }
-        await reset({ key: job.key, archiveId: job.archiveId, raffles: structuredClone(job.raffles), nextWindows: structuredClone(job.nextWindows) });
-        for (const raffle of job.raffles) state.lastClosedSalesEnd[raffle.type] = raffle.salesEnd;
+        await reset({ key: job.key, archiveId: job.archiveId, raffles: structuredClone(job.nextWindows), nextWindows: structuredClone(job.nextWindows) });
+        if (!job.manual) for (const raffle of job.raffles) state.lastClosedSalesEnd[raffle.type] = raffle.salesEnd;
+        state.lastArchive = { archiveId: job.archiveId, name: job.name };
         state.windows = job.nextWindows;
         state.pending = null;
         state.catchupRequired = true;
