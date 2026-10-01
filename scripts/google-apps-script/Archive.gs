@@ -6,14 +6,23 @@ function doPost(e) {
   const json = value => ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON);
   const properties = PropertiesService.getScriptProperties();
   let request;
-  try { request = JSON.parse(e.postData.contents); } catch (_) { return json({ ok: false }); }
+  try { request = JSON.parse(e.postData.contents); } catch (_) { throw new Error('GuildSync archive: Invalid JSON request'); }
+  if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('GuildSync archive: Request must be a JSON object');
   const secret = properties.getProperty('ARCHIVE_SECRET');
   const sourceId = properties.getProperty('SOURCE_SPREADSHEET_ID');
   const folderId = properties.getProperty('ARCHIVE_FOLDER_ID');
-  if (!secret || request.secret !== secret || !sourceId || request.sourceId !== sourceId || !folderId ||
-      !['archive', 'verify'].includes(request.action) || !/^[a-f0-9]{32}:(raffle-rollover-\d+|raffle-manual-[a-f0-9-]+)$/.test(request.key || '')) return json({ ok: false });
+  // Report validation failures without logging credentials or request contents.
+  const problems = [];
+  if (!secret) problems.push('ARCHIVE_SECRET property is missing');
+  else if (request.secret !== secret) problems.push('Backend secret does not match ARCHIVE_SECRET');
+  if (!sourceId) problems.push('SOURCE_SPREADSHEET_ID property is missing');
+  else if (request.sourceId !== sourceId) problems.push('Backend spreadsheet ID does not match SOURCE_SPREADSHEET_ID');
+  if (!folderId) problems.push('ARCHIVE_FOLDER_ID property is missing');
+  if (!['archive', 'verify'].includes(request.action)) problems.push('Unsupported request action');
+  if (!/^[a-f0-9]{32}:(raffle-rollover-\d+|raffle-manual-[a-f0-9-]+)$/.test(request.key || '')) problems.push('Invalid archive request key');
+  if (problems.length) throw new Error('GuildSync archive: ' + problems.join('; '));
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) return json({ ok: false });
+  if (!lock.tryLock(30000)) throw new Error('GuildSync archive: Another archive operation holds the lock; retry later');
   try {
     const escape = value => String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     let archive;
@@ -63,6 +72,6 @@ function doPost(e) {
     return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id });
   } catch (error) {
     console.error(String(error));
-    return json({ ok: false });
+    throw error;
   } finally { lock.releaseLock(); }
 }
