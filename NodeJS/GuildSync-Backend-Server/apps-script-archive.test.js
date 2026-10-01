@@ -46,12 +46,25 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   vm.runInContext(source, context);
   const request = { secret: 'secret', sourceId: 'source', key: 'a'.repeat(32) + ':raffle-rollover-1000', action: 'archive', name: '260926 raffle' };
   const call = data => context.doPost({ postData: { contents: JSON.stringify(data) } });
-  assert.equal(call({ ...request, secret: 'bad' }).ok, false); assert.equal(copies, 0);
-  sharingFails = true; assert.equal(call(request).ok, false); assert.equal(copies, 1);
+  assert.throws(() => call({ ...request, secret: 'bad' }), /Backend secret does not match ARCHIVE_SECRET/); assert.equal(copies, 0);
+  for (const property of Object.keys(properties)) {
+    const saved = properties[property]; delete properties[property];
+    assert.throws(() => call(request), new RegExp(property + ' property is missing'));
+    properties[property] = saved;
+  }
+  assert.throws(() => call({ ...request, sourceId: 'wrong' }), /spreadsheet ID does not match/);
+  assert.throws(() => call({ ...request, key: 'wrong' }), /Invalid archive request key/);
+  assert.throws(() => call({ ...request, action: 'wrong' }), /Unsupported request action/);
+  assert.throws(() => context.doPost({ postData: { contents: '{' } }), /Invalid JSON request/);
+  assert.throws(() => call(null), /Request must be a JSON object/);
+  try { call({ ...request, secret: 'PRIVATE_VALUE' }); } catch (error) {
+    assert.doesNotMatch(error.message, /PRIVATE_VALUE|secret;/);
+  }
+  sharingFails = true; assert.throws(() => call(request), /permission failure/); assert.equal(copies, 1);
   sharingFails = false; assert.equal(call(request).ok, true); assert.equal(copies, 1);
   assert.equal(call({ ...request, action: 'verify', archiveId: 'copy' }).ok, true);
   assert.equal(permissions.copy.length, 2);
   assert.equal(permissions.copy.find(p => p.type === 'anyone').role, 'reader');
-  copy.trashed = true; assert.equal(call({ ...request, action: 'verify', archiveId: 'copy' }).ok, false);
+  copy.trashed = true; assert.throws(() => call({ ...request, action: 'verify', archiveId: 'copy' }), /Archive verification failed/);
   assert.equal(locked, false);
 });
