@@ -85,6 +85,10 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
           const entries = await loadCatchupEntries(Math.floor(now ? now() : Date.now() / 1000));
           await replayBankingEntries(entries, state);
           state.catchupRequired = false;
+          state.completedArchives ||= [];
+          if (state.lastArchive && !state.completedArchives.some(item => item.archiveId === state.lastArchive.archiveId)) {
+            state.completedArchives.push({ ...state.lastArchive, completedAt: Math.floor(now ? now() : Date.now() / 1000) });
+          }
           await io.saveState(state);
           await exportLog('Rollover database catchup completed; spreadsheet writes resumed.');
         }
