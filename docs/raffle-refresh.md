@@ -1,31 +1,39 @@
-# Raffle spreadsheet refresh
+# Raffle spreadsheet administration
 
-After updating the backend and Discord bot, restart both. In
-`NodeJS/GuildSync-Discord-Bot`, run `npm run deploy` to replace the guild's command
-registrations. This removes `/raffle-test` and adds:
+After updating backend and bot, restart both and run `npm run deploy` from
+`NodeJS/GuildSync-Discord-Bot`. Deployment replaces the guild command list,
+removing the old test commands and registering these production commands:
 
-Raffle administration has moved from `/gsa` to `/gsr`. Deployment replaces the
-guild command list, removing the old `/gsa raffle` and `/gsa test` paths while
-retaining `/gsa post`, `/gsa start`, and `/gsa stop` for applications.
-Restart the bot as well as running `npm run deploy` so routing matches registration.
+| Command | Operation |
+| --- | --- |
+| `/gsr raffle refresh` | Clear both managed raffle areas, reload current periods and set draw dates. |
+| `/gsr raffle refresh date:091526` | Clear/reload both periods containing the supplied date. |
+| `/gsr raffle clear` | Clear both managed raffle areas, including R7/P7 draw dates; leave database records intact. |
+| `/gsr raffle archive` | Archive immediately, reset both original tabs, and restore current database entries and draw dates. |
 
-- `/gsr raffle refresh` — refresh both Bi-Weekly and 50/50 using the current time.
-- `/gsr raffle refresh date:091526` — refresh both periods containing September 15, 2026.
-- `/gsr raffle test-preview kind:Sales close raffle:Both` — privately preview reminders.
-- `/gsr raffle test-close raffle:Bi-Weekly confirm:true` — actually archive/reset that tab.
-- `/gsr test add name:tester gold:5000 raffle:Bi-Weekly` — append synthetic data
-  using a generated transaction ID and the current bonus. The name can be invented;
-  it needs no GuildSync member or application record. Add `donation:true` to use
-  the donation area with zero tickets. This writes only to the spreadsheet and
-  returns an ephemeral result; the exact Consigliere role is required.
+All three commands require the **exact Consigliere role**, checked by both bot
+and backend. Progress/results/errors are ephemeral. `/gsa post`, `start` and
+`stop` retain application-posting behavior. No test enablement flag is required.
+Remove `GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED` from both .env files.
+The `/gsr test` group, test-preview/test-close and legacy `/raffle-test` commands
+are retired. Redeploying the command list removes them from Discord.
 
-Every raffle action requires the **exact `Consigliere` role** in the configured
-Discord server. Capo, Caporegieme, and differently capitalized role names are not
-accepted. The backend also checks its synchronized Discord role records before
-writes. If authorization fails unexpectedly, check role synchronization. All
-progress, results, and errors are ephemeral. Existing `/gsa post`, `start`, and
-`stop` retain their behavior. Discord does not provide per-subcommand visibility
-for named roles; execution is restricted even if users can see the command name.
+## Archive and holds
+
+During the automatic four-hour hold, refresh and clear are blocked. Archive
+explicitly bypasses the hold and finishes the pending rollover immediately.
+Outside a hold it archives and rebuilds the current raffle periods without
+advancing their schedules. The archive copy is named for the closed draw during
+rollover, or the current Bi-Weekly draw for an on-demand archive before cutoff.
+Both tabs are cleared and repopulated, including any ongoing 50/50 entries.
+
+The original spreadsheet ID and public link stay unchanged. Archive must succeed
+and be verified before clearing. A failed/partial operation resumes its saved job;
+it does not deliberately create another copy on retry. After a completed command,
+another archive command requests another snapshot (names may match).
+
+See [Apps Script deployment and environment setup](google-sheets-logging.md#apps-script-setup).
+Archive requires the web app; refresh/clear only need Sheets credentials.
 
 ## Date selection
 
@@ -43,65 +51,40 @@ Each export includes committed entries at or after the selected start and before
 the selected end, never future-dated entries beyond the export's current time.
 The response shows the lookup date and both selected periods.
 
-## What refresh replaces
+## What refresh and clear remove
 
-Refresh uses the configured original spreadsheet and existing tab names. It is
-append-only: it preserves existing cells and asks the live writer to append only
-transaction IDs that are not already present. It reuses the live writer's member names, manual notes,
-gold-marker removal, bonus handling, and update attribution:
+Both use the same configured closure ranges. Both preserve G5:G254 and hide G/H
+during preparation. Refresh shows G/H again when exported bonus entries require it.
 
-| Data | Bi-Weekly | 50/50 |
+| Cleared area | Bi-Weekly | 50/50 |
 | --- | --- | --- |
-| Ticket ID / name / gold | D5:F254 | D5:F254 |
-| Bonus count and percentage note | H5:H254 | H5:H254 |
-| Donation ID / name / gold | P62:R70 | N36:P44 |
-| Updater / Eastern timestamp | R3 / R4 | P3 / P4 |
+| Ticket ID/name/gold values | D5:F254 | D5:F254 |
+| Bonus values and notes | H5:H254 | H5:H254 |
+| Donation ID/name/gold values | P62:R70 | N36:P44 |
+| Updater name/time | R3:R4 | P3:P4 |
+| Additional values | J5:K254, Q33:Q52 | P25, M28 |
+| Draw date | R7 | P7 |
 
-Column G formulas and other cells are preserved. Bonus columns G/H are shown
-when exported entries have bonuses enabled. Repeating a refresh skips existing
-transaction IDs. An empty result makes no sheet writes, so protected cells are
-left alone. Do not store unrelated manual spreadsheet data inside managed ranges.
+Refresh writes the selected period's draw date into R7/P7 as a real date formatted
+`mm/dd/yy` in America/New_York. Clear leaves those dates empty. J5:K254 is
+preserved on 50/50. Other cells, formats and protections remain unchanged.
 
-Live writes and scheduled archive/reset retain their existing behavior.
-Historical refresh appends the selected snapshot's missing data; subsequent
-deposits and rollover continue normally.
-Refresh does not change database entries, raffle dates, or award tickets.
+Refresh clears and repopulates both sheets in one atomic batch after capacity
+checks. Empty results still clear managed ranges and set dates/attribution.
+Manual edits and synthetic test records in managed ranges are removed.
+Service-account editing permission is needed on every cleared/date field.
 
-## Environment and migration
+Refresh uses existing member names, manual notes, gold-marker removal and bonus
+calculations. It deduplicates input transaction IDs and rebuilds from the database,
+so repeated refreshes do not accumulate copies. It changes neither database
+entries nor the raffle schedule. Historical refresh fills the original file
+with historical data; ordinary live writes and rollover still follow the current
+schedule, so use a separate configured test spreadsheet for historical inspection.
 
-No new environment variables, credentials, dependencies, or database migrations
-are required. Refresh uses the existing backend Google Sheets configuration and
-does **not** depend on `GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED`.
+## Operations
 
-For `test-preview`, `test-close`, and `/gsr test reset`, retain
-`GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED=true` in the bot `.env`; close also requires
-the flag in the backend `.env`. Set it in both for testing. When finished, set
-both to `false`, restart, and run `npm run deploy` again: refresh remains available
-and the test subcommands disappear. Test-close is a real write operation; use a
-test spreadsheet while testing it.
-
-Failures and written rows appear in the existing backend Sheets log. A timeout
-can occur after a write was accepted; inspect the log before retrying. Refresh
-is safe to repeat, while every confirmed test-close may create another archive.
-
-## Reset without archiving
-
-Use `/gsr test reset raffle:Bi-Weekly confirm:true` or select `50/50` to clear
-only that worksheet's closure fields, remove bonus notes, and hide G/H, using
-the same ranges as test-close. This actually clears the sheet without a backup.
-It requires the exact Consigliere role and the existing test-command flag in
-both bot and backend `.env`; responses are ephemeral. No new settings are needed.
-Restart both services and run `npm run deploy` from the Discord bot directory
-to register the command.
-
-Reset needs Sheets editing access but no archive folder or Drive copy access.
-All spreadsheet-writing commands are blocked during a scheduled rollover hold
-or recovery. Test-close now archives through the Apps Script web app; see
-[archive setup](google-sheets-logging.md#delayed-archivereset-personal-my-drive).
-Both reset and archive/close preserve G5:G254, clear ticket values in D5:F254,
-and clear values and notes in H5:H254. They still hide G/H. J5:K254 is cleared
-only for Bi-Weekly and preserved for 50/50. Other closure ranges are unchanged.
-It leaves database entries, raffle dates, and rollover completion markers intact,
-and refuses to run while an archive/reset is pending. Protected ranges must
-allow the configured Google identity to edit them. Normal scheduled rollover
-continues independently according to its existing configuration.
+Clear does not pause later live writes. Use refresh to restore database data after
+a clear. During automatic rollover, both tabs are rebuilt from current banking
+periods, restoring ongoing 50/50 data as well as deposits received during the hold.
+Backend Sheets logs record requests and written rows. If Discord times out,
+inspect those logs before retrying; an operation may still be running.

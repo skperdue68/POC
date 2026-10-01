@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resetRequests, drawDateRequest } from './raffle-sheet-layout.js';
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 const backendRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -117,11 +118,16 @@ export function entryLayout(entry) {
     : { donation, first: 5, last: 254, id: 'D', name: 'E', gold: 'F', index: 3 };
 }
 
-export async function refreshBankingEntriesToGoogleSheets(loadEntries, { uploadedBy = '', log = exportLog } = {}) {
+export async function refreshBankingEntriesToGoogleSheets(loadSnapshot, { uploadedBy = '', log = exportLog } = {}) {
   if (!config().enabled) throw new Error('Enable Google Sheets on the backend first.');
-  // Refresh is an append-only replay. The normal writer reads transaction IDs,
-  // skips duplicates, and reserves the next empty row without clearing sheets.
-  return coordinate(async state => writeEntries(await loadEntries(), uploadedBy, state, log, false, true));
+  return coordinate(async state => {
+    const { entries, periods } = await loadSnapshot();
+    if (!Array.isArray(entries) || !Array.isArray(periods) || periods.length !== 2 ||
+        ['biweekly', 'monthly'].some(type => periods.filter(period => period.type === type && Number.isSafeInteger(period.end)).length !== 1)) {
+      throw new Error('Refresh requires both selected raffle periods and their draw dates.');
+    }
+    return writeEntries(entries, uploadedBy, state, log, true, false, periods);
+  });
 }
 
 function attributionRequest(sheetId, type, uploadedBy) {
@@ -134,7 +140,7 @@ function attributionRequest(sheetId, type, uploadedBy) {
   } };
 }
 
-async function writeEntries(entries, uploadedBy, state, log, replace = false, includeClosed = false) {
+async function writeEntries(entries, uploadedBy, state, log, replace = false, includeClosed = false, periods = []) {
   const { settings, token, url } = await googleContext();
   if (!settings.spreadsheetId) throw new Error('Google spreadsheet ID is missing.');
   await log('Starting spreadsheet update: entries=' + entries.length);
@@ -150,16 +156,14 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
       if (!sheet || sheet.gridProperties.rowCount < 254 || sheet.gridProperties.columnCount < (type === 'biweekly' ? 18 : 16)) {
         throw new Error('Missing worksheet or grid too small for refresh: ' + tab);
       }
-      const range = (r1, r2, c1, c2) => ({ sheetId: sheet.sheetId, startRowIndex: r1, endRowIndex: r2, startColumnIndex: c1, endColumnIndex: c2 });
       preparation.push(
-        { updateCells: { range: range(4, 254, 3, 6), fields: 'userEnteredValue' } },
-        { updateCells: { range: range(4, 254, 7, 8), fields: 'userEnteredValue,note' } },
-        { updateCells: { range: type === 'biweekly' ? range(61, 70, 15, 18) : range(35, 44, 13, 16), fields: 'userEnteredValue' } },
+        ...resetRequests(sheet.sheetId, type, '').filter(request => request.updateCells || request.updateDimensionProperties),
+        drawDateRequest(sheet.sheetId, type, periods.find(period => period.type === type).end),
         { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 },
           properties: { hiddenByUser: !entries.some(entry => entry.type === type && entry.bonusEnabled === true) }, fields: 'hiddenByUser' } },
         attributionRequest(sheet.sheetId, type, uploadedBy)
       );
-      await log('Refreshing ' + JSON.stringify(tab) + ': replacing exported tickets, donations and bonus notes.');
+      await log('Refreshing ' + JSON.stringify(tab) + ': clearing closure fields and replacing selected-period entries and draw date.');
     }
   }
   const flush = async () => {

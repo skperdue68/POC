@@ -36,11 +36,10 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
   });
 }
 
-async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, targetSheet = 7, loadCatchupEntries = async () => [] } = {}) {
+async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, loadCatchupEntries = async () => [] } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'guildsync-rollover-test-'));
   const env = {
     GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED: 'true',
-    GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED: 'true',
     GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID: 'original-source', GUILDSYNC_GOOGLE_ARCHIVE_WEB_APP_URL: 'https://script.google.com/macros/s/test/exec',
     GUILDSYNC_GOOGLE_ARCHIVE_SECRET: 'fixture-secret', GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS: '0',
     GUILDSYNC_GOOGLE_SERVICE_ACCOUNT_JSON: testAccount, GUILDSYNC_GOOGLE_SHEETS_LOG_FILE: path.join(dir, 'test.log'),
@@ -82,12 +81,12 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
       mutations.push('clear');
       const requests = JSON.parse(init.body).requests;
       batches.push(requests);
-      assert.ok(requests.every(request => (request.updateCells?.range.sheetId ?? request.updateDimensionProperties?.range.sheetId ?? request.createDeveloperMetadata?.developerMetadata.location.sheetId) === targetSheet));
+      assert.ok(requests.every(request => (request.updateCells?.range.sheetId ?? request.updateDimensionProperties?.range.sheetId ?? request.createDeveloperMetadata?.developerMetadata.location.sheetId) === 7 || (request.updateCells?.range.sheetId ?? request.updateDimensionProperties?.range.sheetId ?? request.createDeveloperMetadata?.developerMetadata.location.sheetId) === 8));
       markers.push(...requests.filter(request => request.createDeveloperMetadata).map(request => request.createDeveloperMetadata.developerMetadata));
       if (failClear) { failClear = false; throw new Error('response lost after clear'); }
       body = {};
     } else if (url.startsWith('https://sheets.googleapis.com/v4/spreadsheets/original-source?')) body = {
-      sheets: [{ properties: { sheetId: 7, title: 'bi-weekly raffle' }, developerMetadata: markers }, { properties: { sheetId: 8, title: '50/50' } }]
+      sheets: [{ properties: { sheetId: 7, title: 'bi-weekly raffle' }, developerMetadata: markers }, { properties: { sheetId: 8, title: '50/50' }, developerMetadata: markers }]
     };
     else throw new Error('Unexpected URL: ' + url);
     return { ok: true, json: async () => structuredClone(body) };
@@ -102,45 +101,31 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
   return { start, calls, mutations, batches, state: () => state, released: () => released };
 }
 
-for (const [type, sheetId] of [['biweekly', 7], ['monthly', 8]]) {
-  test(`test reset clears ${type} closure fields without archiving or advancing overdue rollover`, async t => {
-    const f = await fixture(t, { targetSheet: sheetId });
-    process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED = 'false';
-    const before = structuredClone(f.state());
-    const runtime = f.start();
-    assert.equal(typeof runtime.testReset, 'function');
-    await runtime.testReset(type);
-    assert.deepEqual(f.mutations, ['clear']);
-    assert.ok(f.calls.every(url => !url.includes('/drive/v3/')));
-    assert.deepEqual(f.state(), before);
-    assert.deepEqual(f.batches[0], resetRequests(sheetId, type, 'unused').filter(request => request.updateCells || request.updateDimensionProperties));
-    assert.equal(f.released(), 1);
-  });
-}
-
-test('test reset refuses disabled testing, invalid raffle and pending rollover without Google writes', async t => {
+test('production clear empties both tabs and draw dates without archiving or changing database state', async t => {
   const f = await fixture(t);
-  const runtime = f.start();
-  assert.equal(typeof runtime.testReset, 'function');
-  await assert.rejects(runtime.testReset('both'), /Select biweekly or monthly/);
-  process.env.GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED = 'false';
-  await assert.rejects(runtime.testReset('biweekly'), /disabled/);
-  process.env.GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED = 'true';
-  f.state().pending = { key: 'incomplete-archive' };
-  await assert.rejects(runtime.testReset('biweekly'), /hold/i);
-  assert.deepEqual(f.mutations, []);
-  assert.deepEqual(f.calls, []);
+  process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED = 'false';
+  const before = structuredClone(f.state());
+  await f.start().clear();
+  assert.deepEqual(f.mutations, ['clear']); assert.deepEqual(f.state(), before);
+  const dates = f.batches[0].filter(r => r.updateCells?.range.startRowIndex === 6);
+  assert.deepEqual(dates.map(r => [r.updateCells.range.sheetId, r.updateCells.range.startColumnIndex]), [[7, 17], [8, 15]]);
+  assert.ok(dates.every(r => r.updateCells.fields === 'userEnteredValue' && !r.updateCells.rows));
+  assert.ok(f.batches[0].every(r => !r.createDeveloperMetadata && !r.deleteDeveloperMetadata));
 });
 
-test('hold blocks exports and tests without Google writes and persists deadline', async t => {
+test('hold blocks clear and exports but archive bypasses hold and rebuilds both tabs', async t => {
   const f = await fixture(t);
   process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS = '4';
   const runtime = f.start();
   await assert.rejects(runtime.run(() => assert.fail('must not export')), /hold/);
   assert.equal(f.state().pending.readyAt, 15400);
-  await assert.rejects(runtime.testReset('biweekly'), /hold/);
-  await assert.rejects(runtime.testClose('monthly'), /hold/);
+  await assert.rejects(runtime.clear(), /hold/);
   assert.deepEqual(f.calls, []);
+  const result = await runtime.archive();
+  assert.equal(result.archiveId, 'archive-copy');
+  assert.equal(f.state().pending, null); assert.equal(f.state().catchupRequired, false);
+  assert.ok(f.batches[0].some(r => r.updateCells?.range.sheetId === 7));
+  assert.ok(f.batches[0].some(r => r.updateCells?.range.sheetId === 8));
 });
 
 test('failed catchup remains durable and retries without clearing again', async t => {
@@ -149,9 +134,21 @@ test('failed catchup remains durable and retries without clearing again', async 
   await assert.rejects(f.start().run(() => assert.fail('no export')), /database unavailable/);
   assert.equal(f.state().catchupRequired, true);
   failed = false;
-  await f.start().run(() => f.mutations.push('export'));
+  const recovered = await f.start().archive();
+  assert.equal(recovered.archiveId, 'archive-copy');
   assert.equal(replays, 2);
   assert.equal(f.mutations.filter(item => item === 'clear').length, 1);
+  assert.equal(f.mutations.filter(item => item === 'archive').length, 1);
+  assert.equal(f.state().catchupRequired, false);
+});
+
+test('archive still forces a newly due cutoff when previous catchup is incomplete', async t => {
+  const f = await fixture(t);
+  process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS = '4';
+  f.state().catchupRequired = true;
+  const result = await f.start().archive();
+  assert.equal(result.archiveId, 'archive-copy');
+  assert.equal(f.state().pending, null);
   assert.equal(f.state().catchupRequired, false);
 });
 
@@ -164,18 +161,22 @@ test('next draw dates use Eastern dates in R7/P7 with mm/dd/yy format', () => {
   }
 });
 
-test('explicit test close archives and resets with automatic rollover off without advancing schedule', async t => {
-  const f = await fixture(t);
+test('production archive outside hold copies immediately without advancing schedule', async t => {
+  let replays = 0;
+  const f = await fixture(t, { loadCatchupEntries: async () => { replays++; return []; } });
   process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED = 'false';
-  const before = structuredClone(f.state());
-  const result = await f.start().testClose('biweekly');
+  process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS = '4';
+  f.state().windows[0].salesEnd = 5000;
+  const before = structuredClone(f.state().windows);
+  const result = await f.start().archive();
   assert.equal(result.archiveId, 'archive-copy');
   assert.deepEqual(f.mutations, ['archive', 'verify', 'clear']);
-  assert.deepEqual(f.state(), before, 'testing must not update actual cutoff state');
-  assert.equal(f.released(), 1);
+  assert.deepEqual(f.state().windows, before);
+  assert.deepEqual(f.state().lastClosedSalesEnd, {});
+  assert.equal(replays, 1);
 });
 
-test('runtime verifies archive before clearing only closed tab in original spreadsheet, then exports', async t => {
+test('runtime verifies archive before clearing both tabs in original spreadsheet, then exports', async t => {
   const f = await fixture(t);
   const runtime = f.start();
   await runtime.run(async state => { assert.equal(state.lastClosedSalesEnd.biweekly, 1000); f.mutations.push('export'); });

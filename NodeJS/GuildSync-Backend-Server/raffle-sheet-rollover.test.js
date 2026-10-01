@@ -57,6 +57,27 @@ test('holds until persisted deadline across restart then archives and marks catc
   assert.deepEqual(io.clears[0].nextWindows.map(w => w.salesEnd), [200, 150]);
 });
 
+test('on-demand archive skips a real hold and resets both tabs', async () => {
+  const io = fixture([100, 150]); io.delaySeconds = 40;
+  await io.engine().tick(); io.time = 100; await io.engine().tick();
+  await io.engine().tick({ archiveNow: true });
+  assert.equal(io.copies.length, 1);
+  assert.deepEqual(io.clears[0].raffles.map(r => r.type), ['biweekly', 'monthly']);
+  assert.deepEqual(io.state().lastClosedSalesEnd, { biweekly: 100 });
+  assert.equal(io.state().lastArchive.archiveId, 'copy-0');
+});
+
+test('on-demand archive outside hold preserves schedule and resumes same job after failure', async () => {
+  const io = fixture([100, 150]); await io.engine().tick();
+  const windows = io.state().windows; io.failReset = true;
+  await assert.rejects(io.engine().tick({ archiveNow: true }), /reset response lost/);
+  assert.equal(io.state().pending.manual, true);
+  io.failReset = false; await io.engine().tick({ archiveNow: true });
+  assert.equal(io.copies.length, 1); assert.equal(io.clears.length, 1);
+  assert.deepEqual(io.state().windows, windows);
+  assert.deepEqual(io.state().lastClosedSalesEnd, {});
+});
+
 test('same cutoff archives the whole spreadsheet once, names using Eastern draw date, then resets both tabs', async () => {
   const io = fixture(); const engine = io.engine();
   await engine.tick(); io.time = 100; await engine.tick();
@@ -67,10 +88,10 @@ test('same cutoff archives the whole spreadsheet once, names using Eastern draw 
   await engine.tick(); assert.equal(io.copies.length, 1);
 });
 
-test('different cutoffs reset only the closed raffle and catch up missed cycles', async () => {
+test('different cutoffs reset both tabs but only advance the closed raffle', async () => {
   const io = fixture([100, 150]); const engine = io.engine();
   await engine.tick(); io.time = 250; await engine.tick();
-  assert.deepEqual(io.clears.map((job) => job.raffles.map((r) => r.type)), [['biweekly'], ['monthly'], ['biweekly'], ['monthly']]);
+  assert.deepEqual(io.clears.map((job) => job.raffles.map((r) => r.type)), Array.from({ length: 4 }, () => ['biweekly', 'monthly']));
   assert.deepEqual(io.state().lastClosedSalesEnd, { biweekly: 200, monthly: 250 });
 });
 

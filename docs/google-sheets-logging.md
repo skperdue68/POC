@@ -42,11 +42,11 @@ automatic writes to **both tabs** stop, while committed banking entries continue
 to accumulate in MariaDB. After a default four-hour hold, Apps Script copies
 the whole spreadsheet as `YYMMDD raffle` using the closed raffle's Eastern draw
 date. Only after verifying the copy and its sharing does the backend clear the
-closed tab(s), set their next draw dates, and replay missing current-period
+both raffle tabs, set their applicable draw dates, and replay current-period
 database records with the normal bonus policy and transaction-ID deduplication.
 
-Bi-Weekly-only closure preserves the ongoing 50/50 tab. Both closing together
-produce one archive. Replay also catches up held entries for an ongoing 50/50.
+Every rollover clears both tabs, then restores the ongoing 50/50 period from the
+database when it has not closed. Both closing together produce one archive.
 Entries from closed periods are not inserted into the new raffle. Manually
 entered spreadsheet results during the hold are included in the archive.
 Keep GuildSync running before cutoff: first enablement arms the next cutoff,
@@ -126,24 +126,27 @@ archive markers belong to the old application and cannot be verified by the new 
 
 ### Test, then enable
 
-Use a test spreadsheet first. With automatic rollover disabled, enable
-`GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED=true` in both backend and bot,
-restart the services, then run
-`/gsr raffle test-close raffle:Bi-Weekly confirm:true`.
-This performs an immediate real archive/reset, bypassing the four-hour wait;
-it does not advance saved raffle schedules or automatically replay the database.
+Use a test spreadsheet first. With automatic rollover disabled, restart both
+services and run `npm run deploy` in the Discord bot directory. Run
+`/gsr raffle archive` as a Consigliere. This immediately creates a real archive,
+resets both original tabs and reloads both current periods from the database.
+Outside an active hold it does not advance the raffle schedule. During a hold
+it explicitly completes the pending rollover immediately.
 Inspect the dated archive and the original tab, including R7/P7. Use
-`/gsr raffle refresh` to test deduplicated database export afterward.
-Test-close writes the next scheduled draw date only on the selected tab;
-`/gsr test reset` continues to clear fields without archiving or changing dates.
+`/gsr raffle refresh` to clear and reload both selected periods afterward;
+refresh sets R7/P7 to those periods' draw dates, including for historical exports.
+`/gsr raffle clear` clears both tabs including draw dates without archiving or
+changing database entries. `/gsr raffle refresh` restores both selected periods
+and dates. All commands are production features; remove the obsolete
+`GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED` from both backend and bot .env files.
 
 Once the test succeeds, set `GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED=true`
 and restart the backend. The existing one-minute scheduler checks whether the
-saved deadline has arrived. All spreadsheet-writing commands (including refresh,
-test-add, test-close and test-reset) are blocked during a live hold or pending
-recovery. Read-only raffle commands and announcement previews remain available.
+saved deadline has arrived. Refresh and clear are blocked during a live hold.
+Archive bypasses the delay; saved recovery must finish before new live writes.
+Read-only raffle commands remain available. The old test commands are removed.
 
-Archive/reset/replay failures keep writes paused and retry on subsequent ticks.
+Archive/reset/replay failures keep writes paused and retry on subsequent automatic ticks or operations.
 Retries reuse the archive and atomic reset markers; replay skips IDs already
 written. A failed or partial replay is retried before accepting new live writes.
 The database remains the durable source for held entries. Backend details are in
@@ -154,9 +157,10 @@ The database remains the durable source for held entries. Backend details are in
 Both tabs clear D5:F254 values and H5:H254 values/notes, preserve G5:G254,
 and hide G/H. Bi-Weekly additionally clears J5:K254, P62:R70, R3:R4 and Q33:Q52.
 50/50 additionally clears N36:P44, P3:P4, P25 and M28, preserving J5:K254.
-After automatic archive/reset, the next draw date goes in Bi-Weekly R7 and/or
+After automatic archive/reset, the applicable draw date goes in Bi-Weekly R7 and
 50/50 P7 as a real date formatted `mm/dd/yy`, using America/New_York.
-Only closing tabs are prepared. The original file is never renamed or replaced.
+Both tabs are prepared on every rollover; the ongoing 50/50 draw date remains
+its current period's date. The original file is never renamed or replaced.
 
 References: [Apps Script web apps](https://developers.google.com/apps-script/guides/web),
 [advanced Drive service](https://developers.google.com/apps-script/advanced/drive),
@@ -178,11 +182,10 @@ line. Simultaneous reminders of the same kind are combined.
 
 ## Discord command registration
 
-From `NodeJS/GuildSync-Discord-Bot`, run `npm run deploy` if test commands need
-registering after enabling the existing test flag. The prior `/raffle-test`
-command is removed. Raffle administration requires the exact **Consigliere**
-role and replies privately. `/gsr raffle refresh [date:MMDDYY]` appends missing
-selected-period entries and remains available with test commands disabled,
+From `NodeJS/GuildSync-Discord-Bot`, run `npm run deploy` to register refresh,
+clear and archive and remove all retired test commands. Raffle administration requires the exact **Consigliere**
+role and replies privately. `/gsr raffle refresh [date:MMDDYY]` clears and reloads
+both selected periods and remains available with test commands disabled,
 but sheet writes are blocked during a rollover hold. See
 [raffle command documentation](raffle-refresh.md) for other commands and examples.
 
