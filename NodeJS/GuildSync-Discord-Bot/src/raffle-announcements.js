@@ -13,7 +13,7 @@ export async function sendRaffleAnnouncement(client, channelId, guildId, snapsho
   if (!channel.permissionsFor(client.user)?.has(PermissionFlagsBits.ReadMessageHistory)) {
     throw new Error('Raffle announcements require Read Message History to reconcile interrupted deliveries.');
   }
-  const content = formatRaffles(snapshot);
+  const content = delivery.content ?? formatRaffles(snapshot);
   if (delivery.reconcile) {
     // Discord does not retain nonce on fetched messages. Compare the original
     // persisted content and bot author, excluding slash-command responses.
