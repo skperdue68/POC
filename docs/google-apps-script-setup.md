@@ -211,12 +211,108 @@ Ownership-transfer availability depends on Google's account policies. Google's [
 | Missing `doGet` when opening URL | Expected: this script accepts backend POST requests, not browser GET requests. |
 | Editor Run returns `ok: false` | doPost requires a request body; do not test it with Run. |
 | Login page or unexpected HTML | Use the deployed /exec URL, Execute as Me and access Anyone. |
-| Archive returns `ok: false` | Check exact secret/source ID, folder access, deployed version and Apps Script Executions. Initial validation failures can return false without an error log. |
+| Archive returns `ok: false` | Check exact secret/source ID, folder access and deployed version. Older scripts can reject validation without logging a reason; see the diagnostic update below. |
 | Sharing verification fails | Check source sharing, archive-folder inheritance and deploying account permissions. The backend will not reset until verification succeeds. |
 | Protected cell error | Give the backend service account access to the affected protected range; being file Editor alone is insufficient. |
 | Copy exists but replay failed | Fix the logged cause and let saved recovery retry. Do not delete state/markers or switch projects mid-recovery. |
 | /gsr commands missing | Run npm run deploy in the Discord bot directory and restart the bot with updated code. |
 
 Apps Script errors appear under **Executions** in its left sidebar. Backend details appear in **NodeJS/GuildSync-Backend-Server/logs/google-sheets.log** unless overridden by `GUILDSYNC_GOOGLE_SHEETS_LOG_FILE`.
+
+
+### Start with the confirmed secret-mismatch check
+
+A real setup failure was caused by **one missing character in the backend .env secret**. The Google access checks passed, but archive requests were still rejected.
+
+Compare these pairs privately, character for character:
+
+| Backend .env | Apps Script Script Property |
+| --- | --- |
+| `GUILDSYNC_GOOGLE_ARCHIVE_SECRET` | `ARCHIVE_SECRET` |
+| `GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID` | `SOURCE_SPREADSHEET_ID` |
+
+Use raw values in Script Properties, without surrounding quotes or extra spaces. After correcting the backend .env, **restart the backend** so it loads the corrected value. Never paste the secret or credentials JSON into a support message.
+
+Check whether a dated copy appeared in the archive folder. A copy suggests the request reached the copy stage, but does not prove that the latest retry or sharing verification succeeded. Leave existing copies and database recovery records in place.
+
+### Publish diagnostic code changes correctly
+
+The [archive diagnostic update (PR #39)](https://github.com/skperdue68/POC/pull/39) replaces silent validation failures with specific exceptions and rethrows copy/sharing errors. It also diagnoses malformed requests and lock contention. Validation messages do not print the secret or request contents.
+
+Copy the updated [diagnostic Archive.gs](https://github.com/skperdue68/POC/blob/fix/archive-script-diagnostics/scripts/google-apps-script/Archive.gs) into the **existing browser project**, then:
+
+1. Save the code.
+2. Select **Deploy → Manage deployments**.
+3. Select the existing deployment and click **Edit** (pencil).
+4. Choose **Version → New version → Deploy**.
+5. Keep the same backend URL. No backend restart is needed for this code-only deployment change.
+
+Saving alone does not update the deployed web app. In **Executions**, check the version number and timestamp of the next request. The updated validation code contains `const problems = [];` and its final catch block uses `throw error;`.
+
+With the diagnostic version, a failed request can return Google's error page rather than JSON. The backend may therefore say **Archive web app returned invalid JSON; check deployment access**. This does not by itself prove deployment access is wrong. A corresponding failed doPost execution means the request reached the script. If no corresponding execution appears, check the /exec URL, Execute as Me and access Anyone.
+
+The original script caught errors and returned false, so an execution marked Completed did not necessarily mean archiving succeeded.
+
+### If execution details will not open: run a read-only check
+
+Do not rely on the execution row or disabled Cloud logs menu to open details. Use the editor's Execution log for this setup check instead.
+
+1. Click **Editor** (`<>`) in the Apps Script left sidebar.
+2. Paste this function **below** the existing code, outside doPost.
+3. Save.
+4. In the function dropdown beside **Run**, choose **checkArchiveSetup**.
+5. Click **Run**, authorize if requested, then open **Execution log** in the editor.
+
+```javascript
+function checkArchiveSetup() {
+  const p = PropertiesService.getScriptProperties();
+
+  for (const key of [
+    'ARCHIVE_SECRET',
+    'SOURCE_SPREADSHEET_ID',
+    'ARCHIVE_FOLDER_ID'
+  ]) {
+    if (!p.getProperty(key)) {
+      throw new Error('Missing Script Property: ' + key);
+    }
+  }
+  console.log('All three Script Properties are present.');
+
+  const source = Drive.Files.get(
+    p.getProperty('SOURCE_SPREADSHEET_ID'),
+    { fields: 'mimeType,capabilities(canCopy)' }
+  );
+  if (source.mimeType !== 'application/vnd.google-apps.spreadsheet') {
+    throw new Error('SOURCE_SPREADSHEET_ID is not a Google spreadsheet.');
+  }
+  if (!source.capabilities || !source.capabilities.canCopy) {
+    throw new Error('Your Google account cannot copy the source spreadsheet.');
+  }
+  console.log('Source spreadsheet is accessible and allows copying.');
+
+  const folder = Drive.Files.get(
+    p.getProperty('ARCHIVE_FOLDER_ID'),
+    { fields: 'mimeType,capabilities(canAddChildren)' }
+  );
+  if (folder.mimeType !== 'application/vnd.google-apps.folder') {
+    throw new Error('ARCHIVE_FOLDER_ID is not a folder.');
+  }
+  if (!folder.capabilities || !folder.capabilities.canAddChildren) {
+    throw new Error('Your Google account cannot add files to the archive folder.');
+  }
+  console.log('Archive folder is accessible and allows new files.');
+  console.log('Setup checks passed. Next check backend secret/source ID matches.');
+}
+```
+
+This reads properties and permissions. It does not create a copy, clear data, change sharing or print the secret. **No redeployment is required to run this helper in the editor.**
+
+A passing check confirms access under the account running the editor. It does not compare the backend's secret, exercise the deployed request, or verify archive-sharing reconciliation. Confirm the deployment executes as the same intended account.
+
+### Understand the repeating attempts
+
+GuildSync retries unfinished rollover work, so doPost calls approximately a minute apart can be expected during recovery. They are separate backend requests, not a single endlessly running Apps Script execution.
+
+You do not need to terminate completed executions. To pause retries while editing, stop the **GuildSync backend** temporarily; banking-data processing also pauses until it restarts. Do not delete pending rollover state, sheet markers or an existing archive to stop retries. After correcting the cause and restarting if needed, let the saved operation retry.
 
 For exact cell ranges and operational details, see [spreadsheet export documentation](google-sheets-logging.md).
