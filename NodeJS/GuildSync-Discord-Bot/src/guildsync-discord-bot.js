@@ -27,6 +27,7 @@ import {
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
 import * as gsaRaffle from './commands/gsa-raffle.js';
+import { startArchiveAnnouncements } from './archive-announcements.js';
 import { startRaffleAnnouncements } from './raffle-announcements.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -293,6 +294,7 @@ guildSyncSocket.on('guildsync:eso-guild-application-message', async (payload = {
 client.once(Events.ClientReady, async readyClient => {
   Log(`GuildSync bot logged in as ${readyClient.user.tag}`);
   startRaffleAnnouncements(client, guildSyncSocket, Log);
+  startArchiveAnnouncements(client, guildSyncSocket, Log);
 
   await runStartupSyncIfReady('Discord bot ready');
 });

@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
 import fs from 'node:fs';
-import { registerRaffleSocket } from './raffle-socket.js';
+import { registerRaffleSocket, registerArchiveSocket } from './raffle-socket.js';
 import { getActiveRaffleSummary, getRaffleUserTickets, getSheetsRaffleWindows, getRaffleRefreshSelection, selectSheetsCatchupEntries } from './guildsync-database-actions.js';
 import { startSheetsRollover } from './sheets-rollover-runtime.js';
 import { registerRaffleManagementSocket, registerRaffleRefreshSocket } from './raffle-admin-socket.js';
@@ -446,6 +446,7 @@ io.use(async (socket, next) => {
 
 io.on('connection', (socket) => {
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
+  registerArchiveSocket(socket, applicationDB);
   registerRaffleManagementSocket(socket, applicationDB, { sheets: sheetsRuntime });
   registerRaffleRefreshSocket(socket, applicationDB, { getRaffleRefreshSelection, getBankingDataJSON });
 

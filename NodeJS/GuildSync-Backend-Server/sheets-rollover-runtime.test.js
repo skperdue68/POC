@@ -133,6 +133,7 @@ test('failed catchup remains durable and retries without clearing again', async 
   const f = await fixture(t, { loadCatchupEntries: async () => { replays++; if (failed) throw new Error('database unavailable'); return []; } });
   await assert.rejects(f.start().run(() => assert.fail('no export')), /database unavailable/);
   assert.equal(f.state().catchupRequired, true);
+  assert.equal(f.state().completedArchives?.length || 0, 0);
   failed = false;
   const recovered = await f.start().archive();
   assert.equal(recovered.archiveId, 'archive-copy');
@@ -140,6 +141,8 @@ test('failed catchup remains durable and retries without clearing again', async 
   assert.equal(f.mutations.filter(item => item === 'clear').length, 1);
   assert.equal(f.mutations.filter(item => item === 'archive').length, 1);
   assert.equal(f.state().catchupRequired, false);
+  assert.equal(f.state().completedArchives.length, 1);
+  assert.equal(f.state().completedArchives[0].archiveId, 'archive-copy');
 });
 
 test('archive still forces a newly due cutoff when previous catchup is incomplete', async t => {
@@ -150,6 +153,8 @@ test('archive still forces a newly due cutoff when previous catchup is incomplet
   assert.equal(result.archiveId, 'archive-copy');
   assert.equal(f.state().pending, null);
   assert.equal(f.state().catchupRequired, false);
+  assert.equal(f.state().completedArchives.length, 1);
+  assert.equal(f.state().completedArchives[0].archiveId, 'archive-copy');
 });
 
 test('next draw dates use Eastern dates in R7/P7 with mm/dd/yy format', () => {
@@ -211,3 +216,4 @@ test('restart after uncertain reset uses atomic marker and never clears twice', 
   assert.equal(f.state().pending, null);
   assert.equal(f.released(), 2);
 });
+
