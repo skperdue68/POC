@@ -90,7 +90,7 @@ function handleArchiveRequest(e, diagnostic) {
         (p.type === 'anyone' || (p.type === 'domain' ? q.domain === p.domain : q.emailAddress === p.emailAddress))))) throw new Error('Archive sharing verification failed');
     // Verify the file can actually be opened as a spreadsheet before allowing reset.
     const book = SpreadsheetApp.openById(archive.id);
-    const results = readRaffleArchive(book, request.biweeklyTab || 'bi-weekly raffle', request.fiftyFiftyTab || '50/50');
+    const results = readRaffleArchive(book, request.biweeklyTab || 'bi-weekly raffle', request.fiftyFiftyTab || '50/50', request.eligibleMonthlyDates);
     const name = raffleArchiveName(results.biweekly.date);
     if (file.name !== name) throw new Error('Archive date/name mismatch; finish legacy recovery before upgrading.');
     // The verified replacement exists before any previous same-name file is trashed.
@@ -122,9 +122,12 @@ function formatArchiveDate(value, tab, address, workbook) {
 }
 
 function raffleSheetDate(book, tab, address, workbook) {
+  console.log('Reading raffle date: ' + (workbook || 'archive copy') + ' / ' + tab + ' / ' + address);
   const sheet = book.getSheetByName(tab);
   if (!sheet) throw new Error('Missing raffle tab: ' + tab);
-  const value = sheet.getRange(address).getValue();
+  let value;
+  try { value = sheet.getRange(address).getValue(); }
+  catch (_) { throw new Error('Unable to read raffle date: ' + tab + ' ' + address); }
   if (value instanceof Date && !isNaN(value.getTime())) {
     return formatArchiveDate(value, tab, address, workbook || 'archive copy');
   }
@@ -140,7 +143,7 @@ function raffleSheetDate(book, tab, address, workbook) {
 function raffleArchiveName(date) {
   return date.slice(2,4) + date.slice(5,7) + date.slice(8,10) + ' Raffle';
 }
-function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab) {
+function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDates) {
   const result = {};
   const columnName = column => {
     let name = '';
@@ -151,10 +154,29 @@ function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab) {
     ['biweekly', biweeklyTab, 'R7', ['Q33:Q48','O55','S31:S50','J5:K254']],
     ['monthly', fiftyFiftyTab, 'P7', ['L23','J26']]
   ].forEach(([type, tab, dateCell, ranges]) => {
+    let date;
+    try { date = raffleSheetDate(book, tab, dateCell); }
+    catch (error) {
+      if (type !== 'monthly') throw error;
+      console.log('Skipping 50/50 results: unable to read ' + tab + ' ' + dateCell + '; existing result fields will be preserved.');
+      result.monthly = { skipped: true, reason: 'unreadable-date' };
+      return;
+    }
+    if (type === 'monthly' && (!Array.isArray(eligibleMonthlyDates) || !eligibleMonthlyDates.includes(date) || date > result.biweekly.date)) {
+      console.log('Skipping 50/50 results: ' + tab + ' ' + dateCell + ' is not an eligible completed raffle.');
+      result.monthly = { skipped: true, date: date, reason: 'not-completed' };
+      return;
+    }
     const sheet = book.getSheetByName(tab);
     const cells = [];
     ranges.forEach(address => {
-      const range = sheet.getRange(address), values = range.getValues(), formulas = range.getFormulas();
+      console.log('Reading raffle results: ' + tab + ' ' + address);
+      let range, values, formulas;
+      try { range = sheet.getRange(address); values = range.getValues(); formulas = range.getFormulas(); }
+      catch (_) {
+        throw new Error('Unable to read ' + tab + ' ' + address);
+      }
+      const before = cells.length;
       values.forEach((row, r) => row.forEach((value, c) => {
         const formula = formulas[r] && formulas[r][c];
         if (value === '' && !formula) return;
@@ -163,8 +185,9 @@ function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab) {
         cells.push({ address: cellAddress, value: value,
           ...(formula ? { formula: formula } : {}) });
       }));
+      console.log('Read raffle results: ' + tab + ' ' + address + '; captured cells=' + (cells.length-before));
     });
-    result[type] = { date: raffleSheetDate(book, tab, dateCell), cells: cells };
+    result[type] = { date: date, cells: cells };
   });
   return result;
 }

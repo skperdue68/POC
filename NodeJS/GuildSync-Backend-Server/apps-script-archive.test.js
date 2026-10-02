@@ -39,7 +39,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   let trashed = [], copy, copies = 0, sharingFails = false, locked = false;
   const permissions = { source: [{ type: 'user', role: 'writer', emailAddress: 'service@example.invalid' }, { type: 'anyone', role: 'reader', allowFileDiscovery: false }], copy: [] };
   const properties = { ARCHIVE_SECRET: 'backend-private-secret', SOURCE_SPREADSHEET_ID: 'source', ARCHIVE_FOLDER_ID: 'folder' };
-  const context = vm.createContext({ console: { error() {} },
+  const context = vm.createContext({ console: { error() {}, log() {} },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties[key] }) },
     LockService: { getScriptLock: () => ({ tryLock: () => { assert.equal(locked, false); locked = true; return true; }, releaseLock: () => { locked = false; } }) },
@@ -53,7 +53,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
     }
   });
   vm.runInContext(source, context);
-  const request = { secret: 'backend-private-secret', sourceId: 'source', key: 'a'.repeat(32) + ':raffle-rollover-1000', action: 'archive', name: '260926 Raffle' };
+  const request = { secret: 'backend-private-secret', sourceId: 'source', key: 'a'.repeat(32) + ':raffle-rollover-1000', action: 'archive', eligibleMonthlyDates:['2026-09-26'], name: '260926 Raffle' };
   const call = data => context.doPost({ postData: { contents: JSON.stringify(data) } });
   const fails = (fn, pattern) => { const result = fn(); assert.equal(result.ok, false); assert.match(result.error, pattern); };
   fails(() => call({ ...request, secret: 'bad' }), /Backend secret does not match ARCHIVE_SECRET/); assert.equal(copies, 0);
@@ -72,7 +72,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   assert.equal(locked, false);
   assert.doesNotMatch(call({ ...request, secret: 'PRIVATE_VALUE' }).error, /PRIVATE_VALUE/);
   assert.doesNotMatch(call(request).error, /secret|PRIVATE_VALUE/);
-  sharingFails = false; assert.equal(call(request).ok, true); assert.equal(copies, 1);
+  sharingFails = false; assert.equal(call(request).ok, true); assert.equal(call(request).results.monthly.date, '2026-09-26'); assert.equal(copies, 1);
   assert.equal(call({ ...request, action: 'verify', archiveId: 'copy' }).ok, true);
   assert.equal(permissions.copy.length, 2); assert.ok(trashed.every(id=>id==='old-copy')); assert.equal(copy.name,'260926 Raffle');
   assert.equal(permissions.copy.find(p => p.type === 'anyone').role, 'reader');

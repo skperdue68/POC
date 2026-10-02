@@ -36,7 +36,7 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
   });
 }
 
-async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, snapshotFailure = false, loadCatchupEntries = async () => [] } = {}) {
+async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, snapshotFailure = false, skipMonthly = false, loadCatchupEntries = async () => [] } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'guildsync-rollover-test-'));
   const env = {
     GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED: 'true',
@@ -57,6 +57,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
       if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
       if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
       if (sql.startsWith('SELECT value')) return [[{ value: JSON.stringify(state) }]];
+      if (skipMonthly && sql.startsWith('INSERT INTO guildsync_raffle_results')) assert.notEqual(params[0], 'monthly');
       if (snapshotFailure && sql.startsWith('INSERT INTO guildsync_raffle_results')) throw Error('snapshot storage failed');
       if (sql.includes('guildsync_raffle_result')) return [sql.startsWith('SELECT') ? [] : {}];
       if (sql.startsWith('INSERT')) { state = JSON.parse(params[1]); return [{}]; }
@@ -77,7 +78,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
         mutations.push('archive');
         if (copyFailure) return { ok: false, status: 403 };
         copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'260926 Raffle',
-          results: {biweekly:{date:'2026-09-26',cells:[]},monthly:{date:'2026-10-24',cells:[]}} };
+          results: {biweekly:{date:'2026-09-26',cells:[]},monthly:skipMonthly?{skipped:true,reason:'unreadable-date'}:{date:'2026-10-24',cells:[]}} };
       } else mutations.push('verify');
       body = copy;
     }
@@ -241,4 +242,14 @@ test('ongoing monthly results are not cleared during a biweekly reset', async t 
   const requests=f.batches.flat().filter(item=>item.updateCells?.range.sheetId===8);
   assert.ok(!requests.some(item=>item.updateCells.range.startRowIndex===22 && item.updateCells.range.startColumnIndex===11));
   assert.ok(!requests.some(item=>item.updateCells.range.startRowIndex===25 && item.updateCells.range.startColumnIndex===9));
+});
+
+
+test('skipped monthly results are not saved or cleared, including uncertain-reset retry', async t=>{
+ const f=await fixture(t,{skipMonthly:true,uncertainClear:true});
+ await assert.rejects(f.start().archive(),/response lost/);
+ await f.start().run();
+ const requests=f.batches.flat().filter(item=>item.updateCells?.range?.sheetId===8);
+ assert.ok(!requests.some(item=>[22,25].includes(item.updateCells.range.startRowIndex)));
+ assert.equal(f.mutations.filter(item=>item==='clear').length,1);
 });
