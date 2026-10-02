@@ -43,9 +43,13 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
       return archive;
     },
     reset: async ({ key, archiveId, raffles, nextWindows }) => {
-      await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId,
+      const verified = await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId,
         biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, details: true });
-      await exportLog('Archive result capture disabled; skipping snapshot reads and database saves.');
+      for (const item of verified.diagnosticCells || []) {
+        if (/^Q(?:3[3-9]|4[0-9]|5[0-2])$/.test(item.cell) && item.value != null && String(item.value).length > 0) {
+          await exportLog('Archive diagnostic ' + item.cell + ': ' + JSON.stringify(item.value));
+        }
+      }
       const { token, url } = await contextNow();
       const book = await sheetsRequest(token, url + '?fields=sheets(properties,developerMetadata)');
       const requests = [];
