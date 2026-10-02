@@ -36,7 +36,8 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
     assert.equal(formatClears.length, type === 'biweekly' ? 1 : 0);
     if (type === 'biweekly') {
       assert.deepEqual(formatClears[0].updateCells.range, { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 9, endColumnIndex: 11 });
-      assert.equal(formatClears[0].updateCells.fields, 'userEnteredValue,userEnteredFormat');
+      assert.ok(formatClears[0].updateCells.fields.includes('userEnteredFormat.backgroundColor'));
+      assert.ok(!formatClears[0].updateCells.fields.split(',').some(field => field === 'userEnteredFormat' || field.includes('borders')));
       assert.equal(formatClears[0].updateCells.rows, undefined);
     }
   });
@@ -83,7 +84,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
       if (payload.action === 'archive') {
         mutations.push('archive');
         if (copyFailure) return { ok: false, status: 403 };
-        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'260926 Raffle',
+        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'260926 Raffle', diagnosticCells:[{cell:'Q33',value:'Alice'},{cell:'Q52',value:'0'}],
           results: {biweekly:{date:'2026-09-26',cells:[]},monthly:skipMonthly?{skipped:true,reason:'unreadable-date'}:{date:'2026-10-24',cells:[]}} };
       } else mutations.push('verify');
       body = copy;
@@ -142,6 +143,8 @@ test('hold blocks clear and exports but archive bypasses hold and rebuilds both 
   assert.deepEqual(f.calls, []);
   const result = await runtime.archive({ requestedBy: 'Officer' });
   assert.ok(logs.some(line => line.includes("Archiving as '260926 Raffle'")));
+  assert.ok(logs.some(line => line.includes('Archive diagnostic Q33: \"Alice\"')));
+  assert.ok(logs.some(line => line.includes('Archive diagnostic Q52: \"0\"')));
   assert.equal(result.requestedBy, 'Officer');
   assert.match(result.message, /archived by Officer/);
   assert.equal(result.archiveId, 'archive-copy');

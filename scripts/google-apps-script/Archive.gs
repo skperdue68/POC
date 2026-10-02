@@ -91,10 +91,11 @@ function handleArchiveRequest(e, diagnostic) {
         (p.type === 'anyone' || (p.type === 'domain' ? q.domain === p.domain : q.emailAddress === p.emailAddress))))) throw new Error('Archive sharing verification failed');
     // Verify the file can actually be opened as a spreadsheet before allowing reset.
     const book = SpreadsheetApp.openById(archive.id);
-    // Result capture is paused. Read only the draw date needed for the archive name.
+    // Full result capture is paused; temporarily read only Q33:Q52 for diagnostics.
     const name = raffleArchiveName(raffleSheetDate(book, request.biweeklyTab || 'bi-weekly raffle', 'R7'));
-    console.log('Archive result capture disabled; skipping winner, attendance, and prize reads.');
+
     if (file.name !== name) throw new Error('Archive date/name mismatch; finish legacy recovery before upgrading.');
+    const diagnosticCells = readArchiveDiagnosticCells(book, request.biweeklyTab || 'bi-weekly raffle');
     // The verified replacement exists before any previous same-name file is trashed.
     // Gather every page before mutating the folder listing.
     let pageToken;
@@ -109,7 +110,7 @@ function handleArchiveRequest(e, diagnostic) {
       pageToken = page.nextPageToken;
     } while (pageToken);
     superseded.forEach(id => Drive.Files.update({ trashed: true }, id));
-    return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name });
+    return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name, diagnosticCells: diagnosticCells });
   } finally { lock.releaseLock(); }
 }
 
@@ -189,4 +190,21 @@ function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDate
     result[type] = { date: date, cells: cells };
   });
   return result;
+}
+
+
+// Temporary read-only probe: do not persist these values or restore result capture.
+function readArchiveDiagnosticCells(book, tab) {
+  const sheet = book.getSheetByName(tab);
+  if (!sheet) throw new Error('Missing raffle tab: ' + tab);
+  let rows;
+  try { rows = sheet.getRange('Q33:Q52').getValues(); }
+  catch (_) { throw new Error('Unable to read archive diagnostic cells: ' + tab + ' Q33:Q52'); }
+  const cells = [];
+  rows.forEach((row, index) => {
+    const value = row[0];
+    if (value == null || String(value).length === 0) return;
+    cells.push({ cell: 'Q' + (33 + index), value: String(value) });
+  });
+  return cells;
 }

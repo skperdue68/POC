@@ -69,3 +69,15 @@ test('archive naming preserves displayed date instead of shifting midnight UTC i
  const book={getSheetByName:()=>({getRange:()=>({getValue:()=>new Date('2026-10-10T00:00:00Z'),getDisplayValue:()=> '10/10/26'})})};
  assert.equal(context.raffleArchiveName(context.raffleSheetDate(book,'bi-weekly raffle','R7')),'261010 Raffle');
 });
+
+
+test('temporary archive diagnostics retain cell addresses and nonempty zero/false values', async () => {
+ const context = vm.createContext({});
+ vm.runInContext(await readFile(new URL('../../scripts/google-apps-script/Archive.gs', import.meta.url), 'utf8'), context);
+ const book = { getSheetByName: tab => { assert.equal(tab, 'Bi-Weekly Raffle'); return { getRange: range => {
+   assert.equal(range, 'Q33:Q52'); return { getValues: () => [['Alice'], [''], [null], [0], [false], ['Bob']] };
+ } }; } };
+ assert.deepEqual(JSON.parse(JSON.stringify(context.readArchiveDiagnosticCells(book, 'Bi-Weekly Raffle'))), [
+   {cell:'Q33',value:'Alice'}, {cell:'Q36',value:'0'}, {cell:'Q37',value:'false'}, {cell:'Q38',value:'Bob'}
+ ]);
+});
