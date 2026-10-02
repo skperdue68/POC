@@ -1,3 +1,5 @@
+process.env.MARIADB_USER ||= 'test';
+process.env.MARIADB_PASSWORD ||= 'test';
 import test from 'node:test';
 import { generateKeyPairSync } from 'node:crypto';
 const testAccount = JSON.stringify({ client_email: 'test@example.invalid', private_key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) });
@@ -5,7 +7,7 @@ import assert from 'node:assert/strict';
 import { syncBankingEntriesToGoogleSheets, sheetsRequest, configureSheetsCoordinator } from './google-sheets-banking-sync.js';
 import * as sheets from './google-sheets-banking-sync.js';
 
-function fixture(t, { rows = [], state = {}, formulaRanges = [] } = {}) {
+function fixture(t, { rows = [], state = {}, formulaRanges = [], drawDates = ['09/26/26','09/26/26'] } = {}) {
   const env = { GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID: 'fixture',
     GUILDSYNC_GOOGLE_SERVICE_ACCOUNT_JSON: testAccount, GUILDSYNC_GOOGLE_SHEETS_BIWEEKLY_TAB: 'bi-weekly raffle', GUILDSYNC_GOOGLE_SHEETS_5050_TAB: '50/50' };
   const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
@@ -17,6 +19,7 @@ function fixture(t, { rows = [], state = {}, formulaRanges = [] } = {}) {
     const decoded = decodeURIComponent(String(url)); calls.push(decoded);
     let body;
     if (decoded.includes('oauth2.googleapis.com')) body = { access_token: 'test-token' };
+    else if (decoded.includes('!R7') || decoded.includes('!P7')) body = {values:[[decoded.includes('!R7') ? drawDates[0] : drawDates[1]]]};
     else if (decoded.includes('/values:batchGet')) body = {valueRanges:formulaRanges};
     else if (decoded.includes('?fields=sheets.properties')) body = { sheets: [
       { properties: { title: 'bi-weekly raffle', sheetId: 7, gridProperties: { rowCount: 300, columnCount: 20 } } },
@@ -37,7 +40,7 @@ function fixture(t, { rows = [], state = {}, formulaRanges = [] } = {}) {
   return { calls, writes, logs, run: entries => syncBankingEntriesToGoogleSheets(entries, { log: async value => logs.push(value), uploadedBy: 'EvaineFaye' }) };
 }
 const ticket = (extra = {}) => ({ type: 'biweekly', eventId: '123', displayName: 'Player', amount: 200001, ticketAmount: 200,
-  bonusEnabled: true, bonusTickets: 20, bonusPercent: 10, time: 1500, ...extra });
+  bonusEnabled: true, bonusTickets: 20, bonusPercent: 10, time: Date.parse('2026-09-15T16:00:00Z')/1000, ...extra });
 const cellValues = request => request.updateCells.rows[0].values.map(cell => Object.values(cell.userEnteredValue)[0]);
 
 test('rollover replay uses existing lock, skips archived/duplicate IDs and preserves bonus data', async t => {
@@ -189,11 +192,11 @@ for (const [type, ticketAmount, count, range] of [['biweekly', 200, 250, 'D5:F25
 
 test('closed-period and missing-time entries never refill reset tabs; new entries still export', async t => {
   const f = fixture(t, { state: { lastClosedSalesEnd: { biweekly: 1000 } } });
-  const result = await f.run([ticket({ eventId: 'past', time: 999 }), ticket({ eventId: 'boundary', time: 1000 }), ticket({ eventId: 'unknown', time: undefined }), ticket({ eventId: 'new', time: 1001 })]);
+  const result = await f.run([ticket({ eventId: 'past', time: 999 }), ticket({ eventId: 'boundary', time: 1000 }), ticket({ eventId: 'unknown', time: undefined }), ticket({ eventId: 'new', time: Date.parse('2026-09-15T16:00:00Z')/1000 })]);
   assert.equal(result.synced, 1);
   assert.equal(f.writes.length, 1);
   assert.equal(cellValues(f.writes[0][0])[0], 'new');
-  assert.equal(f.logs.filter(line => line.startsWith('Skipped closed-period')).length, 3);
+  assert.ok(f.logs.some(line => line.includes('entries=3') && line.includes('retained')));
 });
 
 test('non-raffle entries and disabled exports make no Google calls', async t => {
@@ -210,7 +213,8 @@ test('75-entry export reads each section once, reserves unique rows and batches 
   entries.splice(20, 0, { ...entries[0] });
   entries.push({ ...entries[0] });
   assert.deepEqual(await f.run(entries), { enabled: true, synced: 75 });
-  assert.equal(f.calls.filter(url => url.includes('/values/')).length, 1);
+  assert.equal(f.calls.filter(url => url.includes('/values/')).length, 2);
+  assert.equal(f.calls.filter(url => decodeURIComponent(url).includes('!R7')).length, 1);
   assert.equal(f.writes.length, 3);
   assert.ok(f.writes.every(requests => requests.length === 25 * 4));
   const ticketWrites = f.writes.flat().filter(request => request.updateCells?.start?.columnIndex === 3);
@@ -253,4 +257,41 @@ test('template persistence failure prevents historical sheet replacement', async
    entries:[],periods:[{type:'biweekly',end:1790463600},{type:'monthly',end:1790463600}]
  }),{log:async value=>f.logs.push(value),saveTemplates:async()=>{throw Error('template storage failed');}}),/template storage/);
  assert.equal(f.writes.length,0);
+});
+
+
+test('live writes follow each displayed raffle date, leaving past/future entries in database',async t=>{
+ const f=fixture(t,{drawDates:['09/26/26','10/24/26']});
+ const result=await f.run([
+  ticket({eventId:'past',time:Date.parse('2026-09-01T12:00:00Z')/1000}),
+  ticket({eventId:'current'}),
+  ticket({eventId:'future',time:Date.parse('2026-10-01T12:00:00Z')/1000}),
+  ticket({eventId:'monthly-current',type:'monthly',time:Date.parse('2026-10-01T12:00:00Z')/1000})
+ ]);
+ assert.equal(result.synced,2);
+ const text=JSON.stringify(f.writes);
+ assert.ok(text.includes('current') && text.includes('monthly-current'));
+ assert.ok(!text.includes('past') && !text.includes('future'));
+});
+
+test('blank working draw date prevents writing into that tab',async t=>{
+ const f=fixture(t,{drawDates:['','09/26/26']});
+ assert.equal((await f.run([ticket()])).synced,0);
+ assert.equal(f.writes.length,0);
+});
+
+test('displayed raffle uses the same inclusive sales cutoff as archive catchup for both types', async t => {
+ const f = fixture(t);
+ for (const type of ['biweekly', 'monthly']) {
+  const start = Date.parse(type === 'biweekly' ? '2026-09-12T23:00:01Z' : '2026-08-29T23:00:01Z') / 1000;
+  const end = Date.parse('2026-09-26T23:00:00Z') / 1000;
+  assert.equal((await f.run([
+   ticket({ type, eventId: type + '-before', time: start - 1 }),
+   ticket({ type, eventId: type + '-start', time: start }),
+   ticket({ type, eventId: type + '-last', time: end }),
+   ticket({ type, eventId: type + '-end', time: end + 1 })
+  ])).synced, 2);
+ }
+ const written = JSON.stringify(f.writes);
+ assert.ok(!written.includes('-before') && !written.includes('-end'));
 });
