@@ -14,7 +14,11 @@ export async function requestArchive(action, { sourceId, key, name, archiveId, b
   if (!response.ok) throw new Error(`Archive web app request failed (${response.status}).`);
   let result;
   try { result = await response.json(); } catch { throw new Error('Archive web app returned invalid JSON; check deployment access.'); }
-  if (!result.ok || result.sourceId !== sourceId || result.key !== key || typeof result.archiveId !== 'string' ||
+  if (result?.ok === false && typeof result.error === 'string' && result.error.trim()) {
+    const message = result.error.split(secret).join('[redacted]').replace(/[\r\n]+/g, ' ').slice(0, 1000);
+    throw new Error('Archive web app failed: ' + message);
+  }
+  if (!result || result.ok !== true || result.sourceId !== sourceId || result.key !== key || typeof result.archiveId !== 'string' ||
     !result.archiveId || result.archiveId === sourceId || (archiveId && result.archiveId !== archiveId)) {
     throw new Error('Archive web app could not verify the requested copy; check Apps Script execution logs.');
   }

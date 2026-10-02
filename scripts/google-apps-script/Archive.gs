@@ -3,12 +3,29 @@
  * Copies/verifies archives and trashes superseded same-name archives. Reset/replay remain in the backend.
  */
 function doPost(e) {
+  const diagnostic = { secrets: [] };
+  try {
+    return handleArchiveRequest(e, diagnostic);
+  } catch (error) {
+    let message = String(error && error.message || error);
+    diagnostic.secrets.forEach(secret => {
+      if (typeof secret === 'string' && secret) message = message.split(secret).join('[redacted]');
+    });
+    message = message.slice(0, 1000);
+    console.error('GuildSync archive: ' + message);
+    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function handleArchiveRequest(e, diagnostic) {
   const json = value => ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON);
   const properties = PropertiesService.getScriptProperties();
   let request;
   try { request = JSON.parse(e.postData.contents); } catch (_) { throw new Error('GuildSync archive: Invalid JSON request'); }
   if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('GuildSync archive: Request must be a JSON object');
   const secret = properties.getProperty('ARCHIVE_SECRET');
+  diagnostic.secrets.push(secret, request.secret);
   const sourceId = properties.getProperty('SOURCE_SPREADSHEET_ID');
   const folderId = properties.getProperty('ARCHIVE_FOLDER_ID');
   // Report validation failures without logging credentials or request contents.
@@ -91,9 +108,6 @@ function doPost(e) {
     } while (pageToken);
     superseded.forEach(id => Drive.Files.update({ trashed: true }, id));
     return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name, results: results });
-  } catch (error) {
-    console.error(String(error));
-    throw error;
   } finally { lock.releaseLock(); }
 }
 

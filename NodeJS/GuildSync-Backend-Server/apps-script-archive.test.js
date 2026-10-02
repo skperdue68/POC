@@ -24,6 +24,12 @@ test('web app client validates identity and never accepts source as archive', as
     result = { ok: true, sourceId: 'source', key: 'closure', archiveId: 'copy', ...override };
     await assert.rejects(requestArchive('archive', payload), /verify/);
   }
+  result = { ok: false, error: 'permission failure' };
+  await assert.rejects(requestArchive('archive', payload), /Archive web app failed: permission failure/);
+  result = { ok: false, error: 'failure secret\nnext line' };
+  await assert.rejects(requestArchive('archive', payload), error => { assert.match(error.message, /failure \[redacted\] next line/); return true; });
+  result = null;
+  await assert.rejects(requestArchive('archive', payload), /verify/);
   globalThis.fetch = async () => ({ ok: true, json: async () => { throw Error('html'); } });
   await assert.rejects(requestArchive('archive', payload), /invalid JSON/);
 });
@@ -32,7 +38,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   const source = await readFile(new URL('../../scripts/google-apps-script/Archive.gs', import.meta.url), 'utf8');
   let trashed = [], copy, copies = 0, sharingFails = false, locked = false;
   const permissions = { source: [{ type: 'user', role: 'writer', emailAddress: 'service@example.invalid' }, { type: 'anyone', role: 'reader', allowFileDiscovery: false }], copy: [] };
-  const properties = { ARCHIVE_SECRET: 'secret', SOURCE_SPREADSHEET_ID: 'source', ARCHIVE_FOLDER_ID: 'folder' };
+  const properties = { ARCHIVE_SECRET: 'backend-private-secret', SOURCE_SPREADSHEET_ID: 'source', ARCHIVE_FOLDER_ID: 'folder' };
   const context = vm.createContext({ console: { error() {} },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties[key] }) },
@@ -43,31 +49,33 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
       Files: { list: options => ({ files: options.q.includes("name=") ? [{id:'old-copy'},{id:'copy'},{id:'source'}] : copy ? [{id:'copy'}] : [] }), update: (body,id) => { assert.equal(body.trashed,true); trashed.push(id); }, copy: (body, id) => {
         assert.equal(id, 'source'); copies++; copy = { id: 'copy', mimeType: 'application/vnd.google-apps.spreadsheet', ...body }; return copy;
       }, get: id => { assert.equal(id, 'copy'); return copy; } },
-      Permissions: { list: id => ({ permissions: permissions[id] }), create: (p, id) => { if (sharingFails) throw Error('permission failure'); permissions[id].push(p); }, update: () => assert.fail('unexpected update') }
+      Permissions: { list: id => ({ permissions: permissions[id] }), create: (p, id) => { if (sharingFails) throw Error('permission failure backend-private-secret'); permissions[id].push(p); }, update: () => assert.fail('unexpected update') }
     }
   });
   vm.runInContext(source, context);
-  const request = { secret: 'secret', sourceId: 'source', key: 'a'.repeat(32) + ':raffle-rollover-1000', action: 'archive', name: '260926 Raffle' };
+  const request = { secret: 'backend-private-secret', sourceId: 'source', key: 'a'.repeat(32) + ':raffle-rollover-1000', action: 'archive', name: '260926 Raffle' };
   const call = data => context.doPost({ postData: { contents: JSON.stringify(data) } });
-  assert.throws(() => call({ ...request, secret: 'bad' }), /Backend secret does not match ARCHIVE_SECRET/); assert.equal(copies, 0);
+  const fails = (fn, pattern) => { const result = fn(); assert.equal(result.ok, false); assert.match(result.error, pattern); };
+  fails(() => call({ ...request, secret: 'bad' }), /Backend secret does not match ARCHIVE_SECRET/); assert.equal(copies, 0);
   for (const property of Object.keys(properties)) {
     const saved = properties[property]; delete properties[property];
-    assert.throws(() => call(request), new RegExp(property + ' property is missing'));
+    fails(() => call(request), new RegExp(property + ' property is missing'));
     properties[property] = saved;
   }
-  assert.throws(() => call({ ...request, sourceId: 'wrong' }), /spreadsheet ID does not match/);
-  assert.throws(() => call({ ...request, key: 'wrong' }), /Invalid archive request key/);
-  assert.throws(() => call({ ...request, action: 'wrong' }), /Unsupported request action/);
-  assert.throws(() => context.doPost({ postData: { contents: '{' } }), /Invalid JSON request/);
-  assert.throws(() => call(null), /Request must be a JSON object/);
-  try { call({ ...request, secret: 'PRIVATE_VALUE' }); } catch (error) {
-    assert.doesNotMatch(error.message, /PRIVATE_VALUE|secret;/);
-  }
-  sharingFails = true; assert.throws(() => call(request), /permission failure/); assert.equal(copies, 1); assert.deepEqual(trashed, []);
+  fails(() => call({ ...request, sourceId: 'wrong' }), /spreadsheet ID does not match/);
+  fails(() => call({ ...request, key: 'wrong' }), /Invalid archive request key/);
+  fails(() => call({ ...request, action: 'wrong' }), /Unsupported request action/);
+  fails(() => context.doPost({ postData: { contents: '{' } }), /Invalid JSON request/);
+  fails(() => call(null), /Request must be a JSON object/);
+  assert.doesNotMatch(call({ ...request, secret: 'PRIVATE_VALUE' }).error, /PRIVATE_VALUE|secret;/);
+  sharingFails = true; fails(() => call(request), /permission failure/); assert.equal(copies, 1); assert.deepEqual(trashed, []);
+  assert.equal(locked, false);
+  assert.doesNotMatch(call({ ...request, secret: 'PRIVATE_VALUE' }).error, /PRIVATE_VALUE/);
+  assert.doesNotMatch(call(request).error, /secret|PRIVATE_VALUE/);
   sharingFails = false; assert.equal(call(request).ok, true); assert.equal(copies, 1);
   assert.equal(call({ ...request, action: 'verify', archiveId: 'copy' }).ok, true);
   assert.equal(permissions.copy.length, 2); assert.ok(trashed.every(id=>id==='old-copy')); assert.equal(copy.name,'260926 Raffle');
   assert.equal(permissions.copy.find(p => p.type === 'anyone').role, 'reader');
-  copy.trashed = true; assert.throws(() => call({ ...request, action: 'verify', archiveId: 'copy' }), /Archive verification failed/);
+  copy.trashed = true; fails(() => call({ ...request, action: 'verify', archiveId: 'copy' }), /Archive verification failed/);
   assert.equal(locked, false);
 });
