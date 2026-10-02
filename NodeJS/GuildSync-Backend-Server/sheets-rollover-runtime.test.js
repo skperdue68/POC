@@ -123,6 +123,10 @@ test('production clear empties both tabs and draw dates without archiving or cha
 });
 
 test('hold blocks clear and exports but archive bypasses hold and rebuilds both tabs', async t => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = line => logs.push(line);
+  t.after(() => { console.log = originalLog; });
   const f = await fixture(t);
   process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS = '4';
   const runtime = f.start();
@@ -131,6 +135,7 @@ test('hold blocks clear and exports but archive bypasses hold and rebuilds both 
   await assert.rejects(runtime.clear(), /hold/);
   assert.deepEqual(f.calls, []);
   const result = await runtime.archive();
+  assert.ok(logs.some(line => line.includes("Archiving as '260926 Raffle'")));
   assert.equal(result.archiveId, 'archive-copy');
   assert.equal(result.name, '260926 Raffle', 'use returned R7 name rather than runtime schedule');
   assert.equal(f.state().pending, null); assert.equal(f.state().catchupRequired, false);

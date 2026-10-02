@@ -36,9 +36,10 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
       await connection.execute('INSERT INTO guildsync_settings (setting_key, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)', [stateKey, JSON.stringify(state)]);
     },
     archive: async ({ key, name }) => {
-      await exportLog('Requesting Apps Script archive using the Bi-Weekly R7 date.');
-      return requestArchive('archive', { sourceId: settings.spreadsheetId, key: hash + ':' + key, name,
+      const archive = await requestArchive('archive', { sourceId: settings.spreadsheetId, key: hash + ':' + key, name,
         biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, details: true });
+      await exportLog("Archiving as '" + archive.name + "'");
+      return archive;
     },
     reset: async ({ key, archiveId, raffles, nextWindows }) => {
       await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId,
