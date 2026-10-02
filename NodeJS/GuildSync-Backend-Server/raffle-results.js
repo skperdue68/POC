@@ -1,6 +1,6 @@
 export const RESULT_RANGES = {
-  biweekly: ['Q33:Q48', 'O55', 'S31:S50', 'J5:K254'],
-  monthly: ['L23', 'J26']
+  biweekly: ['Q33:Q52', 'O55', 'S31:S50', 'J5:K254'],
+  monthly: ['L23', 'J26', 'P25', 'M28']
 };
 export const RAFFLE_RESULTS_SCHEMA = `CREATE TABLE IF NOT EXISTS guildsync_raffle_results (
   raffle_type VARCHAR(16) NOT NULL,

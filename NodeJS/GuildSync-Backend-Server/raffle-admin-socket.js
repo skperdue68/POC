@@ -1,3 +1,4 @@
+import { loadArchiveCells } from './raffle-archive-cells.js';
 import { formatArchiveMessage } from './raffle-archive-message.js';
 import { loadRaffleResults, loadFormulaTemplates, saveFormulaTemplates } from './raffle-results.js';
 import { refreshBankingEntriesToGoogleSheets, googleSheetsBankingConfig, exportLog } from './google-sheets-banking-sync.js';
@@ -16,7 +17,7 @@ export function entriesForRafflePeriods(entries, periods, asOf) {
 }
 
 export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelection, getBankingDataJSON,
-  authorize = isConsigliere, refreshEntries = refreshBankingEntriesToGoogleSheets, log = exportLog, loadResults = loadRaffleResults, loadTemplates = loadFormulaTemplates }) {
+  authorize = isConsigliere, refreshEntries = refreshBankingEntriesToGoogleSheets, log = exportLog, loadResults = loadArchiveCells, loadTemplates = loadFormulaTemplates }) {
   let running = false;
   socket.on('guildsync:raffle-refresh', async (payload = {}, callback) => {
     if (typeof callback !== 'function') return;
@@ -35,7 +36,7 @@ export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelect
       const result = await refreshEntries(async () => {
         selection = getRaffleRefreshSelection(payload.date);
         await log('REFRESH requested by ' + JSON.stringify(requestedBy) + ': ' + JSON.stringify(selection));
-        return { entries: entriesForRafflePeriods(await getBankingDataJSON(db), selection.raffles, selection.asOf), periods: selection.raffles, results: await loadResults(db, selection.raffles), templates: await loadTemplates(db, googleSheetsBankingConfig().spreadsheetId) };
+        return { entries: entriesForRafflePeriods(await getBankingDataJSON(db), selection.raffles, selection.asOf), periods: selection.raffles, results: await loadResults(db, selection.raffles, googleSheetsBankingConfig().spreadsheetId), templates: await loadTemplates(db, googleSheetsBankingConfig().spreadsheetId) };
       }, { uploadedBy: requestedBy, saveTemplates: formulas => saveFormulaTemplates(db, formulas, googleSheetsBankingConfig().spreadsheetId) });
       callback({ ok: true, selection, synced: result.synced });
     } catch (error) {
