@@ -5110,7 +5110,7 @@ function formatAssociateTicketReportShortDateEastern(timestamp) {
   }).format(date);
 }
 
-function getAssociateTicketReportRaffleWindow(row = {}) {
+export function getAssociateTicketReportRaffleWindow(row = {}) {
   const type = normalizeDepositMailTicketType(row.transaction_type || row.earliest_deposit_type || row.ticket_type || row.type);
   if (type !== 'monthly' && type !== 'biweekly') return null;
 

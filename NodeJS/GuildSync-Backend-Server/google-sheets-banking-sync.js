@@ -148,6 +148,8 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
   const info = await sheetsRequest(token, url + '?fields=sheets.properties');
   let synced = 0;
   const sections = new Map();
+  const sheetPeriods = new Map();
+  let deferred = 0;
   let pending = [];
   let preparation = [];
   if (replace) {
@@ -185,11 +187,32 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
   for (const entry of entries) {
     if (!entry.eventId) continue;
     const tab = tabFor(entry.type, settings);
-    // The live tab is already prepared for the next period. Never backfill old data into it.
-    const lastClosed = state.lastClosedSalesEnd?.[entry.type];
-    if (!replace && !includeClosed && lastClosed && (!Number.isFinite(Number(entry.time)) || Number(entry.time) <= lastClosed)) {
-      await log('Skipped closed-period entry ' + JSON.stringify(entry.eventId) + ' on ' + JSON.stringify(tab));
-      continue;
+    if (!replace && !includeClosed) {
+      if (!sheetPeriods.has(entry.type)) {
+        const address = entry.type === 'biweekly' ? 'R7' : 'P7';
+        const data = await sheetsRequest(token, url + '/values/' + encodeURIComponent(sheetRange(tab, address)) + '?valueRenderOption=FORMATTED_VALUE');
+        const display = String(data.values?.[0]?.[0] || '').trim();
+        const match = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(display);
+        let period = null;
+        if (match) {
+          const year = match[3].length === 2 ? 2000 + Number(match[3]) : Number(match[3]);
+          const date = new Date(Date.UTC(year, Number(match[1])-1, Number(match[2])));
+          if (date.getUTCFullYear() === year && date.getUTCMonth()+1 === Number(match[1]) && date.getUTCDate() === Number(match[2])) {
+            period = date.toISOString().slice(0, 10);
+          }
+        }
+        sheetPeriods.set(entry.type, period);
+        if (!period) await log('No valid draw date for ' + JSON.stringify(tab) + '; entries retained in the database.');
+      }
+      const period = sheetPeriods.get(entry.type);
+      const time = entry.time == null || entry.time === '' ? NaN : Number(entry.time);
+      if (!period || !Number.isFinite(time) || time <= 0) { deferred++; continue; }
+      // Share the sales boundaries used by database reports and archive catchup.
+      const { getAssociateTicketReportRaffleWindow } = await import('./guildsync-database-actions.js');
+      const assigned = getAssociateTicketReportRaffleWindow(entry);
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(assigned.raffleTime * 1000));
+      const value = key => parts.find(item => item.type === key).value;
+      if (value('year') + '-' + value('month') + '-' + value('day') !== period) { deferred++; continue; }
     }
     const sheet = info.sheets?.find(item => item.properties.title === tab)?.properties;
     if (!sheet) throw new Error('Worksheet not found: ' + tab);
@@ -259,6 +282,7 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
     if (!replace && pending.length >= 25) await flush();
   }
   await flush();
+  if (deferred) await log('Entries retained in the database outside the displayed raffle period: entries=' + deferred);
   return { enabled: true, synced };
 }
 
