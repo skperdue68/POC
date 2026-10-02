@@ -1,4 +1,4 @@
-export async function requestArchive(action, { sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, details = false }) {
+export async function requestArchive(action, { sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDates, details = false }) {
   const url = String(process.env.GUILDSYNC_GOOGLE_ARCHIVE_WEB_APP_URL || '').trim();
   const secret = String(process.env.GUILDSYNC_GOOGLE_ARCHIVE_SECRET || '');
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url) || !secret) {
@@ -8,12 +8,12 @@ export async function requestArchive(action, { sourceId, key, name, archiveId, b
   try {
     response = await fetch(url, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, secret }), signal: AbortSignal.timeout(120000)
+      body: JSON.stringify({ action, sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDates, secret }), signal: AbortSignal.timeout(120000)
     });
   } catch { throw new Error('Archive web app request failed or timed out; original remains intact.'); }
   if (!response.ok) throw new Error(`Archive web app request failed (${response.status}).`);
   let result;
-  try { result = await response.json(); } catch { throw new Error('Archive web app returned invalid JSON; check deployment access.'); }
+  try { result = await response.json(); } catch { throw new Error('Archive web app returned invalid JSON; check Apps Script execution errors and deployment access.'); }
   if (result?.ok === false && typeof result.error === 'string' && result.error.trim()) {
     const message = result.error.split(secret).join('[redacted]').replace(/[\r\n]+/g, ' ').slice(0, 1000);
     throw new Error('Archive web app failed: ' + message);

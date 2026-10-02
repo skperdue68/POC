@@ -1,4 +1,4 @@
-import { saveFormulaTemplates, loadFormulaTemplates, readResultFormulas, resultPeriods, resultClearRequests, resultRequests, saveRaffleResults, loadRaffleResults } from './raffle-results.js';
+import { completedMonthlyDrawDates, saveFormulaTemplates, loadFormulaTemplates, readResultFormulas, resultPeriods, resultClearRequests, resultRequests, saveRaffleResults, loadRaffleResults } from './raffle-results.js';
 import { resetRequests, drawDateRequest } from './raffle-sheet-layout.js';
 import { createHash } from 'node:crypto';
 import { requestArchive } from './apps-script-archive.js';
@@ -21,6 +21,10 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
   let context;
   const contextNow = async () => context ||= await googleContext();
   const tabFor = type => type === 'biweekly' ? settings.biweeklyTab : settings.fiftyFiftyTab;
+  const eligibleMonthlyDates = () => {
+    if (!selectPeriods) throw new Error('Raffle period resolver is unavailable.');
+    return completedMonthlyDrawDates(selectPeriods, Math.floor(now ? now() : Date.now()/1000));
+  };
   const io = {
     now,
     delaySeconds: hours * 3600,
@@ -38,12 +42,13 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
     archive: async ({ key, name }) => {
       await exportLog('Requesting Apps Script archive using the Bi-Weekly R7 date.');
       return requestArchive('archive', { sourceId: settings.spreadsheetId, key: hash + ':' + key, name,
-        biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, details: true });
+        biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, eligibleMonthlyDates: eligibleMonthlyDates(), details: true });
     },
     reset: async ({ key, archiveId, raffles, nextWindows }) => {
       const verified = await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId,
-        biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, details: true });
+        biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, eligibleMonthlyDates: eligibleMonthlyDates(), details: true });
       if (!selectPeriods) throw new Error('Raffle period resolver is unavailable.');
+      if (verified.results?.monthly?.skipped) await exportLog('50/50 archive results skipped: ' + verified.results.monthly.reason + '; L23/J26 preserved.');
       const snapshots = resultPeriods(verified.results, selectPeriods, Math.floor(now ? now() : Date.now()/1000));
       await saveRaffleResults(connection, snapshots, archiveId, settings.spreadsheetId);
       const nextPeriods = nextWindows.map(window => selectPeriods(undefined, window.drawTime - 1).raffles.find(period => period.type === window.type));

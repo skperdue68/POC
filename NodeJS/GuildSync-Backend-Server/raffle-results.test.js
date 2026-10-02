@@ -61,3 +61,21 @@ test('existing-deployment migration matches automatic schema initialization', as
  const normalize=s=>s.replace(/\s+/g,' ').trim();
  assert.equal(normalize(sql),normalize(RAFFLE_RESULTS_SCHEMA+'; '+RAFFLE_FORMULAS_SCHEMA+';'));
 });
+
+
+test('explicitly skipped monthly results require no date and save only biweekly',()=>{
+ const result=resultPeriods({biweekly:{date:'2026-09-26',cells:[]},monthly:{skipped:true,reason:'invalid-date'}},getRaffleRefreshSelection);
+ assert.deepEqual(result.map(item=>item.period.type),['biweekly']);
+});
+
+
+test('eligible monthly dates use actual variable-length schedule and exact draw boundary',async()=>{
+ const {completedMonthlyDrawDates}=await import('./raffle-results.js');
+ const now=Date.parse('2026-09-26T23:00:00Z')/1000;
+ const dates=completedMonthlyDrawDates(getRaffleRefreshSelection,now);
+ assert.ok(dates.includes('2026-07-18'));
+ assert.ok(dates.includes('2026-09-26'));
+ assert.ok(!dates.includes('2026-08-01'));
+ assert.ok(!dates.includes('2026-10-24'));
+ assert.ok(!completedMonthlyDrawDates(getRaffleRefreshSelection,now-1).includes('2026-09-26'));
+});

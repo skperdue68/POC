@@ -59,9 +59,9 @@ function endingPeriod(date, type, select) {
 export function resultPeriods(results, select, now = Date.now()/1000) {
   if (!results?.biweekly || !results?.monthly) throw Error('Archive is missing raffle result data; update the Apps Script deployment.');
   const biweekly = endingPeriod(results.biweekly.date, 'biweekly', select);
-  const monthly = endingPeriod(results.monthly.date, 'monthly', select);
+  const monthly = results.monthly.skipped === true ? null : endingPeriod(results.monthly.date, 'monthly', select);
   const items = [{period:biweekly,cells:results.biweekly.cells}];
-  if (monthly.end <= biweekly.end && monthly.end <= now) items.push({period:monthly,cells:results.monthly.cells});
+  if (monthly && monthly.end <= biweekly.end && monthly.end <= now) items.push({period:monthly,cells:results.monthly.cells});
   for (const item of items) resultRequests(0,item.period.type,item.cells);
   return items;
 }
@@ -139,4 +139,21 @@ export async function saveFormulaTemplates(db, templates, sourceId) {
       'INSERT INTO guildsync_raffle_result_formulas (source_spreadsheet_id,raffle_type,cell_address,formula) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE formula=VALUES(formula)',
       [sourceId,type,cell.address,cell.formula]);
   }
+}
+
+
+// Ask the existing resolver for each month; monthly raffles are not a fixed length.
+export function completedMonthlyDrawDates(select, now) {
+  const dates = new Set();
+  const currentYear = new Date(now * 1000).getUTCFullYear();
+  const formatter = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
+  for (let year=2000; year<=Math.min(currentYear,2099); year++) for(let month=1;month<=12;month++) {
+    const lookup = String(month).padStart(2,'0')+'01'+String(year).slice(-2);
+    const period = select(lookup).raffles.find(item=>item.type==='monthly');
+    if (period.end > now) continue;
+    const parts = formatter.formatToParts(new Date(period.end*1000));
+    const part = type => parts.find(item=>item.type===type).value;
+    dates.add(part('year')+'-'+part('month')+'-'+part('day'));
+  }
+  return [...dates];
 }

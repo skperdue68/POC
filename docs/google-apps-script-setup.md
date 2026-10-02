@@ -322,3 +322,21 @@ You do not need to terminate completed executions. To pause retries while editin
 For exact cell ranges and operational details, see [spreadsheet export documentation](google-sheets-logging.md).
 
 See [raffle result snapshots](raffle-result-snapshots.md) for historical result restoration, archive replacement and upgrade steps.
+
+
+### Conditional 50/50 result capture and read diagnostics
+
+Update the backend and Apps Script together for conditional result capture. In Apps Script, save `Archive.gs`, then choose **Deploy > Manage deployments > Edit (pencil) > New version > Deploy**. Updating the existing deployment preserves its `/exec` URL. Restart the backend after updating its code. No new environment variables or database migration are required for this change.
+
+GuildSync sends eligible completed 50/50 draw dates from its existing schedule in Eastern time, including its variable-length monthly periods. The archive reader checks the archived 50/50 tab's `P7`. It reads `L23` and `J26` only when that date is in the completed-period list and does not follow the Bi-Weekly archive date in `R7`. The backend still validates the completed period before saving. Ongoing 50/50 results are neither captured nor cleared.
+
+If `P7` is missing, unreadable, or outside the draw schedule, the reader logs a skip and preserves existing 50/50 result fields. Correct that date before attempting to capture completed 50/50 results. The full workbook is still copied as the archive; skipping result capture does not remove its contents from the copy.
+
+Apps Script execution logs show each date/range before reading it and the number of captured cells afterward, without printing member names, cell values, or secrets. For example:
+
+```text
+Reading raffle results: bi-weekly raffle Q33:Q48
+Read raffle results: bi-weekly raffle Q33:Q48; captured cells=3
+```
+
+Read failures return an explicit tab/range diagnostic to GuildSync, such as `Archive web app failed: Unable to read 50/50 L23`. A generic invalid-JSON response can still indicate an error outside the authenticated archive operation or a deployment/access problem; it is not proof of an access problem. The backend logs when 50/50 capture is skipped.
