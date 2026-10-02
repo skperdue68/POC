@@ -43,7 +43,7 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
   });
 }
 
-async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, snapshotFailure = false, skipMonthly = false, loadCatchupEntries = async () => [] } = {}) {
+async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, cellSaveFailure = false, snapshotFailure = false, skipMonthly = false, loadCatchupEntries = async () => [] } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'guildsync-rollover-test-'));
   const env = {
     GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED: 'true',
@@ -61,6 +61,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
   const connection = {
     beginTransaction: async()=>{},commit:async()=>{},rollback:async()=>{},
     async execute(sql, params) {
+      if (sql.includes('guildsync_raffle_archive_cells')) { if (cellSaveFailure) throw Error('archive cell storage failed'); return [{}]; }
       if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
       if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
       if (sql.startsWith('SELECT value')) return [[{ value: JSON.stringify(state) }]];
@@ -84,7 +85,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
       if (payload.action === 'archive') {
         mutations.push('archive');
         if (copyFailure) return { ok: false, status: 403 };
-        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'260926 Raffle', diagnosticCells:[{cell:'Q33',value:'Alice'},{cell:'Q52',value:'0'}],
+        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'260926 Raffle', drawDates:{biweekly:'2026-09-26',monthly:'2026-10-24'}, diagnosticCells:[{tab:'bi-weekly raffle',cell:'Q33',value:'Alice'},{tab:'bi-weekly raffle',cell:'Q52',value:'0'}],
           results: {biweekly:{date:'2026-09-26',cells:[]},monthly:skipMonthly?{skipped:true,reason:'unreadable-date'}:{date:'2026-10-24',cells:[]}} };
       } else mutations.push('verify');
       body = copy;
@@ -143,8 +144,8 @@ test('hold blocks clear and exports but archive bypasses hold and rebuilds both 
   assert.deepEqual(f.calls, []);
   const result = await runtime.archive({ requestedBy: 'Officer' });
   assert.ok(logs.some(line => line.includes("Archiving as '260926 Raffle'")));
-  assert.ok(logs.some(line => line.includes('Archive diagnostic Q33: \"Alice\"')));
-  assert.ok(logs.some(line => line.includes('Archive diagnostic Q52: \"0\"')));
+  assert.ok(logs.some(line => line.includes('Archive diagnostic \"bi-weekly raffle\" Q33: \"Alice\"')));
+  assert.ok(logs.some(line => line.includes('Archive diagnostic \"bi-weekly raffle\" Q52: \"0\"')));
   assert.equal(result.requestedBy, 'Officer');
   assert.match(result.message, /archived by Officer/);
   assert.equal(result.archiveId, 'archive-copy');
@@ -268,4 +269,12 @@ test('skipped monthly results are not saved or cleared, including uncertain-rese
  const requests=f.batches.flat().filter(item=>item.updateCells?.range?.sheetId===8);
  assert.ok(!requests.some(item=>[22,25].includes(item.updateCells.range.startRowIndex)));
  assert.equal(f.mutations.filter(item=>item==='clear').length,1);
+});
+
+
+test('archive cell save failure prevents clearing either working tab', async t => {
+ const f = await fixture(t, {cellSaveFailure:true});
+ await assert.rejects(f.start().archive(), /archive cell storage failed/);
+ assert.ok(!f.mutations.includes('clear'));
+ assert.equal(f.batches.length,0);
 });
