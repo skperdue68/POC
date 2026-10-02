@@ -52,6 +52,7 @@ function handleArchiveRequest(e, diagnostic) {
       if (!archive) {
         const sourceBook = SpreadsheetApp.openById(sourceId);
         const date = raffleSheetDate(sourceBook, request.biweeklyTab || 'bi-weekly raffle', 'R7', 'working spreadsheet');
+        console.log("Archiving as '" + raffleArchiveName(date) + "'");
         archive = Drive.Files.copy({ name: raffleArchiveName(date), parents: [folderId],
           appProperties: { guildsyncArchive: request.key, guildsyncSource: sourceId } }, sourceId, { fields: 'id' });
       }
@@ -123,7 +124,6 @@ function formatArchiveDate(value, tab, address, workbook) {
 }
 
 function raffleSheetDate(book, tab, address, workbook) {
-  console.log('Reading raffle date: ' + (workbook || 'archive copy') + ' / ' + tab + ' / ' + address);
   const sheet = book.getSheetByName(tab);
   if (!sheet) throw new Error('Missing raffle tab: ' + tab);
   let value;
