@@ -199,7 +199,6 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
     }
     const range = sheetRange(tab, layout.id + layout.first + ':' + layout.gold + layout.last);
     if (!sections.has(range)) {
-      await log('Reading ' + range + ' for transaction ' + JSON.stringify(String(entry.eventId)));
       const existing = replace ? {} : await sheetsRequest(token, url + '/values/' + encodeURIComponent(range) + '?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE');
       sections.set(range, existing.values || []);
     }
