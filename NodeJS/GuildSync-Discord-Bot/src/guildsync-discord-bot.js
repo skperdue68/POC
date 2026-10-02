@@ -161,6 +161,7 @@ const commands = [
   roles,
   raffle,
   gsaRaffle.createGsrCommand(),
+  gsaRaffle.createGsrAliasCommand(),
   gsaCommand
 ];
 

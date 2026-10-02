@@ -16,6 +16,9 @@ export function createGsrCommandData() {
       .addSubcommand(sub => sub.setName('archive').setDescription('Archive now, reset both raffle sheets and reload current data.'));
 }
 
+export function createGsrAliasCommandData() { return createGsrCommandData().setName('gsr'); }
+export function createGsrAliasCommand() { return { data: createGsrAliasCommandData(), execute }; }
+
 export function createGsrCommand() { return { data: createGsrCommandData(), execute }; }
 
 function request(socket, event, payload) {
@@ -53,7 +56,7 @@ export async function execute(interaction, socket) {
       let plan = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: 'plan' });
       if (plan.selection.boundaryTypes?.length) {
         payload.boundaryChoices = {};
-        for (const type of plan.selection.boundaryTypes) {
+        for (const type of plan.selection.boundaryTypes.filter(type => type === 'biweekly')) {
           const label = type === 'biweekly' ? 'Bi-Weekly' : '50/50';
           const dateLabel = new Intl.DateTimeFormat('en-US', {timeZone:plan.selection.timeZone,month:'long',day:'numeric',year:'numeric'}).format(new Date(plan.selection.lookupAt*1000));
           const row = new ActionRowBuilder().addComponents(

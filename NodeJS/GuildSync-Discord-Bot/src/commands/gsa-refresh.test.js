@@ -82,7 +82,7 @@ test('omitting date leaves selection to the backend and preserves ephemeral erro
 test('boundary answers are forwarded before exporting and timeout cancels without export',async()=>{
  for (const timeout of [false,true]) {
   const f=fixture({date:'092626'}); let prompted=0;
-  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:{...snapshot,boundaryTypes:['biweekly','monthly']},synced:2});};
+  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:{...snapshot,boundaryTypes:['biweekly']},synced:2});};
   f.interaction.editReply=async value=>{f.replies.push(value);return {awaitMessageComponent:async options=>{
    prompted++; assert.equal(f.calls.some(call=>call.payload.action==='export'),false);
    assert.equal(options.filter({user:{id:'other'}}),false);
@@ -92,6 +92,13 @@ test('boundary answers are forwarded before exporting and timeout cancels withou
   await command.execute(f.interaction,f.socket);
   const exported=f.calls.find(call=>call.payload.action==='export');
   if(timeout) {assert.equal(exported,undefined);assert.match(f.replies.at(-1).content,/cancelled/);}
-  else {assert.equal(prompted,2);assert.deepEqual(exported.payload.boundaryChoices,{biweekly:'ends',monthly:'starts'});}
+  else {assert.equal(prompted,1);assert.deepEqual(exported.payload.boundaryChoices,{biweekly:'ends'});}
  }
+});
+
+test('gsr alias exposes the same subcommands and handler',()=>{
+ const original=command.createGsrCommand(), alias=command.createGsrAliasCommand();
+ assert.equal(alias.data.toJSON().name,'gsr');
+ assert.deepEqual(alias.data.toJSON().options,original.data.toJSON().options);
+ assert.equal(alias.execute,original.execute);
 });
