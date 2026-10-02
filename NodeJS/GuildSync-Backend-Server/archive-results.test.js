@@ -26,7 +26,7 @@ test('displayed draw dates validate real calendar dates without consulting a tim
   display=value; assert.equal(context.raffleSheetDate(book,'bi-weekly raffle','R7'),'2026-10-10');
  }
  for(const value of ['', '02/31/26']) {
-  display=value; assert.throws(()=>context.raffleSheetDate(book,'bi-weekly raffle','R7'),/Invalid raffle date/);
+  display=value; assert.throws(()=>context.raffleSheetDate(book,'bi-weekly raffle','R7'),/Cannot archive: the raffle sheet has no valid draw date/);
  }
 });
 

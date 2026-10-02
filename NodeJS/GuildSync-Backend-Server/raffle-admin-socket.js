@@ -63,7 +63,7 @@ export function registerRaffleManagementSocket(socket, db, { sheets, authorize =
         callback({ ok: true, message: 'Cleared both raffle sheets, including Bi-Weekly R7 and 50/50 P7 draw dates. Database records are unchanged. Use /gsr raffle refresh to reload them.' });
       } else {
         const result = await sheets.archive();
-        callback({ ok: true, message: 'Archived as [' + result.name + '](https://docs.google.com/spreadsheets/d/' + encodeURIComponent(result.archiveId) + '/edit). Both original raffle sheets were reset and current database entries and draw dates restored. The public spreadsheet link is unchanged.' });
+        callback({ ok: true, message: 'Archived as <https://docs.google.com/spreadsheets/d/' + encodeURIComponent(result.archiveId) + '/edit>. The Working file is at <https://docs.google.com/spreadsheets/d/' + encodeURIComponent(googleSheetsBankingConfig().spreadsheetId) + '/edit> and current raffle data is populated.' });
       }
     } catch (error) {
       await log('Raffle operation failed: ' + error.message).catch(console.error);

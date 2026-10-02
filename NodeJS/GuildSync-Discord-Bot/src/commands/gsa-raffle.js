@@ -55,7 +55,7 @@ export async function execute(interaction, socket) {
       const result = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: 'export' });
       content = selectionMessage(result.selection) + '\n\nLoad complete: ' + result.synced + ' entries written. Both worksheets were cleared and reloaded.';
     } else {
-      await interaction.editReply({ content: action === 'archive' ? 'Archiving now, then resetting and reloading both raffle sheets...' : 'Clearing both raffle sheets and draw dates...', allowedMentions: { parse: [] } });
+      await interaction.editReply({ content: action === 'archive' ? 'Archiving Current Public Raffle Sheet' : 'Clearing both raffle sheets and draw dates...', allowedMentions: { parse: [] } });
       const result = await request(socket, 'guildsync:raffle-manage', { ...payload, action: action === 'reset' ? 'clear' : action });
       content = result.message;
     }
