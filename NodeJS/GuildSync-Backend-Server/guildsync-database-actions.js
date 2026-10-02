@@ -2002,7 +2002,7 @@ export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 10
     const previous = type === 'biweekly' ? cutoff - BANKING_BIWEEKLY_INTERVAL_SECONDS : getDepositMailPreviousMonthlySalesEnd(cutoff);
     return { type, label: type === 'biweekly' ? 'Bi-Weekly' : '50/50', start: raffleEvening(raffleLocalParts(previous)), end };
   });
-  const boundaryTypes = date === undefined ? [] : raffles.filter(raffle => raffle.start === lookupAt).map(raffle => raffle.type);
+  const boundaryTypes = date === undefined ? [] : raffles.filter(raffle => raffle.type === 'biweekly' && raffle.start === lookupAt).map(raffle => raffle.type);
   for (const type of boundaryTypes) {
     const choice = boundaryChoices[type];
     if (choice !== undefined && !['starts','ends'].includes(choice)) throw Error('Invalid raffle boundary choice.');
@@ -2010,6 +2010,12 @@ export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 10
       const previous = getRaffleRefreshSelection(undefined, lookupAt - 1).raffles.find(raffle => raffle.type === type);
       raffles[raffles.findIndex(raffle => raffle.type === type)] = previous;
     }
+  }
+  if (date !== undefined) {
+    const biweekly = raffles.find(raffle => raffle.type === 'biweekly');
+    const monthly = getRaffleRefreshSelection(undefined, biweekly.start + 1).raffles.find(raffle => raffle.type === 'monthly');
+    if (monthly.start > biweekly.start || monthly.end < biweekly.end) throw Error('Selected Bi-Weekly raffle is not contained in a single 50/50 raffle.');
+    raffles[raffles.findIndex(raffle => raffle.type === 'monthly')] = monthly;
   }
   return { asOf: now, lookupAt, timeZone: 'America/New_York', raffles, boundaryTypes };
 }
