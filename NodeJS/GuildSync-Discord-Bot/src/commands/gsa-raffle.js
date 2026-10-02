@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 
 export function createGsaCommandData(env = process.env) {
   return new SlashCommandBuilder().setName('gsa').setDescription('GuildSync administration').setDMPermission(false)
@@ -11,7 +11,7 @@ export function createGsaCommandData(env = process.env) {
 export function createGsrCommandData() {
   return new SlashCommandBuilder().setName('gsraffle').setDescription('GuildSync raffle administration').setDMPermission(false)
       .addSubcommand(sub => sub.setName('load').setDescription('Clear both raffle sheets and reload selected periods and draw dates.')
-        .addStringOption(option => option.setName('date').setDescription('MMDDYY; omitted uses current periods. Transition dates select the new raffle.')))
+        .addStringOption(option => option.setName('date').setDescription('MMDDYY; omitted uses current periods. Boundary dates ask which raffle to load.')))
       .addSubcommand(sub => sub.setName('reset').setDescription('Clear both raffle sheets and draw dates; database records remain intact.'))
       .addSubcommand(sub => sub.setName('archive').setDescription('Archive now, reset both raffle sheets and reload current data.'));
 }
@@ -50,8 +50,25 @@ export async function execute(interaction, socket) {
     let content;
     if (action === 'load') {
       payload.date = interaction.options.getString('date') ?? undefined;
-      const plan = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: 'plan' });
-      await interaction.editReply({ content: selectionMessage(plan.selection) + '\n\nExporting the selected raffle data: clearing and reloading both worksheets...', allowedMentions: { parse: [] } });
+      let plan = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: 'plan' });
+      if (plan.selection.boundaryTypes?.length) {
+        payload.boundaryChoices = {};
+        for (const type of plan.selection.boundaryTypes) {
+          const label = type === 'biweekly' ? 'Bi-Weekly' : '50/50';
+          const dateLabel = new Intl.DateTimeFormat('en-US', {timeZone:plan.selection.timeZone,month:'long',day:'numeric',year:'numeric'}).format(new Date(plan.selection.lookupAt*1000));
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('starts').setLabel('Starts on this date').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('ends').setLabel('Ends on this date').setStyle(ButtonStyle.Secondary));
+          const message = await interaction.editReply({content:`For the ${label} raffle on ${dateLabel}, load the raffle that starts or ends on this date?`,components:[row],allowedMentions:{parse:[]}});
+          let answer;
+          try { answer = await message.awaitMessageComponent({componentType:ComponentType.Button,time:60000,filter:choice=>choice.user.id===interaction.user.id}); }
+          catch { await interaction.editReply({content:'Load cancelled: no boundary selection was received. No raffle data was changed.',components:[],allowedMentions:{parse:[]}}); return; }
+          payload.boundaryChoices[type] = answer.customId;
+          await answer.deferUpdate();
+        }
+        plan = await request(socket,'guildsync:raffle-refresh',{...payload,action:'plan'});
+      }
+      await interaction.editReply({ components: [], content: selectionMessage(plan.selection) + '\n\nExporting the selected raffle data: clearing and reloading both worksheets...', allowedMentions: { parse: [] } });
       const result = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: 'export' });
       content = selectionMessage(result.selection) + '\n\nLoad complete: ' + result.synced + ' entries written. Both worksheets were cleared and reloaded.';
       if (result.workingSheetUrl) content += '\n\nRaffle data has been loaded to the working sheet [HERE](' + result.workingSheetUrl + ').';
@@ -61,5 +78,5 @@ export async function execute(interaction, socket) {
       content = result.message;
     }
     await interaction.editReply({ content, allowedMentions: { parse: [] } });
-  } catch (error) { await interaction.editReply({ content: error.message, allowedMentions: { parse: [] } }); }
+  } catch (error) { await interaction.editReply({ content: error.message, components: [], allowedMentions: { parse: [] } }); }
 }

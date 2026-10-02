@@ -59,3 +59,13 @@ test('export keeps only selected periods: start inclusive, end exclusive, types 
   ];
   assert.deepEqual(entriesForRafflePeriods(entries, selection.raffles, selection.asOf).map(e => e.eventId), ['monthly-only', 'start', 'last']);
 });
+
+
+test('boundary choices independently select ending raffles while interior dates stay unchanged',()=>{
+ const result=actions.getRaffleRefreshSelection('092626',now,{biweekly:'ends',monthly:'starts'});
+ assert.deepEqual(result.boundaryTypes,['biweekly','monthly']);
+ assert.equal(result.raffles[0].end,seconds('2026-09-26T23:00:00Z'));
+ assert.equal(result.raffles[1].start,seconds('2026-09-26T23:00:00Z'));
+ assert.deepEqual(actions.getRaffleRefreshSelection('091526',now).boundaryTypes,[]);
+ assert.deepEqual(actions.getRaffleRefreshSelection('101026',now).boundaryTypes,['biweekly']);
+});

@@ -1978,7 +1978,7 @@ function raffleEvening({ year, month, day }) {
   }
   return timestamp;
 }
-export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 1000)) {
+export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 1000), boundaryChoices = {}) {
   let lookupAt = now;
   if (date !== undefined) {
     if (typeof date !== 'string' || !/^\d{6}$/.test(date)) throw new Error('Enter a valid date in MMDDYY format.');
@@ -2002,7 +2002,16 @@ export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 10
     const previous = type === 'biweekly' ? cutoff - BANKING_BIWEEKLY_INTERVAL_SECONDS : getDepositMailPreviousMonthlySalesEnd(cutoff);
     return { type, label: type === 'biweekly' ? 'Bi-Weekly' : '50/50', start: raffleEvening(raffleLocalParts(previous)), end };
   });
-  return { asOf: now, lookupAt, timeZone: 'America/New_York', raffles };
+  const boundaryTypes = date === undefined ? [] : raffles.filter(raffle => raffle.start === lookupAt).map(raffle => raffle.type);
+  for (const type of boundaryTypes) {
+    const choice = boundaryChoices[type];
+    if (choice !== undefined && !['starts','ends'].includes(choice)) throw Error('Invalid raffle boundary choice.');
+    if (choice === 'ends') {
+      const previous = getRaffleRefreshSelection(undefined, lookupAt - 1).raffles.find(raffle => raffle.type === type);
+      raffles[raffles.findIndex(raffle => raffle.type === type)] = previous;
+    }
+  }
+  return { asOf: now, lookupAt, timeZone: 'America/New_York', raffles, boundaryTypes };
 }
 
 export function selectSheetsCatchupEntries(entries, now = Math.floor(Date.now() / 1000)) {
