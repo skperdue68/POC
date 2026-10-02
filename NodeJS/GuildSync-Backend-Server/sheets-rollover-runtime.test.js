@@ -43,7 +43,7 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
   });
 }
 
-async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, cellSaveFailure = false, snapshotFailure = false, skipMonthly = false, loadCatchupEntries = async () => [] } = {}) {
+async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, replacedArchiveIds = [], cellSaveFailure = false, snapshotFailure = false, skipMonthly = false, loadCatchupEntries = async () => [] } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'guildsync-rollover-test-'));
   const env = {
     GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED: 'true',
@@ -85,7 +85,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
       if (payload.action === 'archive') {
         mutations.push('archive');
         if (copyFailure) return { ok: false, status: 403 };
-        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'260926 Raffle', drawDates:{biweekly:'2026-09-26',monthly:'2026-10-24'}, diagnosticCells:[{tab:'bi-weekly raffle',cell:'Q33',value:'Alice'},{tab:'bi-weekly raffle',cell:'Q52',value:'0'}],
+        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'260926 Raffle', replacedArchiveIds, drawDates:{biweekly:'2026-09-26',monthly:'2026-10-24'}, diagnosticCells:[{tab:'bi-weekly raffle',cell:'Q33',value:'Alice'},{tab:'bi-weekly raffle',cell:'Q52',value:'0'}],
           results: {biweekly:{date:'2026-09-26',cells:[]},monthly:skipMonthly?{skipped:true,reason:'unreadable-date'}:{date:'2026-10-24',cells:[]}} };
       } else mutations.push('verify');
       body = copy;
@@ -277,4 +277,14 @@ test('archive cell save failure prevents clearing either working tab', async t =
  await assert.rejects(f.start().archive(), /archive cell storage failed/);
  assert.ok(!f.mutations.includes('clear'));
  assert.equal(f.batches.length,0);
+});
+
+
+test('completed history replaces trashed archive references with the new archive', async t => {
+ const f = await fixture(t, {replacedArchiveIds:['old-copy']});
+ f.state().completedArchives = [{archiveId:'old-copy',name:'legacy name'},{archiveId:'unrelated',name:'other raffle'}];
+ await f.start().archive();
+ assert.ok(!f.state().completedArchives.some(item=>item.archiveId==='old-copy'));
+ assert.ok(f.state().completedArchives.some(item=>item.archiveId==='archive-copy'));
+ assert.ok(f.state().completedArchives.some(item=>item.archiveId==='unrelated'));
 });

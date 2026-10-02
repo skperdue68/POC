@@ -31,3 +31,11 @@ test('load matches source and each selected raffle date and retains exact locati
  assert.deepEqual(result.biweekly,[{address:'Q52',value:'Winner'},{address:'J254',value:'Member'},{address:'K254',value:3}]);
  assert.deepEqual(result.monthly,[{address:'P25',value:'Monthly Winner'},{address:'M28',value:'Sender'}]);
 });
+
+
+test('replacement reconciles old archive IDs and removes their cell rows',async()=>{
+ const calls=[];const db={beginTransaction:async()=>{},execute:async(sql,args)=>{calls.push([sql,args]);return [{}];},commit:async()=>{},rollback:async()=>{}};
+ await saveArchiveCells(db,{diagnosticCells:[],drawDates:{biweekly:'2026-10-10'},replacedArchiveIds:['old']},'new','source',{});
+ assert.ok(calls.some(([sql,args])=>sql.includes('DELETE') && sql.includes('archive_id=?') && args.includes('old')));
+ assert.ok(calls.some(([sql,args])=>sql.includes('UPDATE guildsync_raffle_results') && args[0]==='new' && args.includes('old')));
+});

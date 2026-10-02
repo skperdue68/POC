@@ -29,8 +29,14 @@ export async function saveArchiveCells(db, result, archiveId, sourceId, settings
     if (!type || !allowed.test(item.cell) || typeof item.value !== 'string' || !item.value.length || !validDate(date)) throw Error('Invalid archive cell or draw date; reset remains paused.');
     return [archiveId,type,date,sourceId,item.tab,item.cell,item.value];
   });
+  const replaced = result.replacedArchiveIds || [];
+  if (!Array.isArray(replaced) || replaced.some(id => typeof id !== 'string' || !id || id === archiveId || id === sourceId)) throw Error('Invalid replaced archive IDs.');
   await db.beginTransaction();
   try {
+    for (const oldId of new Set(replaced)) {
+      await db.execute('DELETE FROM guildsync_raffle_archive_cells WHERE source_spreadsheet_id=? AND archive_id=?', [sourceId,oldId]);
+      await db.execute('UPDATE guildsync_raffle_results SET archive_id=? WHERE source_spreadsheet_id=? AND archive_id=?', [archiveId,sourceId,oldId]);
+    }
     for (const [type,date] of Object.entries(result.drawDates)) {
       await db.execute('DELETE FROM guildsync_raffle_archive_cells WHERE source_spreadsheet_id=? AND raffle_type=? AND draw_date=?', [sourceId,type,date]);
     }

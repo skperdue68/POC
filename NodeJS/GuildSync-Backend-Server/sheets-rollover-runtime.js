@@ -71,6 +71,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
         // Clear and completion markers are atomic: an uncertain HTTP response cannot cause a second clear.
         await sheetsRequest(token, url + ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) });
       }
+      return { replacedArchiveIds: verified.replacedArchiveIds || [] };
     },
     log: exportLog
   };
@@ -99,6 +100,9 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
           await replayBankingEntries(entries, state);
           state.catchupRequired = false;
           state.completedArchives ||= [];
+          const replaced = state.replacedArchiveIdsPending || state.lastArchive?.replacedArchiveIds || [];
+          state.completedArchives = state.completedArchives.filter(item => !replaced.includes(item.archiveId));
+          state.replacedArchiveIdsPending = [];
           if (state.lastArchive && !state.completedArchives.some(item => item.archiveId === state.lastArchive.archiveId)) {
             state.completedArchives = state.completedArchives.filter(item => item.name !== state.lastArchive.name);
             state.lastArchive.sourceId = settings.spreadsheetId;
