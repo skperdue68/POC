@@ -95,7 +95,11 @@ function handleArchiveRequest(e, diagnostic) {
     const name = raffleArchiveName(raffleSheetDate(book, request.biweeklyTab || 'bi-weekly raffle', 'R7'));
 
     if (file.name !== name) throw new Error('Archive date/name mismatch; finish legacy recovery before upgrading.');
+    const drawDates = { biweekly: raffleSheetDate(book, request.biweeklyTab || 'bi-weekly raffle', 'R7') };
     const diagnosticCells = readArchiveDiagnosticCells(book, request.biweeklyTab || 'bi-weekly raffle', request.fiftyFiftyTab || '50/50');
+    if (diagnosticCells.some(item => item.tab === (request.fiftyFiftyTab || '50/50'))) {
+      drawDates.monthly = raffleSheetDate(book, request.fiftyFiftyTab || '50/50', 'P7');
+    }
     // The verified replacement exists before any previous same-name file is trashed.
     // Gather every page before mutating the folder listing.
     let pageToken;
@@ -110,7 +114,7 @@ function handleArchiveRequest(e, diagnostic) {
       pageToken = page.nextPageToken;
     } while (pageToken);
     superseded.forEach(id => Drive.Files.update({ trashed: true }, id));
-    return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name, diagnosticCells: diagnosticCells });
+    return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name, diagnosticCells: diagnosticCells, drawDates: drawDates });
   } finally { lock.releaseLock(); }
 }
 

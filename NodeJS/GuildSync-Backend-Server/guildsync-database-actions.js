@@ -1,3 +1,4 @@
+import { ARCHIVE_CELLS_SCHEMA } from './raffle-archive-cells.js';
 import { RAFFLE_RESULTS_SCHEMA, RAFFLE_FORMULAS_SCHEMA } from './raffle-results.js';
 import mysql from 'mysql2/promise';
 import { bankingSource } from './banking-source.js';
@@ -420,6 +421,7 @@ async function initializeSchema(db) {
     COLLATE utf8mb4_unicode_ci
   `);
 
+  await db.query(ARCHIVE_CELLS_SCHEMA);
   await db.query(RAFFLE_RESULTS_SCHEMA);
   await db.query(RAFFLE_FORMULAS_SCHEMA);
 

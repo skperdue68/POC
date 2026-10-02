@@ -1,3 +1,4 @@
+import { saveArchiveCells } from './raffle-archive-cells.js';
 import { formatArchiveMessage } from './raffle-archive-message.js';
 import { saveFormulaTemplates, loadFormulaTemplates, readResultFormulas, resultClearRequests, resultRequests } from './raffle-results.js';
 import { resetRequests, drawDateRequest } from './raffle-sheet-layout.js';
@@ -45,6 +46,8 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
     reset: async ({ key, archiveId, raffles, nextWindows }) => {
       const verified = await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId,
         biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, details: true });
+      const savedCells = await saveArchiveCells(connection, verified, archiveId, settings.spreadsheetId, settings);
+      await exportLog('Saved archive cells to guildsync_raffle_archive_cells: cells=' + savedCells);
       for (const item of verified.diagnosticCells || []) {
         if ((/^(?:Q(?:3[3-9]|4[0-9]|5[0-2])|[JK](?:[5-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])|O55)$/.test(item.cell) && (!item.tab || item.tab === settings.biweeklyTab) || /^(?:P25|M28)$/.test(item.cell) && item.tab === settings.fiftyFiftyTab) && item.value != null && String(item.value).length > 0) {
           await exportLog('Archive diagnostic ' + (item.tab ? JSON.stringify(item.tab) + ' ' : '') + item.cell + ': ' + JSON.stringify(item.value));
