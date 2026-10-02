@@ -131,11 +131,11 @@ function raffleSheetDate(book, tab, address, workbook) {
   try { value = sheet.getRange(address).getDisplayValue(); }
   catch (_) { throw new Error('Unable to read raffle date: ' + tab + ' ' + address); }
   const match = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(String(value || '').trim());
-  if (!match) throw new Error('Invalid raffle date in ' + tab + ' ' + address);
+  if (!match) throw new Error('Cannot archive: the raffle sheet has no valid draw date. Enter the draw date and try again.');
   const year = match[3].length === 2 ? 2000 + Number(match[3]) : Number(match[3]);
   const date = new Date(Date.UTC(year, Number(match[1])-1, Number(match[2])));
   if (date.getUTCFullYear() !== year || date.getUTCMonth()+1 !== Number(match[1]) || date.getUTCDate() !== Number(match[2])) {
-    throw new Error('Invalid raffle date in ' + tab + ' ' + address);
+    throw new Error('Cannot archive: the raffle sheet has no valid draw date. Enter the draw date and try again.');
   }
   return date.toISOString().slice(0,10);
 }

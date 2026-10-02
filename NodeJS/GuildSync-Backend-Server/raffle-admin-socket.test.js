@@ -51,6 +51,9 @@ test('database authorization compares exact role names despite case-insensitive 
 test('production clear/archive require bot authentication and exact role without test flags', async t => {
   const before = process.env.GUILDSYNC_GOOGLE_SHEETS_ENABLED;
   process.env.GUILDSYNC_GOOGLE_SHEETS_ENABLED = 'true';
+  const oldId = process.env.GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID;
+  process.env.GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID = 'working-sheet';
+  t.after(() => oldId === undefined ? delete process.env.GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID : process.env.GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID = oldId);
   t.after(() => before === undefined ? delete process.env.GUILDSYNC_GOOGLE_SHEETS_ENABLED : process.env.GUILDSYNC_GOOGLE_SHEETS_ENABLED = before);
   let handler; const calls = [];
   const socket = { guildSyncAuthenticated: true, guildSyncAuthType: 'discord-bot', on(event, cb) { assert.equal(event, 'guildsync:raffle-manage'); handler = cb; } };
@@ -60,10 +63,10 @@ test('production clear/archive require bot authentication and exact role without
   for (const action of ['clear', 'archive']) {
     assert.equal((await request({ action, discordUserId: 'member', requestedBy: 'Member' })).ok, false);
     const result = await request({ action, discordUserId: 'officer', requestedBy: 'Officer' });
-    assert.equal(result.ok, true); assert.match(result.message, /[Bb]oth/);
+    assert.equal(result.ok, true); if (action === 'clear') assert.match(result.message, /[Bb]oth/);
     if(action === 'archive') {
-      assert.match(result.message, /\[260926 Raffle\]\(https:\/\/docs.google.com\/spreadsheets\/d\/copy\/edit\)/);
-      assert.doesNotMatch(result.message, /file ID/);
+      assert.match(result.message, /Archived as <https:\/\/docs.google.com\/spreadsheets\/d\/copy\/edit>\./);
+      assert.match(result.message, /The Working file is at <https:\/\/docs.google.com\/spreadsheets\/d\/working-sheet\/edit> and current raffle data is populated\./);
     }
   }
   assert.deepEqual(calls, ['clear', 'archive']);
