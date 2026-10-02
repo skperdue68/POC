@@ -134,8 +134,10 @@ test('hold blocks clear and exports but archive bypasses hold and rebuilds both 
   assert.equal(f.state().pending.readyAt, 15400);
   await assert.rejects(runtime.clear(), /hold/);
   assert.deepEqual(f.calls, []);
-  const result = await runtime.archive();
+  const result = await runtime.archive({ requestedBy: 'Officer' });
   assert.ok(logs.some(line => line.includes("Archiving as '260926 Raffle'")));
+  assert.equal(result.requestedBy, 'Officer');
+  assert.match(result.message, /archived by Officer/);
   assert.equal(result.archiveId, 'archive-copy');
   assert.equal(result.name, '260926 Raffle', 'use returned R7 name rather than runtime schedule');
   assert.equal(f.state().pending, null); assert.equal(f.state().catchupRequired, false);

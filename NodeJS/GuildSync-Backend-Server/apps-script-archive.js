@@ -13,7 +13,10 @@ export async function requestArchive(action, { sourceId, key, name, archiveId, b
   } catch { throw new Error('Archive web app request failed or timed out; original remains intact.'); }
   if (!response.ok) throw new Error(`Archive web app request failed (${response.status}).`);
   let result;
-  try { result = await response.json(); } catch { throw new Error('Archive web app returned invalid JSON; check Apps Script execution errors and deployment access.'); }
+  try { result = await response.json(); } catch {
+    const contentType = response.headers?.get('content-type') || 'unknown';
+    throw new Error('Archive web app returned invalid JSON (action=' + action + ', status=' + response.status + ', content-type=' + contentType + '). Recovery will retry the same archive; reset remains paused until verification succeeds.');
+  }
   if (result?.ok === false && typeof result.error === 'string' && result.error.trim()) {
     const message = result.error.split(secret).join('[redacted]').replace(/[\r\n]+/g, ' ').slice(0, 1000);
     throw new Error('Archive web app failed: ' + message);

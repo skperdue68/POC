@@ -29,7 +29,7 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
   delaySeconds = 0, now = () => Math.floor(Date.now() / 1000), log = () => {} }) {
   if (!Number.isSafeInteger(delaySeconds) || delaySeconds < 0) throw new Error('Invalid rollover delay');
   return {
-    async tick({ archiveNow = false } = {}) {
+    async tick({ archiveNow = false, requestedBy } = {}) {
       const timestamp = Math.floor(now());
       if (!Number.isSafeInteger(timestamp)) throw new Error('Invalid rollover time');
       let state = structuredClone(await loadState());
@@ -51,7 +51,7 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
           const following = manual ? state.windows : validateWindows(getWindows(cutoff + 1), cutoff);
           state.pending = {
             key: manual ? `raffle-manual-${randomUUID()}` : `raffle-rollover-${cutoff}`, salesEnd: cutoff,
-            manual, readyAt: manual ? timestamp : cutoff + delaySeconds,
+            requestedBy: archiveNow ? requestedBy : undefined, manual, readyAt: manual ? timestamp : cutoff + delaySeconds,
             name: archiveName(Math.min(...raffles.map((window) => window.drawTime))),
             raffles, archiveId: null,
             nextWindows: state.windows.map((window) => !manual && window.salesEnd === cutoff
@@ -60,6 +60,10 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
           await saveState(structuredClone(state));
         }
         const job = state.pending;
+        if (archiveNow && requestedBy && !job.requestedBy) {
+          job.requestedBy = requestedBy;
+          await saveState(structuredClone(state));
+        }
         // Legacy pending jobs have already begun; do not delay their recovery.
         if (!archiveNow && job.readyAt != null && timestamp < job.readyAt) return state;
         archiveNow = false;
@@ -73,7 +77,7 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
         }
         await reset({ key: job.key, archiveId: job.archiveId, raffles: structuredClone(job.nextWindows), nextWindows: structuredClone(job.nextWindows) });
         if (!job.manual) for (const raffle of job.raffles) state.lastClosedSalesEnd[raffle.type] = raffle.salesEnd;
-        state.lastArchive = { archiveId: job.archiveId, name: job.name };
+        state.lastArchive = { archiveId: job.archiveId, name: job.name, requestedBy: job.requestedBy };
         state.windows = job.nextWindows;
         state.pending = null;
         state.catchupRequired = true;
