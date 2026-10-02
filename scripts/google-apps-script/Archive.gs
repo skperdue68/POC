@@ -97,8 +97,9 @@ function handleArchiveRequest(e, diagnostic) {
     if (file.name !== name) throw new Error('Archive date/name mismatch; finish legacy recovery before upgrading.');
     const drawDates = { biweekly: raffleSheetDate(book, request.biweeklyTab || 'bi-weekly raffle', 'R7') };
     const diagnosticCells = readArchiveDiagnosticCells(book, request.biweeklyTab || 'bi-weekly raffle', request.fiftyFiftyTab || '50/50');
-    if (diagnosticCells.some(item => item.tab === (request.fiftyFiftyTab || '50/50'))) {
-      drawDates.monthly = raffleSheetDate(book, request.fiftyFiftyTab || '50/50', 'P7');
+    try { drawDates.monthly = raffleSheetDate(book, request.fiftyFiftyTab || '50/50', 'P7'); }
+    catch (error) {
+      if (diagnosticCells.some(item => item.tab === (request.fiftyFiftyTab || '50/50'))) throw error;
     }
     // The verified replacement exists before any previous same-name file is trashed.
     // Gather every page before mutating the folder listing.
