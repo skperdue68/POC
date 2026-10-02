@@ -77,3 +77,21 @@ test('omitting date leaves selection to the backend and preserves ephemeral erro
     assert.match(failed.replies.at(-1).content, /unavailable|timed out/);
   }
 });
+
+
+test('boundary answers are forwarded before exporting and timeout cancels without export',async()=>{
+ for (const timeout of [false,true]) {
+  const f=fixture({date:'092626'}); let prompted=0;
+  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:{...snapshot,boundaryTypes:['biweekly','monthly']},synced:2});};
+  f.interaction.editReply=async value=>{f.replies.push(value);return {awaitMessageComponent:async options=>{
+   prompted++; assert.equal(f.calls.some(call=>call.payload.action==='export'),false);
+   assert.equal(options.filter({user:{id:'other'}}),false);
+   if(timeout) throw Error('expired');
+   return {customId:prompted===1?'ends':'starts',deferUpdate:async()=>{}};
+  }};};
+  await command.execute(f.interaction,f.socket);
+  const exported=f.calls.find(call=>call.payload.action==='export');
+  if(timeout) {assert.equal(exported,undefined);assert.match(f.replies.at(-1).content,/cancelled/);}
+  else {assert.equal(prompted,2);assert.deepEqual(exported.payload.boundaryChoices,{biweekly:'ends',monthly:'starts'});}
+ }
+});

@@ -29,12 +29,13 @@ export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelect
     try {
       if (!await authorize(db, payload.discordUserId)) throw new Error('Only users with the exact Consigliere role can refresh raffles. Check Discord role synchronization if necessary.');
       if (!['plan', 'export'].includes(payload.action)) throw new Error('Unknown raffle refresh action.');
-      let selection = getRaffleRefreshSelection(payload.date);
+      let selection = getRaffleRefreshSelection(payload.date, undefined, payload.boundaryChoices);
       if (payload.action === 'plan') { callback({ ok: true, selection }); return; }
+      if (selection.boundaryTypes?.some(type => !['starts','ends'].includes(payload.boundaryChoices?.[type]))) throw Error('Choose whether each boundary raffle starts or ends on this date before loading.');
       const requestedBy = String(payload.requestedBy || '').trim().slice(0, 100);
       if (!requestedBy) throw new Error('The initiating Discord display name is required.');
       const result = await refreshEntries(async () => {
-        selection = getRaffleRefreshSelection(payload.date);
+        selection = getRaffleRefreshSelection(payload.date, undefined, payload.boundaryChoices);
         await log('REFRESH requested by ' + JSON.stringify(requestedBy) + ': ' + JSON.stringify(selection));
         return { entries: entriesForRafflePeriods(await getBankingDataJSON(db), selection.raffles, selection.asOf), periods: selection.raffles, results: await loadResults(db, selection.raffles, googleSheetsBankingConfig().spreadsheetId), templates: await loadTemplates(db, googleSheetsBankingConfig().spreadsheetId) };
       }, { uploadedBy: requestedBy, saveTemplates: formulas => saveFormulaTemplates(db, formulas, googleSheetsBankingConfig().spreadsheetId) });
