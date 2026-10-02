@@ -71,13 +71,16 @@ test('archive naming preserves displayed date instead of shifting midnight UTC i
 });
 
 
-test('temporary archive diagnostics retain cell addresses and nonempty zero/false values', async () => {
+test('temporary archive diagnostics read requested tabs/ranges and preserve sparse addresses', async () => {
  const context = vm.createContext({});
  vm.runInContext(await readFile(new URL('../../scripts/google-apps-script/Archive.gs', import.meta.url), 'utf8'), context);
- const book = { getSheetByName: tab => { assert.equal(tab, 'Bi-Weekly Raffle'); return { getRange: range => {
-   assert.equal(range, 'Q33:Q52'); return { getValues: () => [['Alice'], [''], [null], [0], [false], ['Bob']] };
- } }; } };
- assert.deepEqual(JSON.parse(JSON.stringify(context.readArchiveDiagnosticCells(book, 'Bi-Weekly Raffle'))), [
-   {cell:'Q33',value:'Alice'}, {cell:'Q36',value:'0'}, {cell:'Q37',value:'false'}, {cell:'Q38',value:'Bob'}
- ]);
+ const reads = [];
+ const fixtures = {'Q33:Q52':[['Alice'],[''],[null],[0]], 'J5:K254':[['Attendee',0],['',null],['Next',false]], 'O55':[['Officer']], 'P25':[['Winner']], 'M28':[['Sender']]};
+ const book = {getSheetByName:tab=>({getRange:range=>{reads.push(tab+':'+range);return {getValues:()=>fixtures[range]};}})};
+ const result = JSON.parse(JSON.stringify(context.readArchiveDiagnosticCells(book,'Bi-Weekly Raffle','50/50')));
+ assert.deepEqual(reads,['Bi-Weekly Raffle:Q33:Q52','Bi-Weekly Raffle:J5:K254','Bi-Weekly Raffle:O55','50/50:P25','50/50:M28']);
+ assert.deepEqual(result.map(item=>item.cell),['Q33','Q36','J5','K5','J7','K7','O55','P25','M28']);
+ assert.equal(result.find(item=>item.cell==='K5').value,'0');
+ assert.equal(result.find(item=>item.cell==='K7').value,'false');
+ assert.equal(result.find(item=>item.cell==='P25').tab,'50/50');
 });

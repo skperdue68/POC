@@ -91,11 +91,11 @@ function handleArchiveRequest(e, diagnostic) {
         (p.type === 'anyone' || (p.type === 'domain' ? q.domain === p.domain : q.emailAddress === p.emailAddress))))) throw new Error('Archive sharing verification failed');
     // Verify the file can actually be opened as a spreadsheet before allowing reset.
     const book = SpreadsheetApp.openById(archive.id);
-    // Full result capture is paused; temporarily read only Q33:Q52 for diagnostics.
+    // Full result capture is paused; temporarily read selected cells for diagnostics.
     const name = raffleArchiveName(raffleSheetDate(book, request.biweeklyTab || 'bi-weekly raffle', 'R7'));
 
     if (file.name !== name) throw new Error('Archive date/name mismatch; finish legacy recovery before upgrading.');
-    const diagnosticCells = readArchiveDiagnosticCells(book, request.biweeklyTab || 'bi-weekly raffle');
+    const diagnosticCells = readArchiveDiagnosticCells(book, request.biweeklyTab || 'bi-weekly raffle', request.fiftyFiftyTab || '50/50');
     // The verified replacement exists before any previous same-name file is trashed.
     // Gather every page before mutating the folder listing.
     let pageToken;
@@ -194,17 +194,24 @@ function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDate
 
 
 // Temporary read-only probe: do not persist these values or restore result capture.
-function readArchiveDiagnosticCells(book, tab) {
-  const sheet = book.getSheetByName(tab);
-  if (!sheet) throw new Error('Missing raffle tab: ' + tab);
-  let rows;
-  try { rows = sheet.getRange('Q33:Q52').getValues(); }
-  catch (_) { throw new Error('Unable to read archive diagnostic cells: ' + tab + ' Q33:Q52'); }
+function readArchiveDiagnosticCells(book, biweeklyTab, fiftyFiftyTab) {
   const cells = [];
-  rows.forEach((row, index) => {
-    const value = row[0];
-    if (value == null || String(value).length === 0) return;
-    cells.push({ cell: 'Q' + (33 + index), value: String(value) });
+  [
+    [biweeklyTab, 'Q33:Q52', 33, ['Q']],
+    [biweeklyTab, 'J5:K254', 5, ['J', 'K']],
+    [biweeklyTab, 'O55', 55, ['O']],
+    [fiftyFiftyTab, 'P25', 25, ['P']],
+    [fiftyFiftyTab, 'M28', 28, ['M']]
+  ].forEach(([tab, address, firstRow, columns]) => {
+    const sheet = book.getSheetByName(tab);
+    if (!sheet) throw new Error('Missing raffle tab: ' + tab);
+    let rows;
+    try { rows = sheet.getRange(address).getValues(); }
+    catch (_) { throw new Error('Unable to read archive diagnostic cells: ' + tab + ' ' + address); }
+    rows.forEach((row, r) => row.forEach((value, c) => {
+      if (value == null || String(value).length === 0) return;
+      cells.push({ tab: tab, cell: columns[c] + (firstRow + r), value: String(value) });
+    }));
   });
   return cells;
 }
