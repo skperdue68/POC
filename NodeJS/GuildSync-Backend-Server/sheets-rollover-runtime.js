@@ -46,8 +46,8 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
       const verified = await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId,
         biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, details: true });
       for (const item of verified.diagnosticCells || []) {
-        if (/^Q(?:3[3-9]|4[0-9]|5[0-2])$/.test(item.cell) && item.value != null && String(item.value).length > 0) {
-          await exportLog('Archive diagnostic ' + item.cell + ': ' + JSON.stringify(item.value));
+        if ((/^(?:Q(?:3[3-9]|4[0-9]|5[0-2])|[JK](?:[5-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])|O55)$/.test(item.cell) && (!item.tab || item.tab === settings.biweeklyTab) || /^(?:P25|M28)$/.test(item.cell) && item.tab === settings.fiftyFiftyTab) && item.value != null && String(item.value).length > 0) {
+          await exportLog('Archive diagnostic ' + (item.tab ? JSON.stringify(item.tab) + ' ' : '') + item.cell + ': ' + JSON.stringify(item.value));
         }
       }
       const { token, url } = await contextNow();
