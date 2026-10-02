@@ -54,6 +54,7 @@ export async function execute(interaction, socket) {
       await interaction.editReply({ content: selectionMessage(plan.selection) + '\n\nExporting the selected raffle data: clearing and reloading both worksheets...', allowedMentions: { parse: [] } });
       const result = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: 'export' });
       content = selectionMessage(result.selection) + '\n\nLoad complete: ' + result.synced + ' entries written. Both worksheets were cleared and reloaded.';
+      if (result.workingSheetUrl) content += '\n\nRaffle data has been loaded to the working sheet [HERE](' + result.workingSheetUrl + ').';
     } else {
       await interaction.editReply({ content: action === 'archive' ? 'Archiving Current Public Raffle Sheet' : 'Clearing both raffle sheets and draw dates...', allowedMentions: { parse: [] } });
       const result = await request(socket, 'guildsync:raffle-manage', { ...payload, action: action === 'reset' ? 'clear' : action });

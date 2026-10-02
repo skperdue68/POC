@@ -14,7 +14,7 @@ function fixture({ role = 'Consigliere', action = 'load', date = '091526' } = {}
     reply: async value => replies.push(value), deferReply: async value => replies.push(value), editReply: async value => replies.push(value)
   };
   const socket = { connected: true, timeout() { return this; }, emit(event, payload, cb) {
-    calls.push({ event, payload }); cb(null, { ok: true, selection: snapshot, synced: 2 });
+    calls.push({ event, payload }); cb(null, { ok: true, selection: snapshot, synced: 2, workingSheetUrl: 'https://docs.google.com/spreadsheets/d/working/edit' });
   } };
   return { interaction, socket, replies, calls };
 }
@@ -44,6 +44,7 @@ test('production refresh is private, independent of test flag, and identifies bo
   for (const expected of ['September 15, 2026', 'Bi-Weekly', '50/50', 'September 12, 2026', 'August 29, 2026', 'September 26, 2026']) assert.ok(text.includes(expected), text);
   assert.match(f.replies[1].content, /Exporting/);
   assert.match(text, /Both worksheets were cleared/);
+  assert.match(text, /Raffle data has been loaded to the working sheet \[HERE\]\(https:\/\/docs.google.com\/spreadsheets\/d\/working\/edit\)/);
   assert.doesNotMatch(text, /R7|P7/);
 });
 test('all gsa raffle actions require the exact Consigliere role', async () => {

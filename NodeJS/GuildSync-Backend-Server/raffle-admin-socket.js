@@ -38,7 +38,8 @@ export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelect
         await log('REFRESH requested by ' + JSON.stringify(requestedBy) + ': ' + JSON.stringify(selection));
         return { entries: entriesForRafflePeriods(await getBankingDataJSON(db), selection.raffles, selection.asOf), periods: selection.raffles, results: await loadResults(db, selection.raffles, googleSheetsBankingConfig().spreadsheetId), templates: await loadTemplates(db, googleSheetsBankingConfig().spreadsheetId) };
       }, { uploadedBy: requestedBy, saveTemplates: formulas => saveFormulaTemplates(db, formulas, googleSheetsBankingConfig().spreadsheetId) });
-      callback({ ok: true, selection, synced: result.synced });
+      callback({ ok: true, selection, synced: result.synced,
+        workingSheetUrl: 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(googleSheetsBankingConfig().spreadsheetId) + '/edit' });
     } catch (error) {
       await log('REFRESH failed: ' + error.message).catch(console.error);
       callback({ ok: false, message: 'Raffle refresh failed: ' + error.message });
