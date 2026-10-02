@@ -41,7 +41,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   const properties = { ARCHIVE_SECRET: 'backend-private-secret', SOURCE_SPREADSHEET_ID: 'source', ARCHIVE_FOLDER_ID: 'folder' };
   const context = vm.createContext({ console: { error() {}, log() {} },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties[key] }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties[key], setProperty: (key,value) => { properties[key] = value; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => { assert.equal(locked, false); locked = true; return true; }, releaseLock: () => { locked = false; } }) },
     SpreadsheetApp: { openById: id => ({ getSpreadsheetTimeZone:()=> 'America/New_York',
       getSheetByName:()=>({getRange:()=>({getDisplayValue:()=> '09/26/26', getValues:()=>[],getFormulas:()=>[],getRow:()=>1,getColumn:()=>1})}) }) },
@@ -74,7 +74,9 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   assert.doesNotMatch(call({ ...request, secret: 'PRIVATE_VALUE' }).error, /PRIVATE_VALUE/);
   assert.doesNotMatch(call(request).error, /secret|PRIVATE_VALUE/);
   sharingFails = false; assert.equal(call(request).ok, true); assert.equal(call(request).results, undefined); assert.equal(copies, 1);
-  assert.equal(call({ ...request, action: 'verify', archiveId: 'copy' }).ok, true);
+  const retry = call({ ...request, action: 'verify', archiveId: 'copy' });
+  assert.equal(retry.ok, true);
+  assert.deepEqual(retry.replacedArchiveIds, ['old-copy']);
   assert.equal(permissions.copy.length, 2); assert.ok(trashed.every(id=>id==='old-copy')); assert.equal(copy.name,'260926 Raffle');
   assert.equal(permissions.copy.find(p => p.type === 'anyone').role, 'reader');
   copy.trashed = true; fails(() => call({ ...request, action: 'verify', archiveId: 'copy' }), /Archive verification failed/);

@@ -71,13 +71,16 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
           const archived = await archive({ key: job.key, name: job.name, raffles: structuredClone(job.raffles) });
           const archiveId = typeof archived === 'string' ? archived : archived?.archiveId;
           if (typeof archived === 'object' && archived.name) job.name = archived.name;
+          if (typeof archived === 'object') job.replacedArchiveIds = archived.replacedArchiveIds || [];
           if (typeof archiveId !== 'string' || !archiveId.trim()) throw new Error('Archive did not return a verified copy ID');
           job.archiveId = archiveId;
           await saveState(structuredClone(state));
         }
-        await reset({ key: job.key, archiveId: job.archiveId, raffles: structuredClone(job.nextWindows), nextWindows: structuredClone(job.nextWindows) });
+        const resetResult = await reset({ key: job.key, archiveId: job.archiveId, raffles: structuredClone(job.nextWindows), nextWindows: structuredClone(job.nextWindows) });
+        job.replacedArchiveIds = [...new Set([...(job.replacedArchiveIds || []), ...(resetResult?.replacedArchiveIds || [])])];
         if (!job.manual) for (const raffle of job.raffles) state.lastClosedSalesEnd[raffle.type] = raffle.salesEnd;
-        state.lastArchive = { archiveId: job.archiveId, name: job.name, requestedBy: job.requestedBy };
+        state.replacedArchiveIdsPending = [...new Set([...(state.replacedArchiveIdsPending || []), ...(job.replacedArchiveIds || [])])];
+        state.lastArchive = { archiveId: job.archiveId, name: job.name, requestedBy: job.requestedBy, replacedArchiveIds: job.replacedArchiveIds || [] };
         state.windows = job.nextWindows;
         state.pending = null;
         state.catchupRequired = true;

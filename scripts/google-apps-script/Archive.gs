@@ -114,8 +114,12 @@ function handleArchiveRequest(e, diagnostic) {
       (page.files || []).forEach(item => { if (item.id !== archive.id && item.id !== sourceId) superseded.push(item.id); });
       pageToken = page.nextPageToken;
     } while (pageToken);
+    // Persist replacement IDs before trashing: retries must still report them.
+    const replacementKey = 'ARCHIVE_REPLACED_' + archive.id;
+    const replacedArchiveIds = [...new Set(JSON.parse(properties.getProperty(replacementKey) || '[]').concat(superseded))];
+    properties.setProperty(replacementKey, JSON.stringify(replacedArchiveIds));
     superseded.forEach(id => Drive.Files.update({ trashed: true }, id));
-    return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name, diagnosticCells: diagnosticCells, drawDates: drawDates });
+    return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name, diagnosticCells: diagnosticCells, drawDates: drawDates, replacedArchiveIds: replacedArchiveIds });
   } finally { lock.releaseLock(); }
 }
 
