@@ -237,9 +237,9 @@ Check whether a dated copy appeared in the archive folder. A copy suggests the r
 
 ### Publish diagnostic code changes correctly
 
-The [archive diagnostic update (PR #39)](https://github.com/skperdue68/POC/pull/39) replaces silent validation failures with specific exceptions and rethrows copy/sharing errors. It also diagnoses malformed requests and lock contention. Validation messages do not print the secret or request contents.
+The current archive diagnostic code returns specific validation, copy/sharing, malformed-request and lock-contention errors as JSON. It redacts shared secrets and does not return request contents or stack traces.
 
-Copy the updated [diagnostic Archive.gs](https://github.com/skperdue68/POC/blob/fix/archive-script-diagnostics/scripts/google-apps-script/Archive.gs) into the **existing browser project**, then:
+Copy the updated [Archive.gs](../scripts/google-apps-script/Archive.gs) into the **existing browser project**, then:
 
 1. Save the code.
 2. Select **Deploy → Manage deployments**.
@@ -247,9 +247,11 @@ Copy the updated [diagnostic Archive.gs](https://github.com/skperdue68/POC/blob/
 4. Choose **Version → New version → Deploy**.
 5. Keep the same backend URL. No backend restart is needed for this code-only deployment change.
 
-Saving alone does not update the deployed web app. In **Executions**, check the version number and timestamp of the next request. The updated validation code contains `const problems = [];` and its final catch block uses `throw error;`.
+Saving alone does not update the deployed web app. In **Executions**, check the version number and timestamp of the next request. The current `doPost` catch block returns JSON containing `ok: false` and `error`.
 
-With the diagnostic version, a failed request can return Google's error page rather than JSON. The backend may therefore say **Archive web app returned invalid JSON; check deployment access**. This does not by itself prove deployment access is wrong. A corresponding failed doPost execution means the request reached the script. If no corresponding execution appears, check the /exec URL, Execute as Me and access Anyone.
+The current script returns failures as JSON, and the updated backend reports **Archive web app failed: <error message>** in its logs and command response. Shared secrets are redacted. This includes validation failures and Drive/Sheets errors, so execution details in Google's UI are not required. Update both the backend and the Apps Script deployment to enable this reporting.
+
+An older deployment or a Google access error can still return a non-JSON response, causing **Archive web app returned invalid JSON; check deployment access**. This does not by itself prove deployment access is wrong. A corresponding failed doPost execution means the request reached the script. If no corresponding execution appears, check the /exec URL, Execute as Me and access Anyone. Handled script failures in the current deployment return `ok: false` even if Google's execution list marks the function completed; the backend still blocks reset/export.
 
 The original script caught errors and returned false, so an execution marked Completed did not necessarily mean archiving succeeded.
 
