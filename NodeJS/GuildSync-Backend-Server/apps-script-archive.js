@@ -6,16 +6,26 @@ export async function requestArchive(action, { sourceId, key, name, archiveId, b
   }
   let response;
   try {
-    response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, secret }), signal: AbortSignal.timeout(120000) });
+    response = await fetch(url, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, secret }), signal: AbortSignal.timeout(120000)
+    });
   } catch { throw new Error('Archive web app request failed or timed out; original remains intact.'); }
   if (!response.ok) throw new Error(`Archive web app request failed (${response.status}).`);
   let result;
   try { result = await response.json(); } catch { throw new Error('Archive web app returned invalid JSON; check deployment access.'); }
   if (!result.ok || result.sourceId !== sourceId || result.key !== key || typeof result.archiveId !== 'string' ||
-      !result.archiveId || result.archiveId === sourceId || (archiveId && result.archiveId !== archiveId)) {
+    !result.archiveId || result.archiveId === sourceId || (archiveId && result.archiveId !== archiveId)) {
     throw new Error('Archive web app could not verify the requested copy; check Apps Script execution logs.');
   }
-  if (details && (!result.results || !/^\d{6} raffle$/.test(result.name || ''))) throw new Error('Update the Apps Script deployment: archive result metadata is missing.');
+  if (details && (!result.results || !/^\d{6} Raffle$/.test(result.name || ''))) {
+    console.error('Archive response diagnostic:', JSON.stringify({
+      action,
+      returnedFields: Object.keys(result),
+      hasResults: Boolean(result.results),
+      archiveName: result.name ?? '(missing)'
+    }));
+    throw new Error('Archive response is missing results or has an invalid name; check the backend diagnostic log.');
+  }
   return details ? result : result.archiveId;
 }

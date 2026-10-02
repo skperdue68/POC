@@ -8,7 +8,7 @@ This guide sets up archiving in a personal Google Drive. Follow it from the begi
 | --- | --- |
 | Current raffle spreadsheet | The working file GuildSync updates, containing both raffle tabs. Its ID and public link stay unchanged during rollover. |
 | Clean master/template | A spare template. Do not configure it as the source. |
-| Archive folder | Receives dated copies such as `092626 raffle`. |
+| Archive folder | Receives dated copies such as `260926 Raffle`. |
 | Apps Script | Runs as your personal Google account, copies the file and checks sharing. |
 | Service account | Continues writing entries and resetting the original spreadsheet. Its JSON credentials stay on the backend machine. |
 | GuildSync database | Retains entries and rollover recovery state. Rebuilds both tabs after archiving. |

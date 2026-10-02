@@ -10,7 +10,7 @@ test('web app client validates identity and never accepts source as archive', as
   const old = keys.map(key => process.env[key]);
   t.after(() => { globalThis.fetch = original; keys.forEach((key, i) => old[i] === undefined ? delete process.env[key] : process.env[key] = old[i]); });
   process.env[keys[0]] = 'https://script.google.com/macros/s/test/exec'; process.env[keys[1]] = 'secret';
-  const payload = { sourceId: 'source', key: 'closure', name: '260926 raffle' };
+  const payload = { sourceId: 'source', key: 'closure', name: '260926 Raffle' };
   let result = { ok: true, sourceId: 'source', key: 'closure', archiveId: 'copy' };
   globalThis.fetch = async (url, init) => {
     assert.equal(init.method, 'POST'); assert.equal(new URL(url).search, '');
@@ -18,6 +18,8 @@ test('web app client validates identity and never accepts source as archive', as
     return { ok: true, json: async () => result };
   };
   assert.equal(await requestArchive('archive', payload), 'copy');
+  result = { ...result, name: '260926 Raffle', results: {} };
+  assert.equal((await requestArchive('archive', { ...payload, details: true })).name, '260926 Raffle');
   for (const override of [{ ok: false }, { sourceId: 'other' }, { key: 'other' }, { archiveId: 'source' }]) {
     result = { ok: true, sourceId: 'source', key: 'closure', archiveId: 'copy', ...override };
     await assert.rejects(requestArchive('archive', payload), /verify/);
@@ -45,7 +47,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
     }
   });
   vm.runInContext(source, context);
-  const request = { secret: 'secret', sourceId: 'source', key: 'a'.repeat(32) + ':raffle-rollover-1000', action: 'archive', name: '260926 raffle' };
+  const request = { secret: 'secret', sourceId: 'source', key: 'a'.repeat(32) + ':raffle-rollover-1000', action: 'archive', name: '260926 Raffle' };
   const call = data => context.doPost({ postData: { contents: JSON.stringify(data) } });
   assert.throws(() => call({ ...request, secret: 'bad' }), /Backend secret does not match ARCHIVE_SECRET/); assert.equal(copies, 0);
   for (const property of Object.keys(properties)) {
@@ -64,7 +66,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   sharingFails = true; assert.throws(() => call(request), /permission failure/); assert.equal(copies, 1); assert.deepEqual(trashed, []);
   sharingFails = false; assert.equal(call(request).ok, true); assert.equal(copies, 1);
   assert.equal(call({ ...request, action: 'verify', archiveId: 'copy' }).ok, true);
-  assert.equal(permissions.copy.length, 2); assert.ok(trashed.every(id=>id==='old-copy')); assert.equal(copy.name,'092626 raffle');
+  assert.equal(permissions.copy.length, 2); assert.ok(trashed.every(id=>id==='old-copy')); assert.equal(copy.name,'260926 Raffle');
   assert.equal(permissions.copy.find(p => p.type === 'anyone').role, 'reader');
   copy.trashed = true; assert.throws(() => call({ ...request, action: 'verify', archiveId: 'copy' }), /Archive verification failed/);
   assert.equal(locked, false);

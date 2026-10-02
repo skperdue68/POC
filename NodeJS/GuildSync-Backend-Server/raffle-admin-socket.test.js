@@ -55,7 +55,7 @@ test('production clear/archive require bot authentication and exact role without
   let handler; const calls = [];
   const socket = { guildSyncAuthenticated: true, guildSyncAuthType: 'discord-bot', on(event, cb) { assert.equal(event, 'guildsync:raffle-manage'); handler = cb; } };
   endpoints.registerRaffleManagementSocket(socket, {}, { authorize: async (_, id) => id === 'officer', log: async () => {},
-    sheets: { clear: async () => calls.push('clear'), archive: async () => { calls.push('archive'); return { archiveId: 'copy', name: '260926 raffle' }; } } });
+    sheets: { clear: async () => calls.push('clear'), archive: async () => { calls.push('archive'); return { archiveId: 'copy', name: '260926 Raffle' }; } } });
   const request = data => new Promise(resolve => handler(data, resolve));
   for (const action of ['clear', 'archive']) {
     assert.equal((await request({ action, discordUserId: 'member', requestedBy: 'Member' })).ok, false);

@@ -40,7 +40,7 @@ This code does not migrate old cells. Duplicate detection uses the new ID column
 The original spreadsheet and public link stay unchanged. At sales cutoff,
 automatic writes to **both tabs** stop, while committed banking entries continue
 to accumulate in MariaDB. After a default four-hour hold, Apps Script copies
-the whole spreadsheet as `MMDDYY raffle` using the closed raffle's Eastern draw
+the whole spreadsheet as `YYMMDD Raffle` using the closed raffle's Eastern draw
 date. Only after verifying the copy and its sharing does the backend clear the
 both raffle tabs, set their applicable draw dates, and replay current-period
 database records with the normal bonus policy and transaction-ID deduplication.

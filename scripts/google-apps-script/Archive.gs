@@ -115,7 +115,7 @@ function raffleSheetDate(book, tab, address) {
   return date.toISOString().slice(0,10);
 }
 function raffleArchiveName(date) {
-  return date.slice(5,7) + date.slice(8,10) + date.slice(2,4) + ' raffle';
+  return date.slice(2,4) + date.slice(5,7) + date.slice(8,10) + ' Raffle';
 }
 function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab) {
   const result = {};

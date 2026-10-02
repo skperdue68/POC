@@ -76,7 +76,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
       if (payload.action === 'archive') {
         mutations.push('archive');
         if (copyFailure) return { ok: false, status: 403 };
-        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'092626 raffle',
+        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'260926 Raffle',
           results: {biweekly:{date:'2026-09-26',cells:[]},monthly:{date:'2026-10-24',cells:[]}} };
       } else mutations.push('verify');
       body = copy;
@@ -130,7 +130,7 @@ test('hold blocks clear and exports but archive bypasses hold and rebuilds both 
   assert.deepEqual(f.calls, []);
   const result = await runtime.archive();
   assert.equal(result.archiveId, 'archive-copy');
-  assert.equal(result.name, '092626 raffle', 'use returned R7 name rather than runtime schedule');
+  assert.equal(result.name, '260926 Raffle', 'use returned R7 name rather than runtime schedule');
   assert.equal(f.state().pending, null); assert.equal(f.state().catchupRequired, false);
   assert.ok(f.batches[0].some(r => r.updateCells?.range.sheetId === 7));
   assert.ok(f.batches[0].some(r => r.updateCells?.range.sheetId === 8));
@@ -159,7 +159,7 @@ test('archive still forces a newly due cutoff when previous catchup is incomplet
   f.state().catchupRequired = true;
   const result = await f.start().archive();
   assert.equal(result.archiveId, 'archive-copy');
-  assert.equal(result.name, '092626 raffle', 'use returned R7 name rather than runtime schedule');
+  assert.equal(result.name, '260926 Raffle', 'use returned R7 name rather than runtime schedule');
   assert.equal(f.state().pending, null);
   assert.equal(f.state().catchupRequired, false);
   assert.equal(f.state().completedArchives.length, 1);
@@ -184,7 +184,7 @@ test('production archive outside hold copies immediately without advancing sched
   const before = structuredClone(f.state().windows);
   const result = await f.start().archive();
   assert.equal(result.archiveId, 'archive-copy');
-  assert.equal(result.name, '092626 raffle', 'use returned R7 name rather than runtime schedule');
+  assert.equal(result.name, '260926 Raffle', 'use returned R7 name rather than runtime schedule');
   assert.deepEqual(f.mutations, ['archive', 'verify', 'clear']);
   assert.deepEqual(f.state().windows, before);
   assert.deepEqual(f.state().lastClosedSalesEnd, {});

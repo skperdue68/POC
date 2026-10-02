@@ -33,7 +33,7 @@ Historical load clears stale result values and restores the selected period's sa
 
 ## Archive name and replacement
 
-The Apps Script reads **Bi-Weekly R7** and names the copy **MMDDYY raffle**. October 10, 2026 becomes `101026 raffle`. R7 must contain a valid Sheets date or MM/DD/YY (or MM/DD/YYYY) text. P7 must also identify a valid 50/50 draw date. The backend verifies both against the raffle schedule.
+The Apps Script reads **Bi-Weekly R7** and names the copy **YYMMDD Raffle**. October 10, 2026 becomes `261010 Raffle`. R7 must contain a valid Sheets date or MM/DD/YY (or MM/DD/YYYY) text. P7 must also identify a valid 50/50 draw date. The backend verifies both against the raffle schedule.
 
 After creating and verifying the new copy and its sharing, the script moves older same-name spreadsheets in the configured archive folder to **Trash**. It never trashes the original source or the new copy. Replacement creates a new file ID: previously posted links to an old archive do not redirect. The current working spreadsheet link remains unchanged.
 

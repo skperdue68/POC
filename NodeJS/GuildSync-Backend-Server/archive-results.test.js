@@ -13,5 +13,5 @@ test('Apps Script reads dates and sparse values without compacting cell addresse
  assert.equal(results.biweekly.date,'2026-09-26');
  assert.equal(results.biweekly.cells[2].address,'J7');
  assert.equal(results.biweekly.cells[1].value,0);
- assert.equal(context.raffleArchiveName(results.biweekly.date),'092626 raffle');
+ assert.equal(context.raffleArchiveName(results.biweekly.date),'260926 Raffle');
 });
