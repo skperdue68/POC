@@ -58,7 +58,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
       if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
       if (sql.startsWith('SELECT value')) return [[{ value: JSON.stringify(state) }]];
       if (skipMonthly && sql.startsWith('INSERT INTO guildsync_raffle_results')) assert.notEqual(params[0], 'monthly');
-      if (snapshotFailure && sql.startsWith('INSERT INTO guildsync_raffle_results')) throw Error('snapshot storage failed');
+      if (snapshotFailure && sql.includes('guildsync_raffle_result')) throw Error('snapshot storage failed');
       if (sql.includes('guildsync_raffle_result')) return [sql.startsWith('SELECT') ? [] : {}];
       if (sql.startsWith('INSERT')) { state = JSON.parse(params[1]); return [{}]; }
       throw new Error('Unexpected SQL: ' + sql);
@@ -81,6 +81,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
           results: {biweekly:{date:'2026-09-26',cells:[]},monthly:skipMonthly?{skipped:true,reason:'unreadable-date'}:{date:'2026-10-24',cells:[]}} };
       } else mutations.push('verify');
       body = copy;
+      if(snapshotFailure) delete body.results;
     }
     else if (url.endsWith(':batchUpdate')) {
       assert.equal(url, 'https://sheets.googleapis.com/v4/spreadsheets/original-source:batchUpdate');
@@ -229,12 +230,11 @@ test('restart after uncertain reset uses atomic marker and never clears twice', 
 });
 
 
-test('snapshot storage failure blocks reset and retains archive recovery', async t => {
+test('archive succeeds without result metadata or snapshot database access', async t => {
   const f=await fixture(t,{snapshotFailure:true});
-  await assert.rejects(f.start().archive(), /snapshot storage failed/);
-  assert.deepEqual(f.mutations,['archive','verify']);
-  assert.equal(f.state().pending.archiveId,'archive-copy');
-  assert.equal(f.state().completedArchives?.length || 0,0);
+  await f.start().archive();
+  assert.ok(f.mutations.includes('clear'));
+  assert.equal(f.state().pending,null);
 });
 test('ongoing monthly results are not cleared during a biweekly reset', async t => {
   const f=await fixture(t);

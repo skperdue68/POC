@@ -18,7 +18,7 @@ test('web app client validates identity and never accepts source as archive', as
     return { ok: true, json: async () => result };
   };
   assert.equal(await requestArchive('archive', payload), 'copy');
-  result = { ...result, name: '260926 Raffle', results: {} };
+  result = { ...result, name: '260926 Raffle' };
   assert.equal((await requestArchive('archive', { ...payload, details: true })).name, '260926 Raffle');
   for (const override of [{ ok: false }, { sourceId: 'other' }, { key: 'other' }, { archiveId: 'source' }]) {
     result = { ok: true, sourceId: 'source', key: 'closure', archiveId: 'copy', ...override };
@@ -53,6 +53,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
     }
   });
   vm.runInContext(source, context);
+  context.readRaffleArchive = () => { throw Error('result reads disabled'); };
   const request = { secret: 'backend-private-secret', sourceId: 'source', key: 'a'.repeat(32) + ':raffle-rollover-1000', action: 'archive', eligibleMonthlyDates:['2026-09-26'], name: '260926 Raffle' };
   const call = data => context.doPost({ postData: { contents: JSON.stringify(data) } });
   const fails = (fn, pattern) => { const result = fn(); assert.equal(result.ok, false); assert.match(result.error, pattern); };
@@ -72,7 +73,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   assert.equal(locked, false);
   assert.doesNotMatch(call({ ...request, secret: 'PRIVATE_VALUE' }).error, /PRIVATE_VALUE/);
   assert.doesNotMatch(call(request).error, /secret|PRIVATE_VALUE/);
-  sharingFails = false; assert.equal(call(request).ok, true); assert.equal(call(request).results.monthly.date, '2026-09-26'); assert.equal(copies, 1);
+  sharingFails = false; assert.equal(call(request).ok, true); assert.equal(call(request).results, undefined); assert.equal(copies, 1);
   assert.equal(call({ ...request, action: 'verify', archiveId: 'copy' }).ok, true);
   assert.equal(permissions.copy.length, 2); assert.ok(trashed.every(id=>id==='old-copy')); assert.equal(copy.name,'260926 Raffle');
   assert.equal(permissions.copy.find(p => p.type === 'anyone').role, 'reader');

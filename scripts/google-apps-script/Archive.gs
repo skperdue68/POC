@@ -90,8 +90,9 @@ function handleArchiveRequest(e, diagnostic) {
         (p.type === 'anyone' || (p.type === 'domain' ? q.domain === p.domain : q.emailAddress === p.emailAddress))))) throw new Error('Archive sharing verification failed');
     // Verify the file can actually be opened as a spreadsheet before allowing reset.
     const book = SpreadsheetApp.openById(archive.id);
-    const results = readRaffleArchive(book, request.biweeklyTab || 'bi-weekly raffle', request.fiftyFiftyTab || '50/50', request.eligibleMonthlyDates);
-    const name = raffleArchiveName(results.biweekly.date);
+    // Result capture is paused. Read only the draw date needed for the archive name.
+    const name = raffleArchiveName(raffleSheetDate(book, request.biweeklyTab || 'bi-weekly raffle', 'R7'));
+    console.log('Archive result capture disabled; skipping winner, attendance, and prize reads.');
     if (file.name !== name) throw new Error('Archive date/name mismatch; finish legacy recovery before upgrading.');
     // The verified replacement exists before any previous same-name file is trashed.
     // Gather every page before mutating the folder listing.
@@ -107,7 +108,7 @@ function handleArchiveRequest(e, diagnostic) {
       pageToken = page.nextPageToken;
     } while (pageToken);
     superseded.forEach(id => Drive.Files.update({ trashed: true }, id));
-    return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name, results: results });
+    return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name });
   } finally { lock.releaseLock(); }
 }
 

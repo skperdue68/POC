@@ -340,3 +340,12 @@ Read raffle results: bi-weekly raffle Q33:Q48; captured cells=3
 ```
 
 Read failures return an explicit tab/range diagnostic to GuildSync, such as `Archive web app failed: Unable to read 50/50 L23`. A generic invalid-JSON response can still indicate an error outside the authenticated archive operation or a deployment/access problem; it is not proof of an access problem. The backend logs when 50/50 capture is skipped.
+
+
+### Archive result capture temporarily paused
+
+Archive operations currently copy and verify the workbook, reconcile sharing, replace older same-name archives, reset the original tabs using the established reset ranges, and reload banking records. They do **not** read winners, prize amounts, attendance, or 50/50 result cells, and do not read/write result snapshots or formula templates during rollover. The Bi-Weekly `R7` date is still read for the archive filename. Archive announcements remain enabled as configured.
+
+The result helper code and existing database tables/data remain available for later troubleshooting. This pause applies to automatic rollover and `/gsraffle archive`; it does not change the separate `/gsraffle load` or `/gsraffle reset` workflows.
+
+Deploy both changes: update/restart the backend, then paste the updated `Archive.gs` into Apps Script and choose **Deploy > Manage deployments > Edit > New version > Deploy**. No environment-variable or database migration changes are required. The conditional-capture section above describes the retained feature, which is currently inactive during archiving.
