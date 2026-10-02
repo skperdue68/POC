@@ -32,7 +32,13 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
     }
     assert.ok(requests.some(request => request.deleteDeveloperMetadata));
     assert.ok(requests.some(request => request.createDeveloperMetadata));
-    assert.equal(JSON.stringify(requests).includes('userEnteredFormat'), false);
+    const formatClears = requests.filter(request => request.updateCells?.fields.includes('userEnteredFormat'));
+    assert.equal(formatClears.length, type === 'biweekly' ? 1 : 0);
+    if (type === 'biweekly') {
+      assert.deepEqual(formatClears[0].updateCells.range, { sheetId: 7, startRowIndex: 4, endRowIndex: 254, startColumnIndex: 9, endColumnIndex: 11 });
+      assert.equal(formatClears[0].updateCells.fields, 'userEnteredValue,userEnteredFormat');
+      assert.equal(formatClears[0].updateCells.rows, undefined);
+    }
   });
 }
 
