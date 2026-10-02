@@ -9,11 +9,12 @@ test('archive channels are optional and deduplicated', () => {
 });
 test('delivery persists each channel and retries failures without repeating success', async () => {
   let state = {}; const sent = [];
-  const archives = [{ archiveId: 'copy', name: '261010 raffle', completedAt: 123 }];
+  const archives = [{ archiveId: 'copy', name: '261010 raffle', completedAt: 123, message: 'Shared completion message https://docs.google.com/spreadsheets/d/copy/edit' }];
   const args = { archives, channels: ['123','456'], state, save: async () => {},
     send: async (channel, content) => { if (channel === '456') throw Error('unavailable'); sent.push(content); } };
   await assert.rejects(deliverArchives(args), /unavailable/);
   assert.equal(sent.length, 1);
+  assert.equal(sent[0], archives[0].message);
   assert.match(sent[0], /https:\/\/docs.google.com\/spreadsheets\/d\/copy\/edit/);
   args.send = async (channel) => { sent.push(channel); };
   await deliverArchives(args);

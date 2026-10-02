@@ -13,7 +13,7 @@ export function parseArchiveChannels(value = '') {
 export async function deliverArchives({ archives, channels, state, save, send }) {
   const errors = [];
   for (const archive of archives) {
-    const content = '**Raffle archive completed**\n' +
+    const content = archive.message || '**Raffle archive completed**\n' +
       '[' + archive.name + '](https://docs.google.com/spreadsheets/d/' + encodeURIComponent(archive.archiveId) + '/edit)\n' +
       'Both current raffle sheets have been reset and reloaded from the database. The current spreadsheet link is unchanged.';
     for (const channel of channels) {

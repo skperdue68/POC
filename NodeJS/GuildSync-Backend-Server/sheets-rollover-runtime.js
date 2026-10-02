@@ -1,3 +1,4 @@
+import { formatArchiveMessage } from './raffle-archive-message.js';
 import { saveFormulaTemplates, loadFormulaTemplates, readResultFormulas, resultClearRequests, resultRequests } from './raffle-results.js';
 import { resetRequests, drawDateRequest } from './raffle-sheet-layout.js';
 import { createHash } from 'node:crypto';
@@ -70,7 +71,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
 
   // One local queue plus a MariaDB advisory lock coordinates all backend instances.
   let tail = Promise.resolve();
-  const run = (operation, { processRollover = true, archiveNow = false } = {}) => {
+  const run = (operation, { processRollover = true, archiveNow = false, requestedBy } = {}) => {
     const job = tail.then(async () => {
       const conn = await db.getConnection();
       let locked = false;
@@ -81,7 +82,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
         const savedState = await io.loadState();
         const advance = (enabled && processRollover) || archiveNow || (processRollover && savedState?.pending?.manual);
         const due = savedState?.pending || savedState?.windows?.some(window => window.salesEnd <= Math.floor(now ? now() : Date.now() / 1000));
-        const state = advance ? await coordinator.tick({ archiveNow: archiveNow && (!savedState?.catchupRequired || !!due) }) : (savedState || {});
+        const state = advance ? await coordinator.tick({ requestedBy, archiveNow: archiveNow && (!savedState?.catchupRequired || !!due) }) : (savedState || {});
         if (state.pending || (!processRollover && !archiveNow && state.catchupRequired) || (!processRollover && enabled && state.windows?.some(window => window.salesEnd <= Math.floor(now ? now() : Date.now() / 1000)))) {
           throw new Error('Spreadsheet writes are on hold until delayed archive/reset completes. Banking records remain in the database.');
         }
@@ -93,6 +94,8 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
           state.completedArchives ||= [];
           if (state.lastArchive && !state.completedArchives.some(item => item.archiveId === state.lastArchive.archiveId)) {
             state.completedArchives = state.completedArchives.filter(item => item.name !== state.lastArchive.name);
+            state.lastArchive.sourceId = settings.spreadsheetId;
+            state.lastArchive.message = formatArchiveMessage(state.lastArchive);
             state.completedArchives.push({ ...state.lastArchive, completedAt: Math.floor(now ? now() : Date.now() / 1000) });
           }
           await io.saveState(state);
@@ -111,7 +114,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
     return job;
   };
   configureSheetsCoordinator(run);
-  const archive = () => run(state => state.lastArchive, { archiveNow: true });
+  const archive = ({ requestedBy } = {}) => run(state => state.lastArchive, { archiveNow: true, requestedBy });
   const clear = () => run(async () => {
     const { token, url } = await googleContext();
     const book = await sheetsRequest(token, url + '?fields=sheets.properties');

@@ -65,8 +65,8 @@ test('production clear/archive require bot authentication and exact role without
     const result = await request({ action, discordUserId: 'officer', requestedBy: 'Officer' });
     assert.equal(result.ok, true); if (action === 'clear') assert.match(result.message, /[Bb]oth/);
     if(action === 'archive') {
-      assert.match(result.message, /Archived as <https:\/\/docs.google.com\/spreadsheets\/d\/copy\/edit>\./);
-      assert.match(result.message, /The Working file is at <https:\/\/docs.google.com\/spreadsheets\/d\/working-sheet\/edit> and current raffle data is populated\./);
+      assert.match(result.message, /archived by Officer/);
+      assert.match(result.message, /working-sheet\/edit/);
     }
   }
   assert.deepEqual(calls, ['clear', 'archive']);

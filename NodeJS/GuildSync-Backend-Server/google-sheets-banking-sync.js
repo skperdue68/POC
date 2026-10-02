@@ -178,7 +178,7 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
     await log('Writing batch: entries=' + pending.length);
     await sheetsRequest(token, url + ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests: [...preparation, ...pending.flatMap(item => item.requests)] }) });
     preparation = [];
-    for (const item of pending) await log('Added transaction ' + item.eventId + ' to ' + JSON.stringify(item.tab) + ' row ' + item.row);
+    await log('Spreadsheet update completed: entries=' + pending.length);
     synced += pending.length;
     pending = [];
   };
@@ -250,8 +250,6 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
       }
     }
     if (!replace) requests.push(attributionRequest(sheet.sheetId, entry.type, uploadedBy));
-    await log('Writing ' + JSON.stringify({ tab, row, range: layout.id + row + ':' + layout.gold + row,
-      eventId: String(entry.eventId), name, gold: sheetGoldAmount(entry.amount), bonusEnabled, bonusPercent, bonusTickets }));
     // Reserve the row locally; bulk replay reads each section only once and
     // batches writes to stay below per-user Sheets API quotas.
     rows[offset] = [String(entry.eventId), name, sheetGoldAmount(entry.amount)];
