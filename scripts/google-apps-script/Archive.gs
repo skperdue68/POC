@@ -51,7 +51,7 @@ function handleArchiveRequest(e, diagnostic) {
       archive = found.files && found.files[0];
       if (!archive) {
         const sourceBook = SpreadsheetApp.openById(sourceId);
-        const date = raffleSheetDate(sourceBook, request.biweeklyTab || 'bi-weekly raffle', 'R7');
+        const date = raffleSheetDate(sourceBook, request.biweeklyTab || 'bi-weekly raffle', 'R7', 'working spreadsheet');
         archive = Drive.Files.copy({ name: raffleArchiveName(date), parents: [folderId],
           appProperties: { guildsyncArchive: request.key, guildsyncSource: sourceId } }, sourceId, { fields: 'id' });
       }
@@ -112,12 +112,25 @@ function handleArchiveRequest(e, diagnostic) {
 }
 
 
-function raffleSheetDate(book, tab, address) {
+function formatArchiveDate(value, book, tab, address, workbook) {
+  const location = workbook + ' / ' + tab + ' / ' + address;
+  let timeZone;
+  try { timeZone = book.getSpreadsheetTimeZone(); }
+  catch (error) { throw new Error(location + ': getSpreadsheetTimeZone failed: ' + String(error.message || error)); }
+  const detail = 'type=' + typeof timeZone + ', value=' + JSON.stringify(timeZone);
+  if (typeof timeZone !== 'string' || !timeZone.trim()) {
+    throw new Error(location + ': invalid spreadsheet timezone; ' + detail);
+  }
+  try { return Utilities.formatDate(value, timeZone, 'yyyy-MM-dd'); }
+  catch (error) { throw new Error(location + ': Utilities.formatDate failed; ' + detail + ': ' + String(error.message || error)); }
+}
+
+function raffleSheetDate(book, tab, address, workbook) {
   const sheet = book.getSheetByName(tab);
   if (!sheet) throw new Error('Missing raffle tab: ' + tab);
   const value = sheet.getRange(address).getValue();
   if (value instanceof Date && !isNaN(value.getTime())) {
-    return Utilities.formatDate(value, book.getSpreadsheetTimeZone(), 'yyyy-MM-dd');
+    return formatArchiveDate(value, book, tab, address, workbook || 'archive copy');
   }
   const match = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(String(value || '').trim());
   if (!match) throw new Error('Invalid raffle date in ' + tab + ' ' + address);
@@ -149,8 +162,9 @@ function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab) {
       values.forEach((row, r) => row.forEach((value, c) => {
         const formula = formulas[r] && formulas[r][c];
         if (value === '' && !formula) return;
-        if (value instanceof Date) value = Utilities.formatDate(value, book.getSpreadsheetTimeZone(), 'yyyy-MM-dd');
-        cells.push({ address: columnName(range.getColumn()+c)+(range.getRow()+r), value: value,
+        const cellAddress = columnName(range.getColumn()+c)+(range.getRow()+r);
+        if (value instanceof Date) value = formatArchiveDate(value, book, tab, cellAddress, 'archive copy');
+        cells.push({ address: cellAddress, value: value,
           ...(formula ? { formula: formula } : {}) });
       }));
     });

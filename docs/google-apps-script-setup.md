@@ -251,6 +251,8 @@ Saving alone does not update the deployed web app. In **Executions**, check the 
 
 The current script returns failures as JSON, and the updated backend reports **Archive web app failed: <error message>** in its logs and command response. Shared secrets are redacted. This includes validation failures and Drive/Sheets errors, so execution details in Google's UI are not required. Update both the backend and the Apps Script deployment to enable this reporting.
 
+Timezone errors identify the working spreadsheet or archive copy, tab and cell, and whether `getSpreadsheetTimeZone` or `Utilities.formatDate` failed. When the timezone getter returns, the error also includes its value and JavaScript type. Keep the spreadsheet's configured timezone; this diagnostic does not substitute a timezone. After deploying a new version, capture the next backend failure message to identify the failing call.
+
 An older deployment or a Google access error can still return a non-JSON response, causing **Archive web app returned invalid JSON; check deployment access**. This does not by itself prove deployment access is wrong. A corresponding failed doPost execution means the request reached the script. If no corresponding execution appears, check the /exec URL, Execute as Me and access Anyone. Handled script failures in the current deployment return `ok: false` even if Google's execution list marks the function completed; the backend still blocks reset/export.
 
 The original script caught errors and returned false, so an execution marked Completed did not necessarily mean archiving succeeded.
