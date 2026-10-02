@@ -349,3 +349,10 @@ Archive operations currently copy and verify the workbook, reconcile sharing, re
 The result helper code and existing database tables/data remain available for later troubleshooting. This pause applies to automatic rollover and `/gsraffle archive`; it does not change the separate `/gsraffle load` or `/gsraffle reset` workflows.
 
 Deploy both changes: update/restart the backend, then paste the updated `Archive.gs` into Apps Script and choose **Deploy > Manage deployments > Edit > New version > Deploy**. No environment-variable or database migration changes are required. The conditional-capture section above describes the retained feature, which is currently inactive during archiving.
+
+
+### Archive name uses the displayed draw date
+
+The archive filename uses the date displayed in **Bi-Weekly R7 before reset**, in `MM/DD/YY` or `MM/DD/YYYY` format, and formats it as `YYMMDD Raffle`. For example, `10/10/26` becomes `261010 Raffle`. It does not use 50/50 P7, today's date, or the draw date restored after reset. Date-only cells are no longer converted to Eastern time, which could move a midnight value into the previous day.
+
+The manual archive confirmation includes a clickable Google Sheets link. Same-name replacement still creates/verifies a new copy, then moves older same-name spreadsheets in the configured archive folder to trash, excluding the original and new archive. The replacement gets a new file ID; the original public spreadsheet link remains unchanged. Previously misnamed archives are not automatically renamed by this correction.

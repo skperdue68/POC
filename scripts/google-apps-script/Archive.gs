@@ -127,11 +127,9 @@ function raffleSheetDate(book, tab, address, workbook) {
   const sheet = book.getSheetByName(tab);
   if (!sheet) throw new Error('Missing raffle tab: ' + tab);
   let value;
-  try { value = sheet.getRange(address).getValue(); }
+  // R7/P7 are calendar dates, not instants. Preserve the date the sheet displays.
+  try { value = sheet.getRange(address).getDisplayValue(); }
   catch (_) { throw new Error('Unable to read raffle date: ' + tab + ' ' + address); }
-  if (value instanceof Date && !isNaN(value.getTime())) {
-    return formatArchiveDate(value, tab, address, workbook || 'archive copy');
-  }
   const match = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(String(value || '').trim());
   if (!match) throw new Error('Invalid raffle date in ' + tab + ' ' + address);
   const year = match[3].length === 2 ? 2000 + Number(match[3]) : Number(match[3]);

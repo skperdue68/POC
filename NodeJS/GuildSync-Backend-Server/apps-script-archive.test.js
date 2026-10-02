@@ -44,7 +44,7 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties[key] }) },
     LockService: { getScriptLock: () => ({ tryLock: () => { assert.equal(locked, false); locked = true; return true; }, releaseLock: () => { locked = false; } }) },
     SpreadsheetApp: { openById: id => ({ getSpreadsheetTimeZone:()=> 'America/New_York',
-      getSheetByName:()=>({getRange:()=>({getValue:()=> '09/26/26', getValues:()=>[],getFormulas:()=>[],getRow:()=>1,getColumn:()=>1})}) }) },
+      getSheetByName:()=>({getRange:()=>({getDisplayValue:()=> '09/26/26', getValues:()=>[],getFormulas:()=>[],getRow:()=>1,getColumn:()=>1})}) }) },
     Drive: {
       Files: { list: options => ({ files: options.q.includes("name=") ? [{id:'old-copy'},{id:'copy'},{id:'source'}] : copy ? [{id:'copy'}] : [] }), update: (body,id) => { assert.equal(body.trashed,true); trashed.push(id); }, copy: (body, id) => {
         assert.equal(id, 'source'); copies++; copy = { id: 'copy', mimeType: 'application/vnd.google-apps.spreadsheet', ...body }; return copy;

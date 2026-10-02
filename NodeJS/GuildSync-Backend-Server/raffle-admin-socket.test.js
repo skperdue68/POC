@@ -61,6 +61,10 @@ test('production clear/archive require bot authentication and exact role without
     assert.equal((await request({ action, discordUserId: 'member', requestedBy: 'Member' })).ok, false);
     const result = await request({ action, discordUserId: 'officer', requestedBy: 'Officer' });
     assert.equal(result.ok, true); assert.match(result.message, /[Bb]oth/);
+    if(action === 'archive') {
+      assert.match(result.message, /\[260926 Raffle\]\(https:\/\/docs.google.com\/spreadsheets\/d\/copy\/edit\)/);
+      assert.doesNotMatch(result.message, /file ID/);
+    }
   }
   assert.deepEqual(calls, ['clear', 'archive']);
   socket.guildSyncAuthType = 'client';
