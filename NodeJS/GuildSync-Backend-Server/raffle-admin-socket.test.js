@@ -19,6 +19,7 @@ test('refresh endpoint uses both independently selected windows without test ena
   const socket = { guildSyncAuthenticated: true, guildSyncAuthType: 'discord-bot', on(_event, cb) { handler = cb; } };
   endpoints.registerRaffleRefreshSocket(socket, {}, {
     getRaffleRefreshSelection: date => { calls.push(['date', date]); return selection; },
+    loadResults: async () => ({}), loadTemplates: async () => ({}),
     getBankingDataJSON: async () => [...entries, { type: 'monthly', time: 250, eventId: 'end' }],
     authorize: async (_db, id) => id === 'officer',
     refreshEntries: async (load, options) => { const snapshot = await load(); assert.deepEqual(snapshot.periods, selection.raffles); calls.push(['rows', snapshot.entries, options]); return { synced: 2 }; }, log: async () => {}

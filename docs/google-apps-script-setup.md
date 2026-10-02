@@ -8,7 +8,7 @@ This guide sets up archiving in a personal Google Drive. Follow it from the begi
 | --- | --- |
 | Current raffle spreadsheet | The working file GuildSync updates, containing both raffle tabs. Its ID and public link stay unchanged during rollover. |
 | Clean master/template | A spare template. Do not configure it as the source. |
-| Archive folder | Receives dated copies such as `260926 raffle`. |
+| Archive folder | Receives dated copies such as `092626 raffle`. |
 | Apps Script | Runs as your personal Google account, copies the file and checks sharing. |
 | Service account | Continues writing entries and resetting the original spreadsheet. Its JSON credentials stay on the backend machine. |
 | GuildSync database | Retains entries and rollover recovery state. Rebuilds both tabs after archiving. |
@@ -146,7 +146,7 @@ The folder ID now belongs in Apps Script's properties. Remove `GUILDSYNC_RAFFLE_
    ```
 
 3. Sign into Discord with the exact **Consigliere** role.
-4. On your test spreadsheet, run **`/gsr raffle archive`**.
+4. On your test spreadsheet, run **`/gsraffle archive`**.
 
 This command performs a real archive, resets both original tabs and reloads current database records. It bypasses a live hold immediately. Outside a hold it does not advance the raffle schedule.
 
@@ -163,9 +163,9 @@ Other production commands, all private and restricted to Consigliere:
 
 | Command | Effect |
 | --- | --- |
-| `/gsr raffle refresh` | Clears managed fields on both tabs and reloads current periods and draw dates. |
-| `/gsr raffle refresh date:MMDDYY` | Rebuilds both tabs for periods selected by that local date. Use a test file for historical exports. |
-| `/gsr raffle clear` | Clears managed fields on both tabs, including draw dates; database records remain. It does not permanently pause future writes. |
+| `/gsraffle load` | Clears managed fields on both tabs and reloads current periods and draw dates. |
+| `/gsraffle load date:MMDDYY` | Rebuilds both tabs for periods selected by that local date. Use a test file for historical exports. |
+| `/gsraffle reset` | Clears managed fields on both tabs, including draw dates; database records remain. It does not permanently pause future writes. |
 
 Refresh and clear are blocked during an active rollover hold/recovery. See [command details](raffle-refresh.md).
 
@@ -316,3 +316,5 @@ GuildSync retries unfinished rollover work, so doPost calls approximately a minu
 You do not need to terminate completed executions. To pause retries while editing, stop the **GuildSync backend** temporarily; banking-data processing also pauses until it restarts. Do not delete pending rollover state, sheet markers or an existing archive to stop retries. After correcting the cause and restarting if needed, let the saved operation retry.
 
 For exact cell ranges and operational details, see [spreadsheet export documentation](google-sheets-logging.md).
+
+See [raffle result snapshots](raffle-result-snapshots.md) for historical result restoration, archive replacement and upgrade steps.

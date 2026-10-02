@@ -16,14 +16,14 @@ test('clear/archive act on both raffles, reply privately and retire old commands
     calls.push({ event, payload }); callback(null, { ok: true, message: 'Both sheets updated.' });
   } };
   const command = createGsrCommand();
-  for (action of ['clear', 'archive']) {
+  for (action of ['reset', 'archive']) {
     const start = replies.length;
     await command.execute(interaction, socket);
     assert.equal(replies[start].flags, MessageFlags.Ephemeral);
     assert.equal(calls.at(-1).event, 'guildsync:raffle-manage');
-    assert.deepEqual(calls.at(-1).payload, { action, discordUserId: 'officer', requestedBy: 'Officer' });
+    assert.deepEqual(calls.at(-1).payload, { action: action === 'reset' ? 'clear' : action, discordUserId: 'officer', requestedBy: 'Officer' });
   }
-  for (action of ['add', 'reset', 'test-preview', 'test-close']) {
+  for (action of ['add', 'refresh', 'clear', 'test-preview', 'test-close']) {
     await command.execute(interaction, socket);
     assert.match(replies.at(-1).content, /retired/);
   }

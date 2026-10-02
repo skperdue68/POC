@@ -103,6 +103,7 @@ try {
   loginDB = await openLoginDB();
   applicationDB = await openAppDataDB();
   sheetsRuntime = startSheetsRollover(applicationDB, getSheetsRaffleWindows, {
+    selectPeriods: getRaffleRefreshSelection,
     loadCatchupEntries: async now => selectSheetsCatchupEntries(await getBankingDataJSON(applicationDB), now)
   });
 

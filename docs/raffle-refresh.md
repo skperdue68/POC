@@ -6,10 +6,10 @@ removing the old test commands and registering these production commands:
 
 | Command | Operation |
 | --- | --- |
-| `/gsr raffle refresh` | Clear both managed raffle areas, reload current periods and set draw dates. |
-| `/gsr raffle refresh date:091526` | Clear/reload both periods containing the supplied date. |
-| `/gsr raffle clear` | Clear both managed raffle areas, including R7/P7 draw dates; leave database records intact. |
-| `/gsr raffle archive` | Archive immediately, reset both original tabs, and restore current database entries and draw dates. |
+| `/gsraffle load` | Clear both managed raffle areas, reload current periods and set draw dates. |
+| `/gsraffle load date:091526` | Clear/reload both periods containing the supplied date. |
+| `/gsraffle reset` | Clear both managed raffle areas, including R7/P7 draw dates; leave database records intact. |
+| `/gsraffle archive` | Archive immediately, reset both original tabs, and restore current database entries and draw dates. |
 
 All three commands require the **exact Consigliere role**, checked by both bot
 and backend. Progress/results/errors are ephemeral. `/gsa post`, `start` and
@@ -88,3 +88,5 @@ a clear. During automatic rollover, both tabs are rebuilt from current banking
 periods, restoring ongoing 50/50 data as well as deposits received during the hold.
 Backend Sheets logs record requests and written rows. If Discord times out,
 inspect those logs before retrying; an operation may still be running.
+
+See [raffle result snapshots](raffle-result-snapshots.md) for historical result restoration, archive replacement and upgrade steps.

@@ -1,3 +1,4 @@
+import { saveFormulaTemplates, loadFormulaTemplates, readResultFormulas, resultPeriods, resultClearRequests, resultRequests, saveRaffleResults, loadRaffleResults } from './raffle-results.js';
 import { resetRequests, drawDateRequest } from './raffle-sheet-layout.js';
 import { createHash } from 'node:crypto';
 import { requestArchive } from './apps-script-archive.js';
@@ -8,7 +9,7 @@ const MARKER = 'guildsync_last_rollover';
 
 export { resetRequests, drawDateRequest } from './raffle-sheet-layout.js';
 
-export function startSheetsRollover(db, getWindows, { now, schedule = true, loadCatchupEntries } = {}) {
+export function startSheetsRollover(db, getWindows, { now, schedule = true, loadCatchupEntries, selectPeriods } = {}) {
   const settings = config();
   if (!settings.enabled) return;
   const enabled = /^true$/i.test(process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED || 'false');
@@ -35,11 +36,19 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
       await connection.execute('INSERT INTO guildsync_settings (setting_key, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)', [stateKey, JSON.stringify(state)]);
     },
     archive: async ({ key, name }) => {
-      await exportLog('Requesting Apps Script archive ' + JSON.stringify(name));
-      return requestArchive('archive', { sourceId: settings.spreadsheetId, key: hash + ':' + key, name });
+      await exportLog('Requesting Apps Script archive using the Bi-Weekly R7 date.');
+      return requestArchive('archive', { sourceId: settings.spreadsheetId, key: hash + ':' + key, name,
+        biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, details: true });
     },
     reset: async ({ key, archiveId, raffles, nextWindows }) => {
-      await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId });
+      const verified = await requestArchive('verify', { sourceId: settings.spreadsheetId, key: hash + ':' + key, archiveId,
+        biweeklyTab: settings.biweeklyTab, fiftyFiftyTab: settings.fiftyFiftyTab, details: true });
+      if (!selectPeriods) throw new Error('Raffle period resolver is unavailable.');
+      const snapshots = resultPeriods(verified.results, selectPeriods, Math.floor(now ? now() : Date.now()/1000));
+      await saveRaffleResults(connection, snapshots, archiveId, settings.spreadsheetId);
+      const nextPeriods = nextWindows.map(window => selectPeriods(undefined, window.drawTime - 1).raffles.find(period => period.type === window.type));
+      const restored = await loadRaffleResults(connection, nextPeriods);
+      const templates = await loadFormulaTemplates(connection, settings.spreadsheetId);
       const { token, url } = await contextNow();
       const book = await sheetsRequest(token, url + '?fields=sheets(properties,developerMetadata)');
       const requests = [];
@@ -50,6 +59,13 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
         const metadata = (tab.developerMetadata || []).filter(item => item.metadataKey === MARKER && item.location?.sheetId === sheet.sheetId);
         if (metadata.some(item => item.metadataValue === key)) continue;
         requests.push(...resetRequests(sheet.sheetId, raffle.type, key, metadata));
+        const finalized = snapshots.some(item => item.period.type === raffle.type);
+        if (raffle.type === 'biweekly' || finalized) {
+          requests.push(...resultClearRequests(sheet.sheetId, raffle.type));
+          // Keep the worksheet's formulas available for the next period.
+          requests.push(...resultRequests(sheet.sheetId, raffle.type, templates[raffle.type], true));
+          requests.push(...resultRequests(sheet.sheetId, raffle.type, restored[raffle.type]));
+        }
         const next = nextWindows?.find(item => item.type === raffle.type);
         if (next) requests.push(drawDateRequest(sheet.sheetId, raffle.type, next.drawTime));
       }
@@ -87,6 +103,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
           state.catchupRequired = false;
           state.completedArchives ||= [];
           if (state.lastArchive && !state.completedArchives.some(item => item.archiveId === state.lastArchive.archiveId)) {
+            state.completedArchives = state.completedArchives.filter(item => item.name !== state.lastArchive.name);
             state.completedArchives.push({ ...state.lastArchive, completedAt: Math.floor(now ? now() : Date.now() / 1000) });
           }
           await io.saveState(state);
@@ -110,10 +127,14 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
     const { token, url } = await googleContext();
     const book = await sheetsRequest(token, url + '?fields=sheets.properties');
     const requests = [];
+    const templates = await loadFormulaTemplates(connection, settings.spreadsheetId);
+    const formulas = await readResultFormulas(sheetsRequest, token, url, settings);
+    await saveFormulaTemplates(connection, formulas, settings.spreadsheetId);
     for (const type of ['biweekly', 'monthly']) {
       const tab = book.sheets?.find(item => item.properties.title === tabFor(type));
       if (!tab) throw new Error('Missing raffle tab: ' + tabFor(type));
       requests.push(...resetRequests(tab.properties.sheetId, type, '').filter(request => request.updateCells || request.updateDimensionProperties));
+      requests.push(...resultClearRequests(tab.properties.sheetId, type), ...resultRequests(tab.properties.sheetId, type, templates[type], true), ...resultRequests(tab.properties.sheetId, type, formulas[type], true));
       const column = type === 'biweekly' ? 17 : 15;
       requests.push({ updateCells: { range: { sheetId: tab.properties.sheetId, startRowIndex: 6, endRowIndex: 7, startColumnIndex: column, endColumnIndex: column + 1 }, fields: 'userEnteredValue' } });
     }

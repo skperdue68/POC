@@ -98,7 +98,7 @@ const gsaCommand = {
   data: gsaRaffle.createGsaCommandData(),
   async execute(interaction, guildSyncSocket) {
     if (interaction.options.getSubcommandGroup(false)) {
-      return interaction.reply({ content: 'Raffle commands moved to /gsr. Please use /gsr raffle or /gsr test.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'Raffle commands moved to /gsraffle. Use /gsraffle load, reset, or archive.', flags: MessageFlags.Ephemeral });
     }
     const subcommand = interaction.options.getSubcommand();
 

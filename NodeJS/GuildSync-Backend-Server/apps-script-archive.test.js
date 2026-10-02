@@ -28,16 +28,17 @@ test('web app client validates identity and never accepts source as archive', as
 
 test('deployed Apps Script authenticates, reconciles copies and sharing, and verifies before success', async () => {
   const source = await readFile(new URL('../../scripts/google-apps-script/Archive.gs', import.meta.url), 'utf8');
-  let copy, copies = 0, sharingFails = false, locked = false;
+  let trashed = [], copy, copies = 0, sharingFails = false, locked = false;
   const permissions = { source: [{ type: 'user', role: 'writer', emailAddress: 'service@example.invalid' }, { type: 'anyone', role: 'reader', allowFileDiscovery: false }], copy: [] };
   const properties = { ARCHIVE_SECRET: 'secret', SOURCE_SPREADSHEET_ID: 'source', ARCHIVE_FOLDER_ID: 'folder' };
   const context = vm.createContext({ console: { error() {} },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties[key] }) },
     LockService: { getScriptLock: () => ({ tryLock: () => { assert.equal(locked, false); locked = true; return true; }, releaseLock: () => { locked = false; } }) },
-    SpreadsheetApp: { openById: id => { assert.equal(id, 'copy'); return { getSheets: () => [] }; } },
+    SpreadsheetApp: { openById: id => ({ getSpreadsheetTimeZone:()=> 'America/New_York',
+      getSheetByName:()=>({getRange:()=>({getValue:()=> '09/26/26', getValues:()=>[],getFormulas:()=>[],getRow:()=>1,getColumn:()=>1})}) }) },
     Drive: {
-      Files: { list: () => ({ files: copy ? [{ id: 'copy' }] : [] }), copy: (body, id) => {
+      Files: { list: options => ({ files: options.q.includes("name=") ? [{id:'old-copy'},{id:'copy'},{id:'source'}] : copy ? [{id:'copy'}] : [] }), update: (body,id) => { assert.equal(body.trashed,true); trashed.push(id); }, copy: (body, id) => {
         assert.equal(id, 'source'); copies++; copy = { id: 'copy', mimeType: 'application/vnd.google-apps.spreadsheet', ...body }; return copy;
       }, get: id => { assert.equal(id, 'copy'); return copy; } },
       Permissions: { list: id => ({ permissions: permissions[id] }), create: (p, id) => { if (sharingFails) throw Error('permission failure'); permissions[id].push(p); }, update: () => assert.fail('unexpected update') }
@@ -60,10 +61,10 @@ test('deployed Apps Script authenticates, reconciles copies and sharing, and ver
   try { call({ ...request, secret: 'PRIVATE_VALUE' }); } catch (error) {
     assert.doesNotMatch(error.message, /PRIVATE_VALUE|secret;/);
   }
-  sharingFails = true; assert.throws(() => call(request), /permission failure/); assert.equal(copies, 1);
+  sharingFails = true; assert.throws(() => call(request), /permission failure/); assert.equal(copies, 1); assert.deepEqual(trashed, []);
   sharingFails = false; assert.equal(call(request).ok, true); assert.equal(copies, 1);
   assert.equal(call({ ...request, action: 'verify', archiveId: 'copy' }).ok, true);
-  assert.equal(permissions.copy.length, 2);
+  assert.equal(permissions.copy.length, 2); assert.ok(trashed.every(id=>id==='old-copy')); assert.equal(copy.name,'092626 raffle');
   assert.equal(permissions.copy.find(p => p.type === 'anyone').role, 'reader');
   copy.trashed = true; assert.throws(() => call({ ...request, action: 'verify', archiveId: 'copy' }), /Archive verification failed/);
   assert.equal(locked, false);

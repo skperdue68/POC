@@ -36,7 +36,7 @@ for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15,
   });
 }
 
-async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, loadCatchupEntries = async () => [] } = {}) {
+async function fixture(t, { copyFailure = false, uncertainClear = false, sourceAsCopy = false, snapshotFailure = false, loadCatchupEntries = async () => [] } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'guildsync-rollover-test-'));
   const env = {
     GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED: 'true',
@@ -52,10 +52,13 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
   let state = { version: 1, windows: [{ type: 'biweekly', salesEnd: 1000, drawTime: 2000 }, { type: 'monthly', salesEnd: 3000, drawTime: 4000 }], lastClosedSalesEnd: {}, pending: null };
   let copy, released = 0, failClear = uncertainClear;
   const connection = {
+    beginTransaction: async()=>{},commit:async()=>{},rollback:async()=>{},
     async execute(sql, params) {
       if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
       if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
       if (sql.startsWith('SELECT value')) return [[{ value: JSON.stringify(state) }]];
+      if (snapshotFailure && sql.startsWith('INSERT INTO guildsync_raffle_results')) throw Error('snapshot storage failed');
+      if (sql.includes('guildsync_raffle_result')) return [sql.startsWith('SELECT') ? [] : {}];
       if (sql.startsWith('INSERT')) { state = JSON.parse(params[1]); return [{}]; }
       throw new Error('Unexpected SQL: ' + sql);
     },
@@ -66,13 +69,15 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
     url = String(url); calls.push(url);
     let body;
     if (url.includes('oauth2.googleapis.com')) body = { access_token: 'test-token' };
+    else if (url.includes('/values:batchGet')) body = {valueRanges:[]};
     else if (url.startsWith('https://script.google.com/')) {
       const payload = JSON.parse(init.body);
       assert.equal(payload.secret, 'fixture-secret');
       if (payload.action === 'archive') {
         mutations.push('archive');
         if (copyFailure) return { ok: false, status: 403 };
-        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy' };
+        copy = { ok: true, sourceId: payload.sourceId, key: payload.key, archiveId: sourceAsCopy ? payload.sourceId : 'archive-copy', name:'092626 raffle',
+          results: {biweekly:{date:'2026-09-26',cells:[]},monthly:{date:'2026-10-24',cells:[]}} };
       } else mutations.push('verify');
       body = copy;
     }
@@ -91,7 +96,9 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
     else throw new Error('Unexpected URL: ' + url);
     return { ok: true, json: async () => structuredClone(body) };
   };
-  const start = () => startSheetsRollover(db, () => [{ type: 'biweekly', salesEnd: 5000, drawTime: 6000 }, { type: 'monthly', salesEnd: 3000, drawTime: 4000 }], { now: () => 1000, schedule: false, loadCatchupEntries });
+  const start = () => startSheetsRollover(db, () => [{ type: 'biweekly', salesEnd: 5000, drawTime: 6000 }, { type: 'monthly', salesEnd: 3000, drawTime: 4000 }], { now: () => 1000, schedule: false, loadCatchupEntries,
+    selectPeriods: (date, at) => ({raffles:['biweekly','monthly'].map(type=>({type,start:0,end:date ? Date.parse(type==='biweekly'?'2026-09-26T23:00:00Z':'2026-10-24T23:00:00Z')/1000 : at+1}))})
+  });
   t.after(async () => {
     globalThis.fetch = originalFetch;
     configureSheetsCoordinator(async operation => operation({}));
@@ -123,6 +130,7 @@ test('hold blocks clear and exports but archive bypasses hold and rebuilds both 
   assert.deepEqual(f.calls, []);
   const result = await runtime.archive();
   assert.equal(result.archiveId, 'archive-copy');
+  assert.equal(result.name, '092626 raffle', 'use returned R7 name rather than runtime schedule');
   assert.equal(f.state().pending, null); assert.equal(f.state().catchupRequired, false);
   assert.ok(f.batches[0].some(r => r.updateCells?.range.sheetId === 7));
   assert.ok(f.batches[0].some(r => r.updateCells?.range.sheetId === 8));
@@ -151,6 +159,7 @@ test('archive still forces a newly due cutoff when previous catchup is incomplet
   f.state().catchupRequired = true;
   const result = await f.start().archive();
   assert.equal(result.archiveId, 'archive-copy');
+  assert.equal(result.name, '092626 raffle', 'use returned R7 name rather than runtime schedule');
   assert.equal(f.state().pending, null);
   assert.equal(f.state().catchupRequired, false);
   assert.equal(f.state().completedArchives.length, 1);
@@ -175,6 +184,7 @@ test('production archive outside hold copies immediately without advancing sched
   const before = structuredClone(f.state().windows);
   const result = await f.start().archive();
   assert.equal(result.archiveId, 'archive-copy');
+  assert.equal(result.name, '092626 raffle', 'use returned R7 name rather than runtime schedule');
   assert.deepEqual(f.mutations, ['archive', 'verify', 'clear']);
   assert.deepEqual(f.state().windows, before);
   assert.deepEqual(f.state().lastClosedSalesEnd, {});
@@ -217,3 +227,18 @@ test('restart after uncertain reset uses atomic marker and never clears twice', 
   assert.equal(f.released(), 2);
 });
 
+
+test('snapshot storage failure blocks reset and retains archive recovery', async t => {
+  const f=await fixture(t,{snapshotFailure:true});
+  await assert.rejects(f.start().archive(), /snapshot storage failed/);
+  assert.deepEqual(f.mutations,['archive','verify']);
+  assert.equal(f.state().pending.archiveId,'archive-copy');
+  assert.equal(f.state().completedArchives?.length || 0,0);
+});
+test('ongoing monthly results are not cleared during a biweekly reset', async t => {
+  const f=await fixture(t);
+  await f.start().archive();
+  const requests=f.batches.flat().filter(item=>item.updateCells?.range.sheetId===8);
+  assert.ok(!requests.some(item=>item.updateCells.range.startRowIndex===22 && item.updateCells.range.startColumnIndex===11));
+  assert.ok(!requests.some(item=>item.updateCells.range.startRowIndex===25 && item.updateCells.range.startColumnIndex===9));
+});

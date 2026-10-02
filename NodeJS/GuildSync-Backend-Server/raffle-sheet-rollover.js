@@ -64,7 +64,9 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
         if (!archiveNow && job.readyAt != null && timestamp < job.readyAt) return state;
         archiveNow = false;
         if (!job.archiveId) {
-          const archiveId = await archive({ key: job.key, name: job.name, raffles: structuredClone(job.raffles) });
+          const archived = await archive({ key: job.key, name: job.name, raffles: structuredClone(job.raffles) });
+          const archiveId = typeof archived === 'string' ? archived : archived?.archiveId;
+          if (typeof archived === 'object' && archived.name) job.name = archived.name;
           if (typeof archiveId !== 'string' || !archiveId.trim()) throw new Error('Archive did not return a verified copy ID');
           job.archiveId = archiveId;
           await saveState(structuredClone(state));
