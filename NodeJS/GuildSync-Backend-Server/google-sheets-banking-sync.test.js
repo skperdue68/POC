@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { syncBankingEntriesToGoogleSheets, sheetsRequest, configureSheetsCoordinator } from './google-sheets-banking-sync.js';
 import * as sheets from './google-sheets-banking-sync.js';
 
-function fixture(t, { rows = [], state = {} } = {}) {
+function fixture(t, { rows = [], state = {}, formulaRanges = [] } = {}) {
   const env = { GUILDSYNC_GOOGLE_SHEETS_ENABLED: 'true', GUILDSYNC_GOOGLE_SHEETS_SPREADSHEET_ID: 'fixture',
     GUILDSYNC_GOOGLE_SERVICE_ACCOUNT_JSON: testAccount, GUILDSYNC_GOOGLE_SHEETS_BIWEEKLY_TAB: 'bi-weekly raffle', GUILDSYNC_GOOGLE_SHEETS_5050_TAB: '50/50' };
   const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
@@ -17,6 +17,7 @@ function fixture(t, { rows = [], state = {} } = {}) {
     const decoded = decodeURIComponent(String(url)); calls.push(decoded);
     let body;
     if (decoded.includes('oauth2.googleapis.com')) body = { access_token: 'test-token' };
+    else if (decoded.includes('/values:batchGet')) body = {valueRanges:formulaRanges};
     else if (decoded.includes('?fields=sheets.properties')) body = { sheets: [
       { properties: { title: 'bi-weekly raffle', sheetId: 7, gridProperties: { rowCount: 300, columnCount: 20 } } },
       { properties: { title: '50/50', sheetId: 8, gridProperties: { rowCount: 300, columnCount: 20 } } }
@@ -79,7 +80,7 @@ test('refresh clears both closure ranges then replaces entries and dates atomica
     const clears = requests.filter(r => r.updateCells?.range && !r.updateCells.rows);
     for (const id of [7, 8]) assert.ok(clears.some(r => r.updateCells.range.sheetId === id && r.updateCells.range.startColumnIndex === 3 && r.updateCells.range.endColumnIndex === 6));
     assert.ok(clears.every(r => !(r.updateCells.range.startColumnIndex <= 6 && r.updateCells.range.endColumnIndex > 6)));
-    assert.ok(clears.every(r => !(r.updateCells.range.sheetId === 8 && r.updateCells.range.startColumnIndex <= 10 && r.updateCells.range.endColumnIndex > 9)));
+    assert.ok(clears.every(r => !(r.updateCells.range.sheetId === 8 && r.updateCells.range.startColumnIndex === 9 && r.updateCells.range.endColumnIndex === 11)), 'preserve broad J:K range; J26 is now a result field');
     const dates = requests.filter(r => r.updateCells?.range?.startRowIndex === 6 && r.updateCells.rows);
     assert.equal(dates.length, 2);
     assert.deepEqual(dates.map(r => r.updateCells.range.startColumnIndex), [17, 15]);
@@ -218,3 +219,38 @@ test('75-entry export reads each section once, reserves unique rows and batches 
   assert.equal(f.logs.filter(line => line.includes('Duplicate skipped: 1000')).length, 2);
 });
 
+
+test('historical load restores saved winners and attendance to exact cells in the same batch', async t => {
+  const f=fixture(t);
+  await sheets.refreshBankingEntriesToGoogleSheets(async()=>({
+    entries:[], periods:[{type:'biweekly',end:1790463600},{type:'monthly',end:1790463600}],
+    results:{biweekly:[{address:'Q48',value:'Historical winner'},{address:'K200',value:0}],
+      monthly:[{address:'L23',value:'Monthly winner'},{address:'J26',value:'Sender'}]}
+  }),{log:async value=>f.logs.push(value)});
+  assert.equal(f.writes.length,1);
+  const cells=f.writes[0].filter(r=>r.updateCells?.start).map(r=>r.updateCells);
+  assert.ok(cells.some(c=>c.start.sheetId===7 && c.start.rowIndex===47 && c.start.columnIndex===16 && c.rows[0].values[0].userEnteredValue.stringValue==='Historical winner'));
+  assert.ok(cells.some(c=>c.start.sheetId===7 && c.start.rowIndex===199 && c.rows[0].values[0].userEnteredValue.numberValue===0));
+  assert.ok(cells.some(c=>c.start.sheetId===8 && c.start.rowIndex===22 && c.start.columnIndex===11));
+});
+
+test('load persists changed live formulas before historical values replace them', async t=>{
+ const f=fixture(t,{formulaRanges:[{}, {}, {values:[['=NEW_FORMULA()']]}, {},{},{}]});
+ let saved;
+ await sheets.refreshBankingEntriesToGoogleSheets(async()=>({
+   entries:[],periods:[{type:'biweekly',end:1790463600},{type:'monthly',end:1790463600}],
+   results:{biweekly:[{address:'S31',value:200000,formula:'=OLD_FORMULA()'}]}
+ }),{log:async value=>f.logs.push(value),saveTemplates:async templates=>{
+   assert.equal(f.writes.length,0); saved=templates;
+ }});
+ assert.equal(saved.biweekly[0].formula,'=NEW_FORMULA()');
+ const restored=f.writes[0].filter(r=>r.updateCells?.start?.columnIndex===18).at(-1);
+ assert.equal(restored.updateCells.rows[0].values[0].userEnteredValue.numberValue,200000);
+});
+test('template persistence failure prevents historical sheet replacement', async t=>{
+ const f=fixture(t);
+ await assert.rejects(sheets.refreshBankingEntriesToGoogleSheets(async()=>({
+   entries:[],periods:[{type:'biweekly',end:1790463600},{type:'monthly',end:1790463600}]
+ }),{log:async value=>f.logs.push(value),saveTemplates:async()=>{throw Error('template storage failed');}}),/template storage/);
+ assert.equal(f.writes.length,0);
+});

@@ -1,3 +1,4 @@
+import { RAFFLE_RESULTS_SCHEMA, RAFFLE_FORMULAS_SCHEMA } from './raffle-results.js';
 import mysql from 'mysql2/promise';
 import { bankingSource } from './banking-source.js';
 import { randomUUID } from 'node:crypto';
@@ -418,6 +419,9 @@ async function initializeSchema(db) {
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
+
+  await db.query(RAFFLE_RESULTS_SCHEMA);
+  await db.query(RAFFLE_FORMULAS_SCHEMA);
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_settings (

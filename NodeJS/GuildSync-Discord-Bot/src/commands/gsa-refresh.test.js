@@ -6,7 +6,7 @@ const snapshot = { lookupAt: Date.parse('2026-09-15T23:00:00Z') / 1000, timeZone
   { type: 'biweekly', label: 'Bi-Weekly', start: Date.parse('2026-09-12T23:00:00Z') / 1000, end: Date.parse('2026-09-26T23:00:00Z') / 1000 },
   { type: 'monthly', label: '50/50', start: Date.parse('2026-08-29T23:00:00Z') / 1000, end: Date.parse('2026-09-26T23:00:00Z') / 1000 }
 ] };
-function fixture({ role = 'Consigliere', action = 'refresh', date = '091526' } = {}) {
+function fixture({ role = 'Consigliere', action = 'load', date = '091526' } = {}) {
   const replies = [], calls = [];
   const interaction = { guildId: process.env.DISCORD_GUILD_ID || 'guild', user: { id: '123' },
     member: { displayName: 'Officer', roles: { cache: [{ name: role }] } },
@@ -24,10 +24,9 @@ test('registration only exposes production commands regardless of obsolete test 
     const applications = command.createGsaCommandData().toJSON();
     assert.deepEqual(applications.options.map(o => o.name), ['post', 'stop', 'start']);
     const data = command.createGsrCommandData({ GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED: String(enabled) }).toJSON();
-    assert.equal(data.name, 'gsr');
-    assert.deepEqual(data.options.map(o => o.name), ['raffle']);
-    const group = data.options.find(o => o.name === 'raffle');
-    assert.deepEqual(group.options.map(o => o.name), ['refresh', 'clear', 'archive']);
+    assert.equal(data.name, 'gsraffle');
+    const group = data;
+    assert.deepEqual(group.options.map(o => o.name), ['load', 'reset', 'archive']);
     assert.deepEqual(group.options[0].options.map(o => o.name), ['date']);
     assert.ok(!group.options[0].options[0].required);
   }
@@ -45,10 +44,10 @@ test('production refresh is private, independent of test flag, and identifies bo
   for (const expected of ['September 15, 2026', 'Bi-Weekly', '50/50', 'September 12, 2026', 'August 29, 2026', 'September 26, 2026']) assert.ok(text.includes(expected), text);
   assert.match(f.replies[1].content, /Exporting/);
   assert.match(text, /Both worksheets were cleared/);
-  assert.match(text, /Bi-Weekly R7 and 50\/50 P7/);
+  assert.doesNotMatch(text, /R7|P7/);
 });
 test('all gsa raffle actions require the exact Consigliere role', async () => {
-  for (const role of ['Capo', 'caporegieme', 'consigliere', 'Member']) for (const action of ['refresh', 'clear', 'archive']) {
+  for (const role of ['Capo', 'caporegieme', 'consigliere', 'Member']) for (const action of ['load', 'reset', 'archive']) {
     const f = fixture({ role, action }); await command.execute(f.interaction, f.socket);
     assert.deepEqual(f.calls, []);
     assert.equal(f.replies[0].flags, MessageFlags.Ephemeral);

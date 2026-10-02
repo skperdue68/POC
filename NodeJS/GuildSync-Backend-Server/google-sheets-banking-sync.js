@@ -1,3 +1,4 @@
+import { resultRequests, resultClearRequests, readResultFormulas } from './raffle-results.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -118,15 +119,15 @@ export function entryLayout(entry) {
     : { donation, first: 5, last: 254, id: 'D', name: 'E', gold: 'F', index: 3 };
 }
 
-export async function refreshBankingEntriesToGoogleSheets(loadSnapshot, { uploadedBy = '', log = exportLog } = {}) {
+export async function refreshBankingEntriesToGoogleSheets(loadSnapshot, { uploadedBy = '', log = exportLog, saveTemplates = async () => {} } = {}) {
   if (!config().enabled) throw new Error('Enable Google Sheets on the backend first.');
   return coordinate(async state => {
-    const { entries, periods } = await loadSnapshot();
+    const { entries, periods, results = {}, templates = {} } = await loadSnapshot();
     if (!Array.isArray(entries) || !Array.isArray(periods) || periods.length !== 2 ||
         ['biweekly', 'monthly'].some(type => periods.filter(period => period.type === type && Number.isSafeInteger(period.end)).length !== 1)) {
       throw new Error('Refresh requires both selected raffle periods and their draw dates.');
     }
-    return writeEntries(entries, uploadedBy, state, log, true, false, periods);
+    return writeEntries(entries, uploadedBy, state, log, true, false, periods, results, templates, saveTemplates);
   });
 }
 
@@ -140,7 +141,7 @@ function attributionRequest(sheetId, type, uploadedBy) {
   } };
 }
 
-async function writeEntries(entries, uploadedBy, state, log, replace = false, includeClosed = false, periods = []) {
+async function writeEntries(entries, uploadedBy, state, log, replace = false, includeClosed = false, periods = [], results = {}, templates = {}, saveTemplates = async () => {}) {
   const { settings, token, url } = await googleContext();
   if (!settings.spreadsheetId) throw new Error('Google spreadsheet ID is missing.');
   await log('Starting spreadsheet update: entries=' + entries.length);
@@ -150,14 +151,20 @@ async function writeEntries(entries, uploadedBy, state, log, replace = false, in
   let pending = [];
   let preparation = [];
   if (replace) {
+    const formulas = await readResultFormulas(sheetsRequest, token, url, settings);
+    await saveTemplates(formulas);
     for (const type of ['biweekly', 'monthly']) {
       const tab = tabFor(type, settings);
       const sheet = info.sheets?.find(item => item.properties.title === tab)?.properties;
-      if (!sheet || sheet.gridProperties.rowCount < 254 || sheet.gridProperties.columnCount < (type === 'biweekly' ? 18 : 16)) {
+      if (!sheet || sheet.gridProperties.rowCount < 254 || sheet.gridProperties.columnCount < (type === 'biweekly' ? 19 : 16)) {
         throw new Error('Missing worksheet or grid too small for refresh: ' + tab);
       }
       preparation.push(
         ...resetRequests(sheet.sheetId, type, '').filter(request => request.updateCells || request.updateDimensionProperties),
+        ...resultClearRequests(sheet.sheetId, type),
+        ...resultRequests(sheet.sheetId, type, templates[type] || [], true),
+        ...resultRequests(sheet.sheetId, type, formulas[type], true),
+        ...resultRequests(sheet.sheetId, type, results[type] || []),
         drawDateRequest(sheet.sheetId, type, periods.find(period => period.type === type).end),
         { updateDimensionProperties: { range: { sheetId: sheet.sheetId, dimension: 'COLUMNS', startIndex: 6, endIndex: 8 },
           properties: { hiddenByUser: !entries.some(entry => entry.type === type && entry.bonusEnabled === true) }, fields: 'hiddenByUser' } },

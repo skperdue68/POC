@@ -40,7 +40,7 @@ This code does not migrate old cells. Duplicate detection uses the new ID column
 The original spreadsheet and public link stay unchanged. At sales cutoff,
 automatic writes to **both tabs** stop, while committed banking entries continue
 to accumulate in MariaDB. After a default four-hour hold, Apps Script copies
-the whole spreadsheet as `YYMMDD raffle` using the closed raffle's Eastern draw
+the whole spreadsheet as `MMDDYY raffle` using the closed raffle's Eastern draw
 date. Only after verifying the copy and its sharing does the backend clear the
 both raffle tabs, set their applicable draw dates, and replay current-period
 database records with the normal bonus policy and transaction-ID deduplication.
@@ -128,15 +128,15 @@ archive markers belong to the old application and cannot be verified by the new 
 
 Use a test spreadsheet first. With automatic rollover disabled, restart both
 services and run `npm run deploy` in the Discord bot directory. Run
-`/gsr raffle archive` as a Consigliere. This immediately creates a real archive,
+`/gsraffle archive` as a Consigliere. This immediately creates a real archive,
 resets both original tabs and reloads both current periods from the database.
 Outside an active hold it does not advance the raffle schedule. During a hold
 it explicitly completes the pending rollover immediately.
 Inspect the dated archive and the original tab, including R7/P7. Use
-`/gsr raffle refresh` to clear and reload both selected periods afterward;
+`/gsraffle load` to clear and reload both selected periods afterward;
 refresh sets R7/P7 to those periods' draw dates, including for historical exports.
-`/gsr raffle clear` clears both tabs including draw dates without archiving or
-changing database entries. `/gsr raffle refresh` restores both selected periods
+`/gsraffle reset` clears both tabs including draw dates without archiving or
+changing database entries. `/gsraffle load` restores both selected periods
 and dates. All commands are production features; remove the obsolete
 `GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED` from both backend and bot .env files.
 
@@ -184,7 +184,7 @@ line. Simultaneous reminders of the same kind are combined.
 
 From `NodeJS/GuildSync-Discord-Bot`, run `npm run deploy` to register refresh,
 clear and archive and remove all retired test commands. Raffle administration requires the exact **Consigliere**
-role and replies privately. `/gsr raffle refresh [date:MMDDYY]` clears and reloads
+role and replies privately. `/gsraffle load [date:MMDDYY]` clears and reloads
 both selected periods and remains available with test commands disabled,
 but sheet writes are blocked during a rollover hold. See
 [raffle command documentation](raffle-refresh.md) for other commands and examples.
@@ -197,3 +197,5 @@ progress. `GUILDSYNC_GOOGLE_SHEETS_LOG_FILE` overrides the path (absolute or
 relative to the backend directory). The backend needs write permission.
 Logs contain member names and transaction details; keep them private.
 
+
+See [raffle result snapshots](raffle-result-snapshots.md) for historical result restoration, archive replacement and upgrade steps.
