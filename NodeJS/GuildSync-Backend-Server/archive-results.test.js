@@ -15,3 +15,18 @@ test('Apps Script reads dates and sparse values without compacting cell addresse
  assert.equal(results.biweekly.cells[1].value,0);
  assert.equal(context.raffleArchiveName(results.biweekly.date),'260926 Raffle');
 });
+
+
+test('timezone failures identify workbook, cell, operation and returned type', async () => {
+ const context = vm.createContext({ Date, Utilities: { formatDate: () => { throw Error('Invalid argument: timeZone'); } } });
+ vm.runInContext(await readFile(new URL('../../scripts/google-apps-script/Archive.gs', import.meta.url), 'utf8'), context);
+ const book = { getSheetByName: () => ({ getRange: () => ({ getValue: () => new Date('2026-09-26T12:00:00Z') }) }),
+   getSpreadsheetTimeZone: () => { throw Error('Invalid argument: timeZone'); } };
+ assert.throws(() => context.raffleSheetDate(book, 'bi-weekly raffle', 'R7', 'working spreadsheet'), /working spreadsheet.*bi-weekly raffle.*R7.*getSpreadsheetTimeZone.*Invalid argument/);
+ book.getSpreadsheetTimeZone = () => null;
+ assert.throws(() => context.raffleSheetDate(book, 'bi-weekly raffle', 'R7', 'working spreadsheet'), /working spreadsheet.*R7.*type=object.*value=null/);
+ book.getSpreadsheetTimeZone = () => 'America/Chicago';
+ assert.throws(() => context.raffleSheetDate(book, 'bi-weekly raffle', 'R7', 'archive copy'), /archive copy.*R7.*Utilities.formatDate.*type=string.*America\/Chicago.*Invalid argument/);
+ book.getSheetByName = () => ({ getRange: () => ({ getValue: () => '09/26/26', getValues: () => [[new Date('2026-09-26T12:00:00Z')]], getFormulas: () => [], getRow: () => 5, getColumn: () => 10 }) });
+ assert.throws(() => context.readRaffleArchive(book, 'bi-weekly raffle', '50/50'), /archive copy.*bi-weekly raffle.*J5.*Utilities.formatDate/);
+});
