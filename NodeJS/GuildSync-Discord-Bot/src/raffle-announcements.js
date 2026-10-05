@@ -43,7 +43,7 @@ export async function sendRaffleAnnouncement(client, channelId, guildId, snapsho
 
 export function startRaffleAnnouncements(client, socket, log, env = process.env) {
   const channelId = String(env.GUILDSYNC_RAFFLE_CHANNEL_ID || '').trim();
-  if (!channelId) return; // Announcements are opt-in; /raffle remains available.
+  if (!channelId || String(env.GUILDSYNC_RAFFLE_ANNOUNCEMENTS_ENABLED || 'true').toLowerCase()==='false') return; // Announcements are opt-in; /raffle remains available.
   const botRoot = fileURLToPath(new URL('../', import.meta.url));
   const statePath = path.resolve(botRoot, env.GUILDSYNC_RAFFLE_STATE_FILE || 'data/raffle-announcements.json');
   let announcer;
@@ -81,19 +81,21 @@ export function startRaffleAnnouncements(client, socket, log, env = process.env)
         await fs.writeFile(`${statePath}.tmp`, JSON.stringify(state, null, 2), 'utf8');
         await fs.rename(`${statePath}.tmp`, statePath);
       },
-      send: (snapshot, delivery) => sendRaffleAnnouncement(client, channelId, env.DISCORD_GUILD_ID, snapshot, delivery)
+      send: (snapshot, delivery) => sendRaffleAnnouncement(client, delivery.channelId || channelId, env.DISCORD_GUILD_ID, snapshot, delivery)
     });
   } catch (error) {
     log(`Raffle announcements disabled: ${error.message}`);
     return;
   }
+  let running=false,stopped=false;const drain=[];
   const tick = async () => {
-    if (!client.isReady() || !socket.connected) return;
-    try { await announcer.tick(); } catch (error) { log(`Raffle announcement failed: ${error.message}`); }
+    if (stopped || running || !client.isReady() || !socket.connected) return;
+    running=true;
+    try { await announcer.tick(); } catch (error) { log(`Raffle announcement failed: ${error.message}`); }finally{running=false;for(const resolve of drain.splice(0))resolve();}
   };
   const timer = setInterval(tick, 5 * 60 * 1000);
   timer.unref();
   socket.on('connect', tick);
   void tick();
-  return () => { clearInterval(timer); socket.off('connect', tick); };
+  return async () => { stopped=true;clearInterval(timer); socket.off('connect', tick);if(running)await new Promise(resolve=>drain.push(resolve)); };
 }

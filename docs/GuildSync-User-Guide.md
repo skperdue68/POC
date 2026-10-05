@@ -145,3 +145,16 @@ Sign in through Discord using your authorized GuildSync account. Use **Discord M
 In the profile settings, each add-on file watcher can be switched on or off. Disabled watchers do not upload that file. The desktop app performs local ESO uploads and queues receipt mail; the browser view is for server data and does not watch local ESO files.
 
 If something seems missing, check upload status, save ESO data with `/reloadui`, and confirm the right raffle period/account link. For setup or persistent errors, use the [detailed help and troubleshooting reference](GuildSync-Detailed-Help.md).
+
+
+## Reports & Admin settings
+
+**Raffle Bonus Tickets** and **Administrator Configuration** now open by clicking their headings. Opening another section or report closes the previous section. Closing a section keeps your unsaved edits.
+
+GuildSync administrators can configure onboarding, raffle announcements, archive notifications, spreadsheet automation, and receipt templates under **Administrator Configuration**. Each field identifies its effective value and whether it comes from the server's `.env` defaults or a saved GuildSync override. Check **Use a GuildSync override** to edit a field. **Use .env default** schedules removal of the override. Click **Save Configuration** to apply either choice; closing the section does not save.
+
+Settings apply without restarting the backend or connected bot. Active operations finish safely before switching settings; an offline bot uses saved settings when it reconnects. A rollover already on hold keeps its original deadline.
+
+Bonus settings have their own **Save Bonus Settings** button. **Use .env bonus defaults** restores upcoming/default policies; **Remove this raffle override** restores the saved policy for that particular raffle. Both require Save. Completed raffle policy history is retained.
+
+See [configuration details](GuildSync-Admin-Configuration.md) for the full setting list and setup requirements.

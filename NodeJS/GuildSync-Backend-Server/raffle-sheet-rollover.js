@@ -26,7 +26,7 @@ function archiveName(drawTime) {
  * State is bound by the caller to the configured source spreadsheet.
  */
 export function createRollover({ loadState, saveState, getWindows, archive, reset,
-  delaySeconds = 0, now = () => Math.floor(Date.now() / 1000), log = () => {} }) {
+  delaySeconds = 0, getDelaySeconds = () => delaySeconds, now = () => Math.floor(Date.now() / 1000), log = () => {} }) {
   if (!Number.isSafeInteger(delaySeconds) || delaySeconds < 0) throw new Error('Invalid rollover delay');
   return {
     async tick({ archiveNow = false, requestedBy } = {}) {
@@ -49,9 +49,11 @@ export function createRollover({ loadState, saveState, getWindows, archive, rese
           const manual = cutoff > timestamp;
           const raffles = state.windows.filter((window) => window.salesEnd === cutoff);
           const following = manual ? state.windows : validateWindows(getWindows(cutoff + 1), cutoff);
+          const holdDelay = getDelaySeconds();
+          if(!Number.isSafeInteger(holdDelay)||holdDelay<0)throw Error('Invalid rollover delay');
           state.pending = {
             key: manual ? `raffle-manual-${randomUUID()}` : `raffle-rollover-${cutoff}`, salesEnd: cutoff,
-            requestedBy: archiveNow ? requestedBy : undefined, manual, readyAt: manual ? timestamp : cutoff + delaySeconds,
+            requestedBy: archiveNow ? requestedBy : undefined, manual, readyAt: manual ? timestamp : cutoff + holdDelay,
             name: archiveName(Math.min(...raffles.map((window) => window.drawTime))),
             raffles, archiveId: null,
             nextWindows: state.windows.map((window) => !manual && window.salesEnd === cutoff

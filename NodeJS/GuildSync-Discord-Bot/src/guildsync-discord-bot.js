@@ -1,3 +1,4 @@
+import {createLiveConfiguration} from './live-configuration.js';
 import {createOnboardingWorker} from './member-onboarding.js';
 import {readOnboardingConfig} from './member-onboarding-config.js';
 import dotenv from 'dotenv';
@@ -95,13 +96,29 @@ const client = new Client({
 });
 
 client.commands = new Collection();
-try {
-  const onboardingConfig = readOnboardingConfig();
-  createOnboardingWorker({client,socket:guildSyncSocket,guildId:DISCORD_GUILD_ID,config:onboardingConfig,log:Log});
-  Log('Member onboarding ' + (onboardingConfig.enabled ? 'enabled (' + onboardingConfig.mode + ')' : 'disabled') + '.');
-} catch (error) {
-  Log('Member onboarding configuration rejected; worker not started: ' + error.message);
+const liveConfiguration=createLiveConfiguration({start:async env=>{
+  const stops=[];
+  const config=readOnboardingConfig(env);
+  const worker=createOnboardingWorker({client,socket:guildSyncSocket,guildId:DISCORD_GUILD_ID,config,log:Log});
+  stops.push(()=>worker.stop());
+  if(client.isReady()&&guildSyncSocket.connected)void worker.tick();
+  if(client.isReady()){
+    const raffleStop=startRaffleAnnouncements(client,guildSyncSocket,Log,env);
+    const archiveStop=startArchiveAnnouncements(client,guildSyncSocket,Log,env);
+    if(raffleStop)stops.push(raffleStop);if(archiveStop)stops.push(archiveStop);
+  }
+  Log('Operational configuration applied; member onboarding '+(config.enabled?'enabled':'disabled')+'.');
+  return stops;
+}});
+async function refreshOperationalConfiguration(force=false){
+  try {
+    const configuration=await new Promise((resolve,reject)=>guildSyncSocket.timeout(30000).emit('guildsync:request-bot-configuration',{},(error,response)=>error?reject(error):response?.ok?resolve(response.configuration):reject(Error(response?.message || 'Configuration request failed.'))));
+    const reported=await new Promise((resolve,reject)=>guildSyncSocket.timeout(30000).emit('guildsync:register-configuration-defaults',{defaults:liveConfiguration.defaults(configuration.keys)},(error,response)=>error?reject(error):response?.ok?resolve(response.configuration):reject(Error(response?.message || 'Configuration defaults report failed.'))));
+    await liveConfiguration.apply(reported,{force});
+  }catch(error){Log('Operational configuration refresh failed: '+error.message);}
 }
+guildSyncSocket.on('guildsync:configuration-updated',configuration=>void liveConfiguration.apply(configuration).catch(error=>Log('Operational configuration update failed: '+error.message)));
+guildSyncSocket.on('connect',()=>void refreshOperationalConfiguration());
 
 let guildSyncApplicationDiscordPostingEnabled = true;
 
@@ -306,8 +323,7 @@ guildSyncSocket.on('guildsync:eso-guild-application-message', async (payload = {
 
 client.once(Events.ClientReady, async readyClient => {
   Log(`GuildSync bot logged in as ${readyClient.user.tag}`);
-  startRaffleAnnouncements(client, guildSyncSocket, Log);
-  startArchiveAnnouncements(client, guildSyncSocket, Log);
+  if(guildSyncSocket.connected)await refreshOperationalConfiguration(true);
 
   await runStartupSyncIfReady('Discord bot ready');
 });

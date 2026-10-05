@@ -158,7 +158,7 @@ export async function processOnboardingDelivery(context,job) {
 }
 
 export function createOnboardingWorker({client,socket,guildId,config,log=console.log,now=()=>Math.floor(Date.now()/1000)}) {
- let running=false,stopped=false,configuredId=null,snapshotDone=false;
+ let running=false,stopped=false,configuredId=null,snapshotDone=false;const drain=[];
  const send=(action,payload={})=>request(socket,action,{guildId,...payload});
  async function configure() {
   if(configuredId===socket.id)return;
@@ -185,11 +185,11 @@ export function createOnboardingWorker({client,socket,guildId,config,log=console
      const last=page.last();if(!last || last.id===after)throw Error('Onboarding member pagination did not advance.');after=last.id;
     }snapshotDone=true;
    }
-   for(let count=0;count<10;count++) {
+   for(let count=0;count<10 && !stopped;count++) {
     const job=await send('claim');if(!job)break;
-    await processOnboardingDelivery({client,socket,guildId,config,log,now},job);
+    await processOnboardingDelivery({client,socket,guildId,config:job.config || config,log,now},job);
    }
-  }catch(error){log('Onboarding worker failed: '+error.message);}finally{running=false;}
+  }catch(error){log('Onboarding worker failed: '+error.message);}finally{running=false;for(const resolve of drain.splice(0))resolve();}
  }
  const disconnected=()=>{configuredId=null;snapshotDone=false;};
  const joined=member=>void observeMember(member),left=member=>void observeMember(member,false);
@@ -197,5 +197,5 @@ export function createOnboardingWorker({client,socket,guildId,config,log=console
  client.on(Events.ClientReady,start);client.on(Events.GuildMemberAdd,joined);client.on(Events.GuildMemberRemove,left);
  socket.on('connect',start);socket.on('disconnect',disconnected);socket.on('guildsync:onboarding-wake',start);
  const timer=setInterval(start,60000);timer.unref();
- return {tick,observeMember,stop(){stopped=true;clearInterval(timer);client.off(Events.ClientReady,start);client.off(Events.GuildMemberAdd,joined);client.off(Events.GuildMemberRemove,left);socket.off('connect',start);socket.off('disconnect',disconnected);socket.off('guildsync:onboarding-wake',start);}};
+ return {tick,observeMember,async stop(){stopped=true;clearInterval(timer);client.off(Events.ClientReady,start);client.off(Events.GuildMemberAdd,joined);client.off(Events.GuildMemberRemove,left);socket.off('connect',start);socket.off('disconnect',disconnected);socket.off('guildsync:onboarding-wake',start);if(running)await new Promise(resolve=>drain.push(resolve));}};
 }

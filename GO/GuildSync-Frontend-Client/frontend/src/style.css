@@ -6807,3 +6807,29 @@ body {
 .banking-history-note-cell {
   line-height: 1.35;
 }
+
+/* Reports accordions retain their forms while sliding closed. */
+.report-section-toggle { width:100%; display:flex; justify-content:space-between; align-items:center; text-align:left; background:transparent; color:inherit; border:0; padding:8px 0; font:inherit; cursor:pointer; }
+.report-section-toggle span { transition:transform .2s ease; }
+.report-section-toggle[aria-expanded="true"] span { transform:rotate(180deg); }
+.report-section-content { display:grid; grid-template-rows:0fr; transition:grid-template-rows .25s ease, visibility .25s; visibility:hidden; }
+.report-section-content.is-open { grid-template-rows:1fr; visibility:visible; }
+.report-section-inner { min-height:0; overflow:hidden; }
+.admin-configuration-card,.raffle-bonus-card { width:100%; box-sizing:border-box; }
+.admin-configuration-card .report-option-copy,.raffle-bonus-card .report-option-copy { width:100%; min-width:0; }
+.configuration-group { margin:16px 0; border:1px solid #526074; border-radius:8px; padding:16px; }
+.configuration-setting { display:grid; gap:6px; margin:0 0 22px; min-width:0; }
+.configuration-setting small { overflow-wrap:anywhere; opacity:.8; white-space:pre-wrap; }
+.configuration-setting input:not([type="checkbox"]),.configuration-setting select,.configuration-setting textarea { width:100%; box-sizing:border-box; padding:8px; background:#18212e; color:#f3f5fa; border:1px solid #64748b; border-radius:5px; }
+.configuration-setting textarea { resize:vertical; }
+.configuration-setting :disabled { opacity:.65; }
+.configuration-override { display:flex; align-items:center; gap:8px; }
+.configuration-default { justify-self:start; }
+.configuration-setting pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#18212e; color:#f3f5fa; padding:12px; border-radius:6px; font-size:13px; }
+.configuration-actions { display:flex; flex-wrap:wrap; gap:12px; margin:16px 0; }
+.configuration-status { white-space:pre-wrap; }
+@media (prefers-reduced-motion:reduce) { .report-section-content,.report-section-toggle span { transition:none; } }
+
+.configuration-default,.configuration-actions button,#resetBonusDefaults,#cancelBonusDefaults,#reloadAdminConfiguration { background:#2563eb; color:white; border:1px solid #3b82f6; border-radius:6px; padding:7px 12px; cursor:pointer; }
+.configuration-default:hover,.configuration-actions button:hover { background:#1d4ed8; }
+.configuration-actions button:disabled { opacity:.6; cursor:wait; }

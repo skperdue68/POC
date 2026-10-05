@@ -289,3 +289,5 @@ test('completed history replaces trashed archive references with the new archive
  assert.ok(f.state().completedArchives.some(item=>item.archiveId==='archive-copy'));
  assert.ok(f.state().completedArchives.some(item=>item.archiveId==='unrelated'));
 });
+
+test('live rollover delay applies to future holds without moving an existing deadline',async t=>{const f=await fixture(t);process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS='4';const runtime=f.start();await assert.rejects(runtime.run(()=>{}),/hold/);assert.equal(f.state().pending.readyAt,15400);process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS='8';await assert.rejects(runtime.run(()=>{}),/hold/);assert.equal(f.state().pending.readyAt,15400);runtime.stop();});

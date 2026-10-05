@@ -13,6 +13,7 @@ For everyday use, start with the [user guide](GuildSync-User-Guide.md). This doc
 - [Raffle bonus tickets and receipts](#raffle-bonus-tickets-and-receipts)
 - [Discord links and onboarding](#discord-links-and-onboarding)
 - [Applications, roster, and administration](#applications-roster-and-administration)
+- [Saved administrator overrides](#saved-administrator-overrides)
 - [Complete environment reference](#complete-environment-reference)
 - [Deployment and troubleshooting](#deployment-and-troubleshooting)
 
@@ -423,3 +424,12 @@ Current repository packaging note: the roster manifest names `GSRData.lua`, but 
 | ESO add-ons | [Banking](../ESO/GuildSyncBanking/GuildSyncBanking.lua), [Roster](../ESO/GuildSyncRoster/GuildSyncRoster.lua), [Applications](../ESO/GuildSyncApplications/GuildSyncApplications.lua) |
 
 External protocol references: [Discord threads](https://github.com/discord/discord-api-docs/blob/main/developers/topics/threads.mdx), [Discord permissions](https://github.com/discord/discord-api-docs/blob/main/developers/topics/permissions.mdx), and [Apps Script deployment setup](google-apps-script-setup.md). Repository behavior is defined by the source files above.
+
+
+## Saved administrator overrides
+
+Both desktop and web **Reports & Admin** provide collapsible bonus and administrator configuration sections. Access to configuration reads and writes is checked against the current allowed `guildsync_users.role = admin` record in the login database. Discord Consigliere access alone does not grant configuration access.
+
+See [Administrator Configuration](GuildSync-Admin-Configuration.md) for the complete override catalog, defaults, validation, live refresh behavior, and database inspection query. Overrides are stored in the existing startup-created `guildsync_settings` table under `admin_configuration`; no manual migration is required. Bonus settings retain their separate policy/version/raffle override tables. Changing `.env` itself still requires restarting its owning process; removing an override restores that process's original environment default.
+
+The additional optional bot switches `GUILDSYNC_RAFFLE_ANNOUNCEMENTS_ENABLED` and `GUILDSYNC_RAFFLE_ARCHIVE_ANNOUNCEMENTS_ENABLED` default to `true`. A destination must still be configured, so existing deployments remain opt-in. Set either to `false`, or save a disabled override in GuildSync, to pause that notification system without removing its destination. Existing delivery records are retained.

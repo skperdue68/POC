@@ -90,9 +90,9 @@ export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=
    for(const job of jobs) {
     if(job.status!=='pending' || job.leaseUntil>now() || job.retryAt>now())continue;
     if(!await check(s,guildId,job,state)){job.status='cancelled';await s.putJob(job);continue;}
-    job.claimToken=randomUUID();job.leaseUntil=now()+300;await s.putJob(job);
+    job.deliveryConfig ||= structuredClone(state.config);job.claimToken=randomUUID();job.leaseUntil=now()+300;await s.putJob(job);
     const member=await s.member(guildId,job.userId);
-    return {...job,threadId:job.threadId || member.threadId,config:state.config,previousMessageIds:jobs.filter(j=>j.userId===job.userId && j.status==='done' && j.messageId).map(j=>j.messageId)};
+    return {...job,threadId:job.threadId || (member.threadChannelId===job.deliveryConfig.channelId?member.threadId:undefined),config:job.deliveryConfig,previousMessageIds:jobs.filter(j=>j.userId===job.userId && j.status==='done' && j.messageId).map(j=>j.messageId)};
    }return null;
   });},
   async validate(g,j,t) {return store.atomic(g,async s=>{const job=await claimed(s,g,j,t);return {valid:await check(s,g,job,await s.state(g)),esoName:await s.confirmed(job.userId)};});},
@@ -100,7 +100,7 @@ export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=
    const job=await claimed(s,g,j,t),allowed=['threadId','destinationId','roleStarted','roleChanged','content','attemptAt','messageId'];
    for(const key of allowed)if(patch[key]!==undefined)job[key]=patch[key];
    job.leaseUntil=now()+300;await s.putJob(job);
-   if(patch.threadId){const m=await s.member(g,job.userId);m.threadId=patch.threadId;await s.putMember(m);}
+   if(patch.threadId){const m=await s.member(g,job.userId);m.threadId=patch.threadId;m.threadChannelId=job.deliveryConfig?.channelId;await s.putMember(m);}
    return {saved:true};
   });},
   async finish(g,j,t,result) {return store.atomic(g,async s=>{

@@ -15,7 +15,8 @@ for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', '
       bankingEntries: [], raffleBonusRaffles: [{ type: 'biweekly', salesEnd: 200, enabled: true }],
       getBankingRaffleWindow: () => ({ salesEnd: 200 }), selectedBonusRaffle: '',
       raffleBonusSettings: { enabledByType: { biweekly: true, monthly: false }, biweekly: [{ hours: 24, percent: 0 }], monthly: [{ hours: 24, percent: 0 }] },
-      guildSyncSession: { user: { role: 'admin' } }, raffleBonusDraft: null
+      guildSyncSession: { user: { role: 'admin' } }, raffleBonusDraft: null,bonusResetToDefaults:false,
+      reportsAccordion:{},wireReportAccordions(){},adminConfigurationPanel:{wire(){}},renderGuildSyncTabLayout(){}
     });
   }
   test(`${path}: percentage survives normalization and bonus columns follow raffle policy`, () => {

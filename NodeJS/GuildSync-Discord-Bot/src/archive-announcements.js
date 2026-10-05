@@ -16,18 +16,20 @@ export async function deliverArchives({ archives, channels, state, save, send })
     const content = archive.message || '**Raffle archive completed**\n' +
       '[' + archive.name + '](https://docs.google.com/spreadsheets/d/' + encodeURIComponent(archive.archiveId) + '/edit)\n' +
       'Both current raffle sheets have been reset and reloaded from the database. The current spreadsheet link is unchanged.';
-    for (const channel of channels) {
+    const pendingChannels=Object.entries(state).filter(([key,item])=>key.endsWith(':'+archive.archiveId)&&!item.sent).map(([key])=>key.slice(0,key.lastIndexOf(':')));
+    for (const channel of new Set([...channels,...pendingChannels])) {
       const key = channel + ':' + archive.archiveId;
       if (state[key]?.sent) continue;
       try {
         const reconcile = Boolean(state[key]);
         if (!state[key]) {
-          state[key] = { createdAt: Date.now() / 1000 };
+          state[key] = { createdAt: Date.now() / 1000, content };
           await save(state);
         }
-        await send(channel, content, {
+        const recordedContent=state[key].content || content;
+        await send(channel, recordedContent, {
           id: createHash('sha256').update(key).digest('hex').slice(0, 24),
-          createdAt: state[key].createdAt, reconcile, content
+          createdAt: state[key].createdAt, reconcile, content:recordedContent
         });
         state[key].sent = true;
         try { await save(state); } catch (error) { state[key].sent = false; throw error; }
@@ -41,12 +43,12 @@ export function startArchiveAnnouncements(client, socket, log, env = process.env
   let channels;
   try { channels = parseArchiveChannels(env.GUILDSYNC_RAFFLE_ARCHIVE_CHANNEL_IDS); }
   catch (error) { log(error.message); return; }
-  if (!channels.length) return;
+  if (!channels.length || String(env.GUILDSYNC_RAFFLE_ARCHIVE_ANNOUNCEMENTS_ENABLED || 'true').toLowerCase()==='false') return;
   const statePath = path.resolve(fileURLToPath(new URL('../', import.meta.url)),
     env.GUILDSYNC_RAFFLE_ARCHIVE_STATE_FILE || 'data/raffle-archive-announcements.json');
-  let running = false;
+  let running = false,stopped=false;const drain=[];
   const tick = async () => {
-    if (running || !client.isReady() || !socket.connected) return;
+    if (stopped || running || !client.isReady() || !socket.connected) return;
     running = true;
     try {
       const result = await new Promise((resolve, reject) => {
@@ -67,9 +69,9 @@ export function startArchiveAnnouncements(client, socket, log, env = process.env
         send: (channel, content, delivery) => sendRaffleAnnouncement(client, channel, env.DISCORD_GUILD_ID, null, delivery)
       });
     } catch (error) { log('Archive announcement failed: ' + error.message); }
-    finally { running = false; }
+    finally { running = false;for(const resolve of drain.splice(0))resolve(); }
   };
   const timer = setInterval(tick, 60000); timer.unref();
   socket.on('connect', tick); void tick();
-  return () => { clearInterval(timer); socket.off('connect', tick); };
+  return async () => { stopped=true;clearInterval(timer); socket.off('connect', tick);if(running)await new Promise(resolve=>drain.push(resolve)); };
 }

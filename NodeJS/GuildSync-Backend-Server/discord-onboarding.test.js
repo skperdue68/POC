@@ -88,3 +88,5 @@ test('a missed rejoin restarts the reminder delay without losing new enrollment'
  await f.service.finish('1',old.id,old.claimToken,{cancelled:true});f.setNow(186401);
  assert.equal((await f.service.claim('1'))?.userId,'new');
 });
+
+test('in-flight onboarding configuration is retained when destination changes',async()=>{const f=fixture();await f.service.configure('1',f.config);f.links.set('u','ESO');f.gangsters.add('u');const job=await f.service.claim('1');await f.service.progress('1',job.id,job.claimToken,{destinationId:'123'});await f.service.finish('1',job.id,job.claimToken,{error:'retry'});await f.service.configure('1',{...f.config,channelId:'456'});f.setNow(2000);const retry=await f.service.claim('1');assert.equal(retry.config.channelId,'123');});
