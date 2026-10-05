@@ -26,6 +26,7 @@ import {
 
 import * as roles from './commands/roles.js';
 import * as raffle from './commands/raffle.js';
+import * as tickets from './commands/tickets.js';
 import * as gsaRaffle from './commands/gsa-raffle.js';
 import { startArchiveAnnouncements } from './archive-announcements.js';
 import { startRaffleAnnouncements } from './raffle-announcements.js';
@@ -160,6 +161,7 @@ const gsaCommand = {
 const commands = [
   roles,
   raffle,
+  tickets,
   gsaRaffle.createGsrCommand(),
   gsaRaffle.createGsrAliasCommand(),
   gsaCommand

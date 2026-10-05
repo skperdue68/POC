@@ -2143,7 +2143,7 @@ export async function getRaffleUserTickets(applicationDB, discordUserId, now = M
     const salesEnd = type === 'monthly' ? getDepositMailMonthlySalesEndAtOrAfter(reference) : getDepositMailBiweeklySalesEndAtOrAfter(reference);
     const previousSalesEnd = type === 'monthly' ? getDepositMailPreviousMonthlySalesEnd(salesEnd) : salesEnd - BANKING_BIWEEKLY_INTERVAL_SECONDS;
     return entries.filter(entry => normalizeDepositMailTicketType(entry.type) === type && Number(entry.time) > previousSalesEnd && Number(entry.time) <= salesEnd && Number(entry.time) <= now && String(entry.displayName || '').replace(/^@+/, '').toLowerCase() === String(esoAccountName).toLowerCase() && Number(entry.purchasedTickets || 0) > 0)
-      .map(entry => ({ raffleType: type, raffleLabel: type === 'biweekly' ? 'Bi-weekly' : '50/50', time: Number(entry.time), purchasedTickets: Number(entry.purchasedTickets) || 0, bonusTickets: Number(entry.bonusTickets) || 0, totalTickets: Number(entry.totalTickets) || 0 }));
+      .map(entry => ({ raffleType: type, raffleLabel: type === 'biweekly' ? 'Bi-weekly' : '50/50', time: Number(entry.time), purchasedTickets: Number(entry.purchasedTickets) || 0, bonusEnabled: entry.bonusEnabled === true, bonusPercent: Number(entry.bonusPercent) || 0, bonusTickets: Number(entry.bonusTickets) || 0, totalTickets: Number(entry.totalTickets) || 0 }));
   });
   if (!requestedEsoAccountName) {
     if (!linkedName) return { linked: false, purchases: [] };
