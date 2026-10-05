@@ -86,7 +86,7 @@ export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=
   });},
   async validate(g,j,t) {return store.atomic(g,async s=>{const job=await claimed(s,g,j,t);return {valid:await check(s,g,job,await s.state(g)),esoName:await s.confirmed(job.userId)};});},
   async progress(g,j,t,patch) {return store.atomic(g,async s=>{
-   const job=await claimed(s,g,j,t),allowed=['threadId','roleChanged','content','attemptAt','messageId'];
+   const job=await claimed(s,g,j,t),allowed=['threadId','destinationId','roleStarted','roleChanged','content','attemptAt','messageId'];
    for(const key of allowed)if(patch[key]!==undefined)job[key]=patch[key];
    job.leaseUntil=now()+300;await s.putJob(job);
    if(patch.threadId){const m=await s.member(g,job.userId);m.threadId=patch.threadId;await s.putMember(m);}
