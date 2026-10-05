@@ -1,5 +1,107 @@
 // Only these operational settings may be displayed or overridden. Never accept arbitrary env keys.
-const define=(owner,group,key,label,type,defaultValue,extra={})=>({owner,group,key,label,type,defaultValue,...extra});
+const configurationHelp={
+ "GUILDSYNC_ONBOARDING_ENABLED": {
+  "section": "Access and promotion",
+  "help": "Turns member onboarding on or off. Only members joining after it is enabled are watched for a missing ESO link."
+ },
+ "GUILDSYNC_ONBOARDING_PROMOTION_ENABLED": {
+  "section": "Access and promotion",
+  "help": "Removes Gangsters from linked members. Adds Associates only when they have no higher guild role; existing higher roles are preserved."
+ },
+ "GUILDSYNC_ONBOARDING_PROMOTION_NOTIFY_ENABLED": {
+  "section": "Access and promotion",
+  "help": "Sends the linked member a promotion notification after onboarding processes their ESO link."
+ },
+ "GUILDSYNC_ONBOARDING_REMINDER_ENABLED": {
+  "section": "Unlinked member reminders",
+  "help": "Sends one reminder to a watched new member who still has no ESO link when the reminder delay expires."
+ },
+ "GUILDSYNC_ONBOARDING_REMINDER_HOURS": {
+  "section": "Unlinked member reminders",
+  "help": "Hours after joining before an unlinked new member receives their one-time reminder. This does not affect raffle reminders."
+ },
+ "GUILDSYNC_ONBOARDING_CHANNEL_ID": {
+  "section": "Delivery and role matching",
+  "help": "Discord channel used for onboarding notifications and reminders. Private threads are created here, with a public thread in the same channel as fallback."
+ },
+ "GUILDSYNC_ONBOARDING_NOTIFICATION_MODE": {
+  "section": "Delivery and role matching",
+  "help": "Chooses a private thread for the member or a message in the configured channel/thread. If private threads are unavailable, delivery falls back to a public thread in that channel."
+ },
+ "GUILDSYNC_ONBOARDING_GANGSTER_ROLE_ID": {
+  "section": "Delivery and role matching",
+  "help": "Role removed after an ESO link is created. Leave blank to discover the Gangsters role by name; use an ID to select it explicitly."
+ },
+ "GUILDSYNC_ONBOARDING_ASSOCIATE_ROLE_ID": {
+  "section": "Delivery and role matching",
+  "help": "Role granted to a linked Gangster who has no higher guild role. Leave blank to discover Associates by name, or supply its Discord role ID."
+ },
+ "GUILDSYNC_ONBOARDING_PROMOTION_MESSAGE": {
+  "section": "Member messages",
+  "help": "Text sent after a member is linked and promoted. Use the placeholders below to include the member mention, ESO name, and role."
+ },
+ "GUILDSYNC_ONBOARDING_REMINDER_MESSAGE": {
+  "section": "Member messages",
+  "help": "Text sent once to an unlinked new member after the reminder delay. Include {mention} to ping the member and explain how to match their ESO name."
+ },
+ "GUILDSYNC_RAFFLE_ANNOUNCEMENTS_ENABLED": {
+  "section": "Schedule and destination",
+  "help": "Enables raffle announcements and scheduled raffle reminders. Archive notifications are controlled separately below."
+ },
+ "GUILDSYNC_RAFFLE_CHANNEL_ID": {
+  "section": "Schedule and destination",
+  "help": "Discord channel receiving raffle announcements and deadline reminders. Use the channel ID rather than its display name."
+ },
+ "GUILDSYNC_RAFFLE_INTERVAL_HOURS": {
+  "section": "Schedule and destination",
+  "help": "Hours between recurring raffle announcements while raffle sales are open."
+ },
+ "GUILDSYNC_RAFFLE_BIWEEKLY_THRESHOLD": {
+  "section": "Prize milestones",
+  "help": "Gold interval used for Bi-Weekly raffle prize milestone announcements."
+ },
+ "GUILDSYNC_RAFFLE_MONTHLY_THRESHOLD": {
+  "section": "Prize milestones",
+  "help": "Gold interval used for 50/50 raffle prize milestone announcements."
+ },
+ "GUILDSYNC_RAFFLE_BONUS_REMINDER_HOURS": {
+  "section": "Deadline reminders",
+  "help": "Hours before a bonus deadline to send a reminder. Enter one or more positive hours separated by commas, such as 24, 1. This does not change bonus eligibility."
+ },
+ "GUILDSYNC_RAFFLE_SALES_CLOSE_REMINDER_HOURS": {
+  "section": "Deadline reminders",
+  "help": "Hours before raffle sales close to send a reminder. Enter one or more positive hours separated by commas; this does not change the raffle draw date."
+ },
+ "GUILDSYNC_RAFFLE_ARCHIVE_ANNOUNCEMENTS_ENABLED": {
+  "section": "",
+  "help": "Posts a notification with archive and working-sheet links after a raffle archive completes. This does not enable or disable archiving itself."
+ },
+ "GUILDSYNC_RAFFLE_ARCHIVE_CHANNEL_IDS": {
+  "section": "",
+  "help": "Discord channels or threads receiving archive notifications. Enter their IDs separated by commas."
+ },
+ "GUILDSYNC_GOOGLE_SHEETS_ENABLED": {
+  "section": "",
+  "help": "Enables ordinary automatic writes of eligible raffle purchases to the working spreadsheet. Purchases continue to be recorded in the database when disabled."
+ },
+ "GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED": {
+  "section": "",
+  "help": "Enables scheduled archive/reset and reload after a raffle ends. This is separate from ordinary spreadsheet writes and manual archive commands."
+ },
+ "GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS": {
+  "section": "",
+  "help": "Hours after the raffle ends before automatic rollover can archive, reset, and reload the working raffle sheets."
+ },
+ "GUILDSYNC_DEPOSIT_MAIL_SUBJECT_TEMPLATE": {
+  "section": "",
+  "help": "Subject used for ESO raffle deposit receipt mail. Use the placeholders below to include purchase or raffle details."
+ },
+ "GUILDSYNC_DEPOSIT_MAIL_BODY_TEMPLATE": {
+  "section": "",
+  "help": "Body used for ESO raffle deposit receipt mail. {bonus_block} adds the bonus deadline, percentage, bonus tickets, and total when a purchase earns a bonus; a missing bonus block is appended automatically."
+ }
+};
+const define=(owner,group,key,label,type,defaultValue,extra={})=>({owner,group,key,label,type,defaultValue,...configurationHelp[key],...extra});
 const onboarding=(key,label,type,value,extra)=>define('bot','Member onboarding','GUILDSYNC_ONBOARDING_'+key,label,type,value,extra);
 const raffle=(key,label,type,value,extra)=>define('bot','Raffle announcements','GUILDSYNC_RAFFLE_'+key,label,type,value,extra);
 export const configurationCatalog=[
