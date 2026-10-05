@@ -61,9 +61,10 @@ test('historical load returns archive link and save reminder with the original d
  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:snapshot,synced:2,historical:true,sheetUrl:'https://docs.google.com/spreadsheets/d/archive/edit'});};
  await command.execute(f.interaction,f.socket);
  const text=f.replies.at(-1).content;
- assert.match(text,/archived raffle sheet \[HERE\]\(https:\/\/docs.google.com\/spreadsheets\/d\/archive\/edit\)/);
+ assert.match(text,/Data for the raffle ending September 26, 2026 has been refreshed from the database\. The sheet may be found \[HERE\]\(https:\/\/docs.google.com\/spreadsheets\/d\/archive\/edit\)/);
  assert.match(text,/\/gsr save date:091526/);
  assert.doesNotMatch(text,/working sheet/);
+ assert.doesNotMatch(text,/Both worksheets were cleared|Looking up|Load complete/);
 });
 
 test('save uses boundary clarification and only sends save after the choice', async () => {
