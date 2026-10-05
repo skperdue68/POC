@@ -16,13 +16,10 @@ function fixture() {
   })})})},
   Drive:{Files:{list:options=>{
    assert.match(options.q,/'folder' in parents and trashed=false/);
-   if(!options.q.includes("name=")) {
-    assert.match(options.q,/guildsyncSource.*live/);
-    return {files:[...files.values()].filter(file=>!file.trashed && file.parents?.includes('folder') && file.appProperties?.guildsyncSource==='live').map(file=>({id:file.id}))};
-   }
-   assert.match(options.q,/name='260926 Raffle'/);assert.match(options.q,/guildsyncRaffleDate.*2026-09-26/);
+   assert.match(options.q,/name='260926 Raffle'/);
+   assert.doesNotMatch(options.q,/guildsyncRaffleDate| or /);
    return {files:[...files.values()].filter(file=>!file.trashed && file.parents?.includes('folder') &&
-    (file.name==='260926 Raffle'||file.appProperties?.guildsyncRaffleDate==='2026-09-26')).map(file=>({id:file.id}))};
+    file.name==='260926 Raffle').map(file=>({id:file.id}))};
   },
    copy:(body,id)=>{calls.push(['copy',id]);const file={id:'copy',mimeType:'application/vnd.google-apps.spreadsheet',...body};files.set(file.id,file);return file;},
    get:id=>files.get(id),update:(body,id)=>{assert.equal(body.trashed,undefined);Object.assign(files.get(id),body);calls.push(['update',id]);}},
@@ -46,18 +43,18 @@ test('historical copy retry reuses preparing file and only becomes ready with co
  assert.equal(captured.ok,true);
  assert.ok(captured.diagnosticCells.some(c=>c.cell==='K5'&&c.value==='0'));
 });
-test('failure to inspect a registered archive does not create a replacement',()=>{
- const f=fixture();f.context.Drive.Files.get=()=>{throw Error('Temporary permission failure');};
+test('failure to search the archive folder does not create a replacement',()=>{
+ const f=fixture();f.context.Drive.Files.list=()=>{throw Error('Temporary permission failure');};
  assert.equal(f.call('historical-resolve',{allowCreate:true,archiveId:'registered'}).ok,false);
  assert.equal(f.calls.filter(c=>c[0]==='copy').length,0);
 });
-test('renamed legacy archive is found by dates and repeated loads/saves keep its ID',()=>{
+test('exactly named archive is found in the archive folder and repeated loads/saves keep its ID',()=>{
  const f=fixture();Object.assign(f.dates,{biweekly:'2026-09-26',monthly:'2026-09-26'});
- f.files.set('existing',{id:'existing',name:'Renamed raffle',mimeType:'application/vnd.google-apps.spreadsheet',parents:['folder'],appProperties:{guildsyncSource:'live'}});
+ f.files.set('existing',{id:'existing',name:'260926 Raffle',mimeType:'application/vnd.google-apps.spreadsheet',parents:['folder'],appProperties:{guildsyncSource:'live'}});
  for(const allowCreate of [true,false,true]) {
-  const result=f.call('historical-resolve',{allowCreate});assert.equal(result.ok,true);assert.equal(result.archiveId,'existing');assert.equal(result.created,false);assert.equal(result.lookupMethod,'draw-date');
+  const result=f.call('historical-resolve',{allowCreate});assert.equal(result.ok,true);assert.equal(result.archiveId,'existing');assert.equal(result.created,false);assert.equal(result.lookupMethod,'archive-name');
  }
- assert.equal(f.call('historical-resolve',{allowCreate:false,archiveId:'existing'}).lookupMethod,'registry');
+ assert.equal(f.call('historical-resolve',{allowCreate:false,archiveId:'existing'}).lookupMethod,'archive-name');
  f.dates.monthly='2026-10-24';assert.equal(f.call('historical-resolve',{allowCreate:true,archiveId:'existing'}).ok,false);
  assert.equal(f.calls.filter(c=>c[0]==='copy').length,0);
 });
@@ -79,4 +76,17 @@ test('stale registry falls back to folder lookup while unrelated files are ignor
  assert.equal(result.ok,true);assert.equal(result.archiveId,'copy');assert.equal(result.created,true);
  assert.equal(f.call('historical-resolve',{allowCreate:true,archiveId:'old'}).archiveId,'copy');
  assert.equal(f.calls.filter(c=>c[0]==='copy').length,1);
+});
+
+test('renamed or outside-folder files are not substituted for the expected archive name',()=>{
+ const f=fixture();
+ f.files.set('renamed',{id:'renamed',name:'Renamed raffle',parents:['folder'],appProperties:{guildsyncSource:'live',guildsyncRaffleDate:'2026-09-26'}});
+ f.files.set('outside',{id:'outside',name:'260926 Raffle',parents:['other']});
+ const missing=f.call('historical-resolve',{allowCreate:false,archiveId:'renamed'});
+ assert.equal(missing.ok,false);assert.match(missing.error,/260926 Raffle.*archive folder/);
+ assert.equal(f.calls.length,0);
+ const created=f.call('historical-resolve',{allowCreate:true,archiveId:'renamed'});
+ assert.equal(created.ok,true);assert.equal(created.created,true);assert.equal(created.name,'260926 Raffle');
+ assert.deepEqual(Array.from(f.files.get('copy').parents),['folder']);
+ assert.equal(created.archiveFolderId,'folder');
 });

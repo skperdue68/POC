@@ -71,10 +71,13 @@ test('load and save log archive identity and creation status and provide link bu
  for(const action of ['load','save']) {
   const f=fixture({action,date:'091526'}), logs=[];
   f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:snapshot,synced:2,saved:3,historical:true,
-   sheetUrl:'https://docs.google.com/spreadsheets/d/existing/edit',archiveLookup:{archiveId:'existing',created:false,lookupMethod:'registry'}});};
+   sheetUrl:'https://docs.google.com/spreadsheets/d/existing/edit',archiveLookup:{expectedName:'260926 Raffle',archiveFolderId:'folder',archiveId:'existing',created:false,lookupMethod:'archive-name'}});};
   await command.execute(f.interaction,f.socket,line=>logs.push(line));
   assert.ok(logs.some(line=>line.includes('lookup request')&&line.includes('091526')));
-  assert.ok(logs.some(line=>line.includes('lookup result')&&line.includes('existing')&&line.includes('"created":false')&&line.includes('registry')));
+  assert.ok(logs.some(line=>line.includes('lookup result')&&line.includes('existing')&&line.includes('"created":false')&&line.includes('archive-name')));
+  assert.ok(logs.some(line=>line.includes('lookup request')&&line.includes('260926 Raffle')));
+  assert.ok(f.replies.some(reply=>reply.content?.includes("archive '260926 Raffle' in the archive folder")));
+  assert.match(f.replies.at(-1).content,/Found archive '260926 Raffle'/);
   const button=f.replies.at(-1).components[0].toJSON().components[0];
   assert.equal(button.style,5);assert.equal(button.url,'https://docs.google.com/spreadsheets/d/existing/edit');
  }
