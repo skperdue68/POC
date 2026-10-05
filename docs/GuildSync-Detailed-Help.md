@@ -442,3 +442,5 @@ Confirmed-linked Gangsters who already hold a higher guild rank (Soldiers, Capo,
 Administrator Configuration uses **Return to default** and shows the default alongside the current selection. Switches consistently display **Enabled/Disabled**, while saved boolean data remains true/false internally. Resetting still deletes the override only after Save; collapsing a section does not save. **Default** identifies the inherited environment/application fallback value.
 
 Screen refreshes preserve your position in Reports & Admin and other tab content. Returning an edited setting to its default value automatically marks it **Default** and removes the override when saved. Unsaved edits remain drafts until **Save Configuration** succeeds.
+
+Two-choice configuration dropdowns mark the inherited choice with **(Default)**, for example **Enabled (Default)**. Select that option to return to the default; these fields have no reset button or override checkbox. Other fields retain **Return to default**. All edits still require **Save Configuration**, and changing choices preserves scrolling.

@@ -42,12 +42,18 @@ export function wireReportAccordions(accordion,{refresh=false}={}){
  for(const section of sections)void section.offsetHeight;
  sections.forEach((section,index)=>section.style.transition=transitions[index]);
 }
+const hasTwoOptions=setting=>setting.type==='boolean' || setting.type==='select' && setting.options.length===2;
+function optionLabel(setting,value) {
+ return formatConfigurationValue(setting,value)+(hasTwoOptions(setting) && isDefaultValue(setting,value)?' (Default)':'');
+}
 export function createConfigurationPanel(){
  let configuration=null,changes={},loading=false,message='',saving=false;
  const input=(setting,draft)=>{
   const attrs=`data-config-value="${escape(setting.key)}" id="config-${escape(setting.key)}" `;
-  if(setting.type==='boolean')return `<select ${attrs}><option value="true" ${String(draft.value)==='true'?'selected':''}>Enabled</option><option value="false" ${String(draft.value)==='false'?'selected':''}>Disabled</option></select>`;
-  if(setting.type==='select')return `<select ${attrs}>${setting.options.map(value=>`<option value="${escape(value)}" ${value===draft.value?'selected':''}>${escape(formatConfigurationValue(setting,value))}</option>`).join('')}</select>`;
+  if(setting.type==='boolean' || setting.type==='select') {
+   const options=setting.type==='boolean'?['true','false']:setting.options;
+   return `<select ${attrs}>${options.map(value=>`<option value="${escape(value)}" ${String(value)===String(draft.value)?'selected':''}>${escape(optionLabel(setting,value))}</option>`).join('')}</select>`;
+  }
   if(setting.type==='template')return `<textarea ${attrs} rows="${setting.key.includes('BODY')?9:3}" maxlength="${setting.maxLength}">${escape(draft.value)}</textarea>`;
   return `<input ${attrs} type="${setting.type==='number'?'number':'text'}" ${setting.type==='number'?`min="${setting.min}" max="${setting.max}" step="any"`:''} value="${escape(draft.value)}" placeholder="Not configured">`;
  };
@@ -56,7 +62,7 @@ export function createConfigurationPanel(){
   return `<article class="report-option-card admin-configuration-card"><div class="report-option-copy">
    <h3><button type="button" class="report-section-toggle" data-report-toggle="configuration" aria-expanded="false" aria-controls="adminConfigurationContent">Administrator Configuration <span aria-hidden="true">▾</span></button></h3>
    <div id="adminConfigurationContent" class="report-section-content" inert><div class="report-section-inner">
-   <p>Edit any setting to override its default. Changes take effect only after Save. Return to default to restore the default value. Settings apply live; active deliveries finish safely.</p>
+   <p>Edit any setting to override its default. Changes take effect only after Save. Choose the option marked (Default) to restore a two-choice setting, or use Return to default for other fields. Settings apply live; active deliveries finish safely.</p>
    <p role="status" class="configuration-status">${escape(message)}</p>
    ${!configuration?`<p>${loading?'Loading configuration...':'Configuration is not loaded.'}</p><button type="button" id="reloadAdminConfiguration">Load configuration</button>`:`
    ${configuration.botDefaultsReported?'':'<p>Bot defaults have not been reported yet. Connect the updated bot before editing its settings.</p>'}
@@ -65,11 +71,11 @@ export function createConfigurationPanel(){
      ${configuration.settings.filter(s=>s.group===group).map(setting=>{const draft=draftSetting(setting,changes);return `<div class="configuration-setting">
       <label for="config-${escape(setting.key)}">${escape(setting.label)}</label>
       <small>${escape(setting.key)} · <span data-config-source="${escape(setting.key)}">${escape(draft.source)}</span></small>
-      <div class="configuration-values">
+      <div class="configuration-values${hasTwoOptions(setting)?' configuration-two-options':''}">
        <div class="configuration-selected-value"><span>Current selection</span>${input(setting,draft)}</div>
-       <div class="configuration-default-value"><span>Default value</span><output>${escape(formatConfigurationValue(setting,setting.defaultValue))}</output></div>
+       ${hasTwoOptions(setting)?'':`<div class="configuration-default-value"><span>Default value</span><output>${escape(formatConfigurationValue(setting,setting.defaultValue))}</output></div>`}
       </div>
-      <button type="button" class="configuration-default" data-config-default="${escape(setting.key)}" aria-label="Return ${escape(setting.label)} to default: ${escape(formatConfigurationValue(setting,setting.defaultValue))}">Return to default</button>
+      ${hasTwoOptions(setting)?'':`<button type="button" class="configuration-default" data-config-default="${escape(setting.key)}" aria-label="Return ${escape(setting.label)} to default: ${escape(formatConfigurationValue(setting,setting.defaultValue))}">Return to default</button>`}
       ${setting.placeholders?`<small>Placeholders: ${setting.placeholders.map(k=>escape('{'+k+'}')).join(', ')}</small>`:''}
       ${setting.group==='Receipt messages'?`<label>Example preview (20% bonus)<pre data-config-preview="${escape(setting.key)}">${escape(receiptPreview(draft.value,{body:setting.key.endsWith('BODY_TEMPLATE')}))}</pre></label>`:''}
      </div>`;}).join('')}

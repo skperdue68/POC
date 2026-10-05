@@ -15,8 +15,8 @@ test('boolean and mode defaults use the same display labels as selections',()=>{
 test('configuration renders Return to default with an aligned human-readable default value',async t=>{
  const original=globalThis.document;globalThis.document={getElementById:()=>null,querySelectorAll:()=>[]};t.after(()=>globalThis.document=original);
  const panel=createConfigurationPanel();let rendered;const ready=new Promise(resolve=>rendered=resolve);
- panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings:[{key:'enabled',group:'Example',label:'Feature enabled',type:'boolean',value:false,defaultValue:true,source:'GuildSync override'},{key:'mode',group:'Example',label:'Delivery',type:'select',options:['private_thread','channel'],value:'channel',defaultValue:'private_thread',source:'.env'}]}}),rerender:()=>rendered()});
- await ready;const html=panel.render();assert.match(html,/Return to default/);assert.match(html,/class="configuration-values"/);assert.match(html,/<output[^>]*>Enabled<\/output>/);assert.match(html,/<output[^>]*>Private thread \(public fallback\)<\/output>/);
+ panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings:[{key:'enabled',group:'Example',label:'Feature enabled',type:'boolean',value:false,defaultValue:true,source:'GuildSync override'},{key:'mode',group:'Example',label:'Delivery',type:'select',options:['private_thread','channel'],value:'channel',defaultValue:'private_thread',source:'.env'},{key:'hours',group:'Example',label:'Hours',type:'number',value:25,defaultValue:24,source:'GuildSync override'}]}}),rerender:()=>rendered()});
+ await ready;const html=panel.render();assert.match(html,/Return to default/);assert.match(html,/class="configuration-values"/);assert.match(html,/<output[^>]*>24<\/output>/);
  assert.match(html,/<option value="false" selected>Disabled<\/option>/);assert.match(html,/<option value="channel" selected>Channel or thread<\/option>/);
  assert.doesNotMatch(html,/Default: (?:true|false)|Use \.env default|original \.env default/);
 });
@@ -26,17 +26,35 @@ test('configuration inputs are editable and editing derives override/default sta
  const original=globalThis.document;t.after(()=>globalThis.document=original);
  const setting={key:'enabled',group:'Example',label:'Feature enabled',type:'boolean',value:true,defaultValue:true,source:'.env'};
  const handlers={};const input={dataset:{configValue:'enabled'},value:'false',addEventListener:(event,fn)=>handlers[event]=fn};
- const source={textContent:''};const form={addEventListener:(event,fn)=>handlers['form-'+event]=fn,querySelectorAll:()=>[]};let reset;
- globalThis.document={getElementById:id=>id==='adminConfigurationForm'?form:null,querySelector:selector=>selector.includes("data-config-source")?source:null,querySelectorAll:selector=>selector==='[data-config-value]'?[input]:selector==='[data-config-default]'?[{dataset:{configDefault:'enabled'},addEventListener:(_,fn)=>reset=fn}]:[]};
+ const source={textContent:''};const form={addEventListener:(event,fn)=>handlers['form-'+event]=fn,querySelectorAll:()=>[]};
+ globalThis.document={getElementById:id=>id==='adminConfigurationForm'?form:null,querySelector:selector=>selector.includes("data-config-source")?source:null,querySelectorAll:selector=>selector==='[data-config-value]'?[input]:[]};
  const panel=createConfigurationPanel();let resolve;const ready=new Promise(r=>resolve=r);const requests=[];
  const request=async(event,payload)=>{requests.push({event,payload});return {ok:true,configuration:{revision:1,botDefaultsReported:true,settings:[setting]}};};
  const wire=()=>panel.wire({request,rerender:()=>resolve()});wire();await ready;wire();
  assert.doesNotMatch(panel.render(),/Use a GuildSync override|data-config-override|id="config-enabled" disabled/);
  handlers.input();assert.equal(source.textContent,'Overridden');assert.match(panel.render(),/<option value="false" selected>Disabled/);assert.equal(requests.length,1);
  input.value='true';handlers.input();assert.equal(source.textContent,'Default');await handlers['form-submit']({preventDefault(){}});assert.deepEqual(requests[1].payload.changes,{enabled:null});
- input.value='false';handlers.input();reset();assert.match(panel.render(),/<option value="true" selected>Enabled/);assert.match(panel.render(),/data-config-source="enabled">Default/);
+ input.value='false';handlers.input();input.value='true';handlers.input();assert.match(panel.render(),/<option value="true" selected>Enabled/);assert.match(panel.render(),/data-config-source="enabled">Default/);
 });
 test('typed values equal to defaults derive Default instead of an override',()=>{
  for(const [type,value,defaultValue] of [['boolean','false',false],['number','24',24],['select','channel','channel'],['template','hello','hello']])assert.equal(draftSetting({key:'key',type,defaultValue,value:defaultValue,source:'.env'},{key:value}).source,'Default');
  assert.equal(draftSetting({key:'key',type:'number',defaultValue:24,value:24,source:'.env'},{key:'25'}).source,'Overridden');
+});
+
+test('two-choice settings identify only their default option and omit reset controls',async t=>{
+ const original=globalThis.document;t.after(()=>globalThis.document=original);globalThis.document={getElementById:()=>null,querySelectorAll:()=>[]};
+ const settings=[
+  {key:'on',label:'Default on',type:'boolean',value:false,defaultValue:true},
+  {key:'off',label:'Default off',type:'boolean',value:true,defaultValue:false},
+  {key:'mode',label:'Delivery',type:'select',options:['channel','private_thread'],value:'channel',defaultValue:'private_thread'},
+  {key:'count',label:'Count',type:'number',value:25,defaultValue:24}
+ ].map(s=>({...s,group:'Example',source:'.env'}));
+ const panel=createConfigurationPanel();let ready;const loaded=new Promise(r=>ready=r);panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings}}),rerender:ready});await loaded;
+ const html=panel.render();
+ assert.match(html,/<option value="true" >Enabled \(Default\)<\/option>/);
+ assert.match(html,/<option value="false" >Disabled \(Default\)<\/option>/);
+ assert.match(html,/<option value="private_thread" >Private thread \(public fallback\) \(Default\)<\/option>/);
+ assert.doesNotMatch(html,/data-config-default="(?:on|off|mode)"|data-config-override/);
+ assert.match(html,/data-config-default="count"/);assert.match(html,/<output>24<\/output>/);
+ assert.equal((html.match(/ \(Default\)<\/option>/g)||[]).length,3);
 });
