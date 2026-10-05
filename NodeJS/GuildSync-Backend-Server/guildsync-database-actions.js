@@ -1854,10 +1854,13 @@ export async function getRaffleBonusSettings(applicationDB) {
     monthly: parseBonusTiers(process.env.GUILDSYNC_MONTHLY_BONUS_TIERS || DEFAULT_BONUS_TIERS.monthly)
   };
   defaults.enabledByType = raffleBonusEnabledByType(defaults);
+  defaults.envDefaults={enabled:defaults.enabled,enabledByType:defaults.enabledByType,biweekly:defaults.biweekly,monthly:defaults.monthly};
+  defaults.source='.env';
   if (!saved) return defaults;
   try {
     const parsed = JSON.parse(saved);
     return {
+      source:'GuildSync override',envDefaults:defaults.envDefaults,
       enabled: Object.values(raffleBonusEnabledByType(parsed)).some(Boolean),
       enabledByType: raffleBonusEnabledByType(parsed),
       biweekly: parseBonusTiers(parsed.biweekly.map(({ hours, percent }) => `${hours}:${percent}`).join(',')),
@@ -1921,11 +1924,13 @@ export async function getRaffleBonusChoices(applicationDB, versions = null, over
     const key = `${window.type}:${window.salesEnd}`;
     if (choices.has(key)) continue;
     const override = saved.find((item) => item.type === window.type && item.salesEnd === window.salesEnd);
-    const policy = override || selectRaffleBonusSettings(policies, saved, window.type, window.salesEnd);
+    const inherited = selectRaffleBonusSettings(policies, [], window.type, window.salesEnd);
+    const policy = override || inherited;
     choices.set(key, {
       type: window.type, salesEnd: window.salesEnd, raffleTime: window.raffleTime,
       label: `${window.label} | Raffle ${formatAssociateTicketReportShortDateEastern(window.raffleTime)}`,
-      enabled: policy?.enabled ?? false, tiers: policy?.tiers || defaultSettings[window.type], overridden: Boolean(override)
+      enabled: policy?.enabled ?? false, tiers: policy?.tiers || defaultSettings[window.type], overridden: Boolean(override),
+      inheritedSettings:{enabled:inherited?.enabled ?? false,tiers:inherited?.tiers || defaultSettings[window.type]}
     });
   }
   return [...choices.values()].sort((a, b) => b.salesEnd - a.salesEnd);
@@ -1934,6 +1939,11 @@ export async function getRaffleBonusChoices(applicationDB, versions = null, over
 export async function saveRaffleBonusOverride(applicationDB, input) {
   const type = input?.raffleType;
   const salesEnd = Number(input?.salesEnd);
+  if(input?.resetToDefaults === true){
+    if(!['monthly','biweekly'].includes(type)||!Number.isSafeInteger(salesEnd)||salesEnd<=0)throw Error('Select a valid raffle.');
+    await applicationDB.execute('DELETE FROM guildsync_raffle_bonus_overrides WHERE raffle_type = ? AND sales_end = ?',[type,salesEnd]);
+    return;
+  }
   if (!['monthly', 'biweekly'].includes(type) || !Number.isSafeInteger(salesEnd) || salesEnd <= 0 ||
       typeof input.enabled !== 'boolean' || !Array.isArray(input.tiers)) {
     throw new Error('Select a raffle and provide its bonus settings.');
@@ -1951,6 +1961,13 @@ export async function saveRaffleBonusOverride(applicationDB, input) {
 }
 
 export async function saveRaffleBonusSettings(applicationDB, input) {
+  const resetToDefaults = input?.resetToDefaults === true;
+  if(resetToDefaults){
+    const enabled = String(process.env.GUILDSYNC_RAFFLE_BONUS_ENABLED || 'true').toLowerCase() !== 'false';
+    input={enabledByType:{biweekly:enabled,monthly:enabled},
+      biweekly:parseBonusTiers(process.env.GUILDSYNC_BIWEEKLY_BONUS_TIERS || DEFAULT_BONUS_TIERS.biweekly),
+      monthly:parseBonusTiers(process.env.GUILDSYNC_MONTHLY_BONUS_TIERS || DEFAULT_BONUS_TIERS.monthly)};
+  }
   if (!Array.isArray(input?.biweekly) || !Array.isArray(input?.monthly)) {
     throw new Error('Provide biweekly tiers and monthly tiers.');
   }
@@ -1973,7 +1990,8 @@ export async function saveRaffleBonusSettings(applicationDB, input) {
   try {
     await connection.beginTransaction();
     const previous = await getRaffleBonusSettings(connection);
-    await setSetting(connection, 'raffle_bonus_settings', JSON.stringify(settings));
+    if(resetToDefaults)await connection.execute('DELETE FROM guildsync_settings WHERE setting_key = ?',['raffle_bonus_settings']);
+    else await setSetting(connection, 'raffle_bonus_settings', JSON.stringify(settings));
     const effectiveFrom = Math.floor(Date.now() / 1000);
     for (const type of ['biweekly', 'monthly']) {
       if (previous.enabledByType[type] === settings.enabledByType[type] &&

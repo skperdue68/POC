@@ -1,3 +1,5 @@
+import {createConfigurationService} from './admin-configuration.js';
+import {registerConfigurationSocket} from './admin-configuration-socket.js';
 import { createDiscordOnboarding } from './discord-onboarding.js';
 import { registerDiscordOnboardingSocket } from './discord-onboarding-socket.js';
 import 'dotenv/config';
@@ -101,10 +103,13 @@ const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION')
 let loginDB;
 let applicationDB;
 let sheetsRuntime;
+let configurationService;
 
 try {
   loginDB = await openLoginDB();
   applicationDB = await openAppDataDB();
+  configurationService = createConfigurationService(applicationDB,{applyAtBoundary:fn=>sheetsRuntime?sheetsRuntime.applyConfiguration(fn):fn()});
+  await configurationService.initialize();
   sheetsRuntime = startSheetsRollover(applicationDB, getSheetsRaffleWindows, {
     selectPeriods: getRaffleRefreshSelection,
     loadCatchupEntries: async now => selectSheetsCatchupEntries(await getBankingDataJSON(applicationDB), now)
@@ -452,6 +457,10 @@ io.use(async (socket, next) => {
 const onboardingService = createDiscordOnboarding(applicationDB, {log:Log,wake:()=>io.to('GuildSyncDiscordBot').emit('guildsync:onboarding-wake')});
 
 io.on('connection', (socket) => {
+  registerConfigurationSocket(socket,configurationService,{
+    authorizeAdmin: async id => {const [rows]=await loginDB.execute('SELECT role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows[0]?.role==='admin';},
+    broadcast: configuration => io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration)
+  });
   registerDiscordOnboardingSocket(socket, onboardingService);
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerArchiveSocket(socket, applicationDB);

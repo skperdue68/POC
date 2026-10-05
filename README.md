@@ -6,6 +6,7 @@ GuildSync connects ESO guild deposits, roster/application activity, Discord memb
 
 - [User guide: commands and everyday workflows](docs/GuildSync-User-Guide.md)
 - [Detailed help: systems, administration, environment settings, and troubleshooting](docs/GuildSync-Detailed-Help.md)
+- [Administrator Configuration: saved overrides and live settings](docs/GuildSync-Admin-Configuration.md)
 - [Google Apps Script archive setup and account migration](docs/google-apps-script-setup.md)
 - [Discord member onboarding setup](NodeJS/GuildSync-Discord-Bot/MEMBER-ONBOARDING.md)
 - [Release packaging and deployment](docs/GuildSync-1.2.7.md)

@@ -75,7 +75,7 @@ export function createRaffleAnnouncer({ channelId, intervalHours, thresholds, fe
   let running = false, state;
   async function deliverPending(reconcile) {
     const pending = state.pending;
-    await send(pending.snapshot, { id: pending.id, createdAt: pending.createdAt, expiresAt: pending.expiresAt, reconcile });
+    await send(pending.snapshot, { id: pending.id, createdAt: pending.createdAt, expiresAt: pending.expiresAt, channelId: state.channelId, content:pending.content, reconcile });
     await saveState(pending.next);
     state = pending.next;
   }
@@ -85,7 +85,6 @@ export function createRaffleAnnouncer({ channelId, intervalHours, thresholds, fe
       running = true;
       try {
         if (state === undefined) state = await loadState() || { channelId, raffles: {} };
-        if (state.channelId !== channelId) state = { channelId, raffles: {} };
         // A restart or uncertain Discord response resumes the same persisted delivery.
         if (state.pending) {
           if (state.pending.expiresAt !== undefined && now() >= state.pending.expiresAt) {
@@ -94,6 +93,7 @@ export function createRaffleAnnouncer({ channelId, intervalHours, thresholds, fe
             state = remaining;
           } else { await deliverPending(true); return; }
         }
+        if (state.channelId !== channelId) state = { channelId, raffles: {} };
         const snapshot = await fetchRaffles();
         const time = now();
         const due = snapshot.raffles.some(raffle => {
@@ -144,6 +144,7 @@ export function createRaffleAnnouncer({ channelId, intervalHours, thresholds, fe
         }
         const prepared = { ...state, pending: { id: randomBytes(12).toString('hex'), createdAt: time,
           ...(reminders.length ? { expiresAt: Math.min(...reminders.map(item => item.at)) } : {}),
+          content:formatRaffles({ ...snapshot, ...(reminders.length ? { reminders } : {}) }),
           snapshot: { ...snapshot, ...(reminders.length ? { reminders } : {}) }, next } };
         await saveState(prepared);
         state = prepared;

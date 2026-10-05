@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resetRequests, startSheetsRollover, drawDateRequest } from './sheets-rollover-runtime.js';
-import { configureSheetsCoordinator } from './google-sheets-banking-sync.js';
+import { configureSheetsCoordinator, syncBankingEntriesToGoogleSheets } from './google-sheets-banking-sync.js';
 
 for (const [type, donationRows, donationColumns] of [['biweekly', [61, 70], [15, 18]], ['monthly', [35, 44], [13, 16]]]) {
   test(`${type} reset touches exact values/notes ranges, hides G and replaces only prior markers`, () => {
@@ -289,3 +289,7 @@ test('completed history replaces trashed archive references with the new archive
  assert.ok(f.state().completedArchives.some(item=>item.archiveId==='archive-copy'));
  assert.ok(f.state().completedArchives.some(item=>item.archiveId==='unrelated'));
 });
+
+test('live rollover delay applies to future holds without moving an existing deadline',async t=>{const f=await fixture(t);process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS='4';const runtime=f.start();await assert.rejects(runtime.run(()=>{}),/hold/);assert.equal(f.state().pending.readyAt,15400);process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS='8';await assert.rejects(runtime.run(()=>{}),/hold/);assert.equal(f.state().pending.readyAt,15400);runtime.stop();});
+
+test('ordinary upload queued behind a configuration disable skips both rollover and writes',async t=>{const f=await fixture(t);process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED='false';const runtime=f.start();let entered,release;const started=new Promise(r=>entered=r);const active=runtime.run(async()=>{entered();await new Promise(r=>release=r);},{processRollover:false});await started;const applying=runtime.applyConfiguration(()=>{process.env.GUILDSYNC_GOOGLE_SHEETS_ENABLED='false';});const upload=syncBankingEntriesToGoogleSheets([{type:'biweekly',eventId:'queued',name:'Test',gold:500,ticketAmount:1}],{log:async()=>{}});release();await Promise.all([active,applying]);const result=await upload;assert.equal(result.synced,0);assert.equal(result.enabled,false);assert.deepEqual(f.calls,[]);assert.deepEqual(f.mutations,[]);runtime.stop();});

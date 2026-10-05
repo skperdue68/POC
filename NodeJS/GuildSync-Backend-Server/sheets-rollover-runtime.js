@@ -13,8 +13,8 @@ export { resetRequests, drawDateRequest } from './raffle-sheet-layout.js';
 
 export function startSheetsRollover(db, getWindows, { now, schedule = true, loadCatchupEntries, selectPeriods } = {}) {
   const settings = config();
-  if (!settings.enabled) return;
-  const enabled = /^true$/i.test(process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED || 'false');
+  if (!settings.spreadsheetId) return;
+  const rolloverEnabled = () => /^true$/i.test(process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED || 'false');
   const hours = Number(String(process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS ?? '').trim() || 4);
   if (!Number.isFinite(hours) || hours < 0 || !Number.isSafeInteger(hours * 3600)) throw new Error('Invalid rollover delay hours.');
   const hash = createHash('sha256').update(settings.spreadsheetId).digest('hex').slice(0, 32);
@@ -26,6 +26,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
   const io = {
     now,
     delaySeconds: hours * 3600,
+    getDelaySeconds: () => Number(process.env.GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_DELAY_HOURS || 4) * 3600,
     getWindows,
     loadState: async () => {
       const [rows] = await connection.execute('SELECT value FROM guildsync_settings WHERE setting_key = ?', [stateKey]);
@@ -79,8 +80,9 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
 
   // One local queue plus a MariaDB advisory lock coordinates all backend instances.
   let tail = Promise.resolve();
-  const run = (operation, { processRollover = true, archiveNow = false, requestedBy } = {}) => {
+  const run = (operation, { processRollover = true, archiveNow = false, requestedBy, ordinaryWrite = false } = {}) => {
     const job = tail.then(async () => {
+      if(ordinaryWrite && !config().enabled)return {enabled:false,synced:0};
       const conn = await db.getConnection();
       let locked = false;
       try {
@@ -88,6 +90,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
         if (Number(rows[0]?.acquired) !== 1) throw new Error('Could not acquire spreadsheet export lock.');
         locked = true; connection = conn; context = null;
         const savedState = await io.loadState();
+        const enabled = rolloverEnabled();
         const advance = (enabled && processRollover) || archiveNow || (processRollover && savedState?.pending?.manual);
         const due = savedState?.pending || savedState?.windows?.some(window => window.salesEnd <= Math.floor(now ? now() : Date.now() / 1000));
         const state = advance ? await coordinator.tick({ requestedBy, archiveNow: archiveNow && (!savedState?.catchupRequired || !!due) }) : (savedState || {});
@@ -124,6 +127,7 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
     tail = job.catch(() => {});
     return job;
   };
+  const applyConfiguration=fn=>{const job=tail.then(fn);tail=job.catch(()=>{});return job;};
   configureSheetsCoordinator(run);
   const archive = ({ requestedBy } = {}) => run(state => state.lastArchive, { archiveNow: true, requestedBy });
   const clear = () => run(async () => {
@@ -144,9 +148,9 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
     await exportLog('CLEAR: clearing both raffle worksheets including R7/P7 draw dates; database records unchanged.');
     await sheetsRequest(token, url + ':batchUpdate', { method: 'POST', body: JSON.stringify({ requests }) });
   }, { processRollover: false });
-  if (!enabled || !schedule) return { run, archive, clear, stop: () => {} };
-  const tick = () => run().catch(error => exportLog('Rollover failed; export/reset paused: ' + error.message).catch(console.error));
+  if (!schedule) return { run, archive, clear, applyConfiguration, stop: () => {} };
+  const tick = () => {if(!config().enabled || !rolloverEnabled())return;return run().catch(error => exportLog('Rollover failed; export/reset paused: ' + error.message).catch(console.error));};
   const timer = setInterval(tick, 60000); timer.unref();
   tick();
-  return { run, archive, clear, stop: () => clearInterval(timer) };
+  return { run, archive, clear, applyConfiguration, stop: () => clearInterval(timer) };
 }

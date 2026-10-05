@@ -1,3 +1,4 @@
+import {createConfigurationPanel,createAccordionState,wireReportAccordions} from './admin-configuration.js';
 import './style.css';
 import splashImage from './assets/splash.png';
 import appIcon from './assets/icon.png';
@@ -210,6 +211,9 @@ const MEMBER_LINK_STATUS_FILTERS = [
 let bankingEntries = [];
 let raffleBonusSettings = null;
 let raffleBonusDraft = null;
+let bonusResetToDefaults = false;
+const reportsAccordion=createAccordionState();
+const adminConfigurationPanel=createConfigurationPanel();
 let raffleBonusRaffles = [];
 let selectedBonusRaffle = '';
 let raffleBonusSettingsRequested = false;
@@ -1848,6 +1852,7 @@ function renderReportsPanel() {
 
       <div class="reports-scroll-area">
         ${renderRaffleBonusSettings()}
+        ${guildSyncSession?.user?.role === 'admin' ? adminConfigurationPanel.render() : ''}
         <section class="reports-list" aria-label="Available reports">
           <article class="report-option-card">
             <div class="report-option-copy">
@@ -1899,12 +1904,17 @@ function wireReportsPanel() {
     return;
   }
 
+  wireReportAccordions(reportsAccordion);
+  if(guildSyncSession?.user?.role === 'admin')adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
+  document.querySelector('#cancelBonusDefaults')?.addEventListener('click',()=>{bonusResetToDefaults=false;renderGuildSyncTabLayout();});
+  document.querySelector('#resetBonusDefaults')?.addEventListener('click',()=>{bonusResetToDefaults=true;renderGuildSyncTabLayout();});
   document.querySelector('#raffleBonusSettingsForm')?.addEventListener('submit', saveRaffleBonusSettings);
   document.querySelector('#raffleBonusSettingsForm')?.addEventListener('input', (event) => {
     raffleBonusDraft = { raffle: selectedBonusRaffle, values: new Map(new FormData(event.currentTarget)) };
   });
   document.querySelector('#bonusRafflePicker')?.addEventListener('change', (event) => {
     selectedBonusRaffle = event.currentTarget.value;
+    bonusResetToDefaults = false;
     raffleBonusDraft = null;
     renderGuildSyncTabLayout();
   });
@@ -1917,16 +1927,17 @@ function wireReportsPanel() {
 
 function renderRaffleBonusSettings() {
   if (!raffleBonusSettings) return '<p>Loading raffle bonus settings...</p>';
-  const draft = raffleBonusDraft?.raffle === selectedBonusRaffle ? raffleBonusDraft.values : null;
+  const draft = !bonusResetToDefaults && raffleBonusDraft?.raffle === selectedBonusRaffle ? raffleBonusDraft.values : null;
   const selected = raffleBonusRaffles.find((raffle) => `${raffle.type}:${raffle.salesEnd}` === selectedBonusRaffle);
+  const selectedRules = bonusResetToDefaults && selected?.inheritedSettings ? selected.inheritedSettings : selected;
   const editing = selected ? {
-    enabledByType: { ...raffleBonusSettings.enabledByType, [selected.type]: selected.enabled },
-    biweekly: selected.type === 'biweekly' ? selected.tiers : raffleBonusSettings.biweekly,
-    monthly: selected.type === 'monthly' ? selected.tiers : raffleBonusSettings.monthly
-  } : raffleBonusSettings;
+    enabledByType: { ...raffleBonusSettings.enabledByType, [selected.type]: selectedRules.enabled },
+    biweekly: selected.type === 'biweekly' ? selectedRules.tiers : raffleBonusSettings.biweekly,
+    monthly: selected.type === 'monthly' ? selectedRules.tiers : raffleBonusSettings.monthly
+  } : bonusResetToDefaults ? (raffleBonusSettings.envDefaults || raffleBonusSettings) : raffleBonusSettings;
   const canEdit = guildSyncSession?.user?.role === 'admin';
   const fields = (type, label) => `
-    <fieldset class="raffle-bonus-tiers" ${canEdit ? '' : 'disabled'}>
+    <fieldset class="raffle-bonus-tiers" ${canEdit && !bonusResetToDefaults ? '' : 'disabled'}>
       <legend>${label}</legend>
       <label><input name="${type}-enabled" type="checkbox" ${(draft ? draft.has(`${type}-enabled`) : (editing.enabledByType?.[type] ?? editing.enabled)) ? 'checked' : ''}> Enable bonus tickets</label>
       ${editing[type].map((tier, index) => `
@@ -1940,7 +1951,8 @@ function renderRaffleBonusSettings() {
   return `
     <article class="report-option-card raffle-bonus-card">
       <div class="report-option-copy">
-        <h3>Raffle Bonus Tickets</h3>
+        <h3><button type="button" class="report-section-toggle" data-report-toggle="bonus" aria-expanded="false" aria-controls="raffleBonusContent">Raffle Bonus Tickets <span aria-hidden="true">▾</span></button></h3>
+        <div id="raffleBonusContent" class="report-section-content" inert><div class="report-section-inner">
         <p>Default settings carry forward. Select a raffle to edit only that raffle, including past raffles. Purchase time determines its hour period. Bonuses round down; the final tier must be 0%. Manual entries never receive additional bonuses. Changes apply only when you save.</p>
         <label>Bonus rules for
           <select id="bonusRafflePicker" ${canEdit ? '' : 'disabled'}>
@@ -1948,10 +1960,14 @@ function renderRaffleBonusSettings() {
             ${raffleBonusRaffles.map((raffle) => `<option value="${escapeAttribute(`${raffle.type}:${raffle.salesEnd}`)}" ${selectedBonusRaffle === `${raffle.type}:${raffle.salesEnd}` ? 'selected' : ''}>${escapeHtml(raffle.label)}${raffle.enabled ? ' (Bonuses)' : ''}</option>`).join('')}
           </select>
         </label>
+        <p>Source: ${escapeHtml(selected ? (selected.overridden ? 'Raffle override' : 'Saved raffle policy') : (raffleBonusSettings.source === '.env' ? 'Default' : (raffleBonusSettings.source || 'Default')))}</p>
+        ${bonusResetToDefaults ? '<p role="status">Default restoration is pending. Click Save Bonus Settings to apply it, or change the selected raffle to cancel.</p><button type="button" id="cancelBonusDefaults">Cancel default restoration</button>' : ''}
         <form id="raffleBonusSettingsForm">
+          ${canEdit ? `<button type="button" id="resetBonusDefaults">${selected ? 'Return to raffle default (on Save)' : 'Return to default (on Save)'}</button>` : ''}
           ${selected ? fields(selected.type, selected.label) : fields('biweekly', 'Bi-Weekly Raffle') + fields('monthly', '50/50 Raffle')}
           ${canEdit ? '<button class="refresh-discord-button report-run-button" type="submit">Save Bonus Settings</button>' : '<p>Admin access is required to change these settings.</p>'}
         </form>
+        </div></div>
       </div>
     </article>`;
 }
@@ -1969,10 +1985,12 @@ async function saveRaffleBonusSettings(event) {
     ? { raffleType: selected.type, salesEnd: selected.salesEnd, enabled: data.has(`${selected.type}-enabled`), tiers: tiers(selected.type) }
     : { enabledByType: { biweekly: data.has('biweekly-enabled'), monthly: data.has('monthly-enabled') }, biweekly: tiers('biweekly'), monthly: tiers('monthly') };
   try {
+    if(bonusResetToDefaults)payload.resetToDefaults=true;
     const response = await emitSocketWithAck('guildsync:save-raffle-bonus-settings', payload, 30000);
     if (!response?.ok) throw new Error(response?.message || 'Could not save raffle bonus settings.');
     raffleBonusSettings = response.bonusSettings;
     raffleBonusDraft = null;
+    bonusResetToDefaults = false;
     await refreshBankingDataFromBackend({ silent: true });
     addSystemMessage('bonus-settings', 'Raffle bonus settings saved.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
     renderGuildSyncTabLayout();

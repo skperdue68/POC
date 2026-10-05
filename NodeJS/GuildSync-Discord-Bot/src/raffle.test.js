@@ -180,3 +180,5 @@ test('groups simultaneous reminders by purpose and puts them before freshness li
   assert.ok(content.indexOf('Ticket sales close') < content.indexOf('As of'));
   assert.match(content, /Bi-Weekly and 50\/50 reminder/);
 });
+
+test('changing announcement channel reconciles pending delivery in original channel first',async()=>{const {createRaffleAnnouncer}=await import('./raffle.js');let state={channelId:'old',raffles:{},pending:{id:'job',createdAt:100,snapshot:{raffles:[]},next:{channelId:'old',raffles:{}}}};let destination;const a=createRaffleAnnouncer({channelId:'new',intervalHours:48,thresholds:{biweekly:1,monthly:1},loadState:async()=>state,saveState:async s=>state=s,fetchRaffles:async()=>{throw Error('must reconcile first');},send:async(s,d)=>destination=d.channelId});await a.tick();assert.equal(destination,'old');assert.equal(state.channelId,'old');});

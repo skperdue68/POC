@@ -16,6 +16,14 @@ function roleByName(roles,id,name) {
  if(matches.length!==1)throw Error('Onboarding needs one unambiguous '+name+' role; configure its role ID.');
  return matches[0];
 }
+// Match guild ranks, not decorative roles or arbitrary Discord role positions.
+const HIGHER_GUILD_RANKS=new Set([
+ 'soldier','soldiers','capo','capos','caporegime','caporegimes','caporegieme','caporegiemes',
+ 'consigliere','consiglieri','consiglieres','kingpin','kingpins'
+]);
+function higherGuildRank(member) {
+ return member.roles.cache.find(role=>HIGHER_GUILD_RANKS.has(String(role.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g,'')));
+}
 function requirePermissions(channel,subject,flags,label) {
  if(!channel.permissionsFor(subject)?.has(flags))throw Error('Onboarding missing '+label+' permissions in channel '+channel.id+'.');
 }
@@ -113,7 +121,25 @@ export async function processOnboardingDelivery(context,job) {
   if(!validity.valid){await finish({cancelled:true});return;}
   let associateName='Associates';
   if(job.kind==='promotion') {
-   const roles=await guild.roles.fetch(),gangster=roleByName(roles,config.gangsterRoleId,'Gangsters'),associate=roleByName(roles,config.associateRoleId,'Associates');
+   const roles=await guild.roles.fetch(),gangster=roleByName(roles,config.gangsterRoleId,'Gangsters');
+   const higherRank=higherGuildRank(member);
+   if(higherRank) {
+    if(member.roles.cache.has(gangster.id)) {
+     // Only Gangsters must be editable; higher ranks and Associates are untouched.
+     if(!gangster.editable)throw Error('Bot cannot remove the Gangsters role; check Manage Roles and role hierarchy.');
+     validity=await request(socket,'validate',payload);
+     if(!validity.valid){await finish({cancelled:true});return;}
+     await progress({roleStarted:true});job.roleStarted=true;
+     await member.roles.remove(gangster.id,'GuildSync confirmed ESO link; higher guild rank retained');
+    }else if(!(job.roleStarted || job.roleChanged)) {
+     await finish({cancelled:true});return;
+    }
+    await progress({roleChanged:true});job.roleChanged=true;
+    await finish({done:true,promoted:false});
+    log('Onboarding removed '+gangster.name+' from '+job.userId+'; retained higher guild rank '+higherRank.name+'.');
+    return; // No Associate-promotion message for a member whose rank was retained.
+   }
+   const associate=roleByName(roles,config.associateRoleId,'Associates');
    associateName=associate.name;
    if(gangster.id===associate.id)throw Error('Gangsters and Associates must be different roles.');
    if(!member.roles.cache.has(gangster.id)) {
@@ -130,6 +156,9 @@ export async function processOnboardingDelivery(context,job) {
    }
    await progress({roleChanged:true});job.roleChanged=true;
    if(!config.promotionNotifyEnabled){await finish({done:true});return;}
+   validity=await request(socket,'validate',payload);
+   if(!validity.valid){await finish({cancelled:true});return;}
+   if(validity.notificationEnabled===false){await finish({error:'Promotion notifications are disabled; saved delivery is paused.'});return;}
   }
   const destination=await notificationDestination(context,job,member,progress);
   if(job.destinationId && job.destinationId!==destination.id)throw Error('Onboarding notification destination changed; restore its original destination before retrying.');
@@ -145,6 +174,7 @@ export async function processOnboardingDelivery(context,job) {
   }
   validity=await request(socket,'validate',payload);
   if(!validity.valid){await finish({cancelled:true});return;}
+  if(job.kind==='promotion' && validity.notificationEnabled===false){await finish({error:'Promotion notifications are disabled; saved delivery is paused.'});return;}
   // Re-fetch membership immediately before a reminder is sent.
   await guild.members.fetch({user:job.userId,force:true});
   job.attemptAt=job.attemptAt || now();await progress({attemptAt:job.attemptAt});
@@ -158,7 +188,7 @@ export async function processOnboardingDelivery(context,job) {
 }
 
 export function createOnboardingWorker({client,socket,guildId,config,log=console.log,now=()=>Math.floor(Date.now()/1000)}) {
- let running=false,stopped=false,configuredId=null,snapshotDone=false;
+ let running=false,stopped=false,configuredId=null,snapshotDone=false;const drain=[];
  const send=(action,payload={})=>request(socket,action,{guildId,...payload});
  async function configure() {
   if(configuredId===socket.id)return;
@@ -185,11 +215,11 @@ export function createOnboardingWorker({client,socket,guildId,config,log=console
      const last=page.last();if(!last || last.id===after)throw Error('Onboarding member pagination did not advance.');after=last.id;
     }snapshotDone=true;
    }
-   for(let count=0;count<10;count++) {
+   for(let count=0;count<10 && !stopped;count++) {
     const job=await send('claim');if(!job)break;
-    await processOnboardingDelivery({client,socket,guildId,config,log,now},job);
+    await processOnboardingDelivery({client,socket,guildId,config:job.config || config,log,now},job);
    }
-  }catch(error){log('Onboarding worker failed: '+error.message);}finally{running=false;}
+  }catch(error){log('Onboarding worker failed: '+error.message);}finally{running=false;for(const resolve of drain.splice(0))resolve();}
  }
  const disconnected=()=>{configuredId=null;snapshotDone=false;};
  const joined=member=>void observeMember(member),left=member=>void observeMember(member,false);
@@ -197,5 +227,5 @@ export function createOnboardingWorker({client,socket,guildId,config,log=console
  client.on(Events.ClientReady,start);client.on(Events.GuildMemberAdd,joined);client.on(Events.GuildMemberRemove,left);
  socket.on('connect',start);socket.on('disconnect',disconnected);socket.on('guildsync:onboarding-wake',start);
  const timer=setInterval(start,60000);timer.unref();
- return {tick,observeMember,stop(){stopped=true;clearInterval(timer);client.off(Events.ClientReady,start);client.off(Events.GuildMemberAdd,joined);client.off(Events.GuildMemberRemove,left);socket.off('connect',start);socket.off('disconnect',disconnected);socket.off('guildsync:onboarding-wake',start);}};
+ return {tick,observeMember,async stop(){stopped=true;clearInterval(timer);client.off(Events.ClientReady,start);client.off(Events.GuildMemberAdd,joined);client.off(Events.GuildMemberRemove,left);socket.off('connect',start);socket.off('disconnect',disconnected);socket.off('guildsync:onboarding-wake',start);if(running)await new Promise(resolve=>drain.push(resolve));}};
 }

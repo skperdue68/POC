@@ -18,16 +18,16 @@ function fixture(kind='promotion') {
   threads:{fetchActive:async()=>({threads:new Collection()}),fetchArchived:async()=>({threads:new Collection(),hasMore:false}),create:async options=>{assert.equal(options.type,ChannelType.PrivateThread);assert.equal(options.invitable,false);actions.push('create');return thread;}}};
  const guild={id:'guild',roles:{fetch:async()=>roles},members:{fetch:async()=>member}};
  const client={user:{id:'bot'},guilds:{fetch:async()=>guild},channels:{fetch:async id=>id==='123'?parent:thread}};
- let valid=true;
+ let valid=true,notificationEnabled=true;
  const socket={connected:true,timeout(){return this;},emit(event,payload,cb){
   const action=event.split('-').at(-1);
   if(action==='progress')progress.push(payload.patch);
   if(action==='finish')finishes.push(payload.result);
-  cb(null,{ok:true,result:action==='validate'?{valid,esoName:'ESO'}:{}});
+  cb(null,{ok:true,result:action==='validate'?{valid,notificationEnabled,esoName:'ESO'}:{}});
  }};
  const job={id:'job',userId:'user',guildId:'guild',kind,claimToken:'claim',esoName:'ESO'};
  const context={client,socket,guildId:'guild',config,log:()=>{},now:()=>2000};
- return {config,actions,progress,finishes,messages,roles,member,parent,thread,guild,client,socket,job,context,setValid:v=>valid=v};
+ return {config,actions,progress,finishes,messages,roles,member,parent,thread,guild,client,socket,job,context,setValid:v=>valid=v,setNotificationEnabled:v=>notificationEnabled=v};
 }
 test('promotion adds Associate before removing Gangster, preserving other roles, then privately notifies',async()=>{
  const f=fixture();await processOnboardingDelivery(f.context,f.job);
@@ -149,4 +149,31 @@ test('public fallback works without Manage Threads and privately enumerates only
  f.parent.threads.fetchArchived=async options=>{if(options.type==='private')assert.equal(options.fetchAll,false);return {threads:new Collection(),hasMore:false};};
  f.thread.type=ChannelType.PublicThread;f.parent.threads.create=async options=>{assert.equal(options.type,ChannelType.PublicThread);return f.thread;};
  await processOnboardingDelivery(f.context,f.job);assert.equal(f.finishes.at(-1).done,true);
+});
+
+test('notification disable preserves role promotion but pauses the saved delivery before thread/send',async()=>{const f=fixture();f.setNotificationEnabled(false);await processOnboardingDelivery(f.context,f.job);assert.deepEqual(f.actions,['add:a','remove:g']);assert.match(f.finishes.at(-1).error,/notifications.*disabled/i);assert.equal(f.finishes.at(-1).done,undefined);});
+
+test('higher guild ranks only lose Gangsters, never receive Associates or promotion notices',async()=>{
+ for(const name of ['Soldier','Soldiers','Capo','Capos','Caporegime','Capo Regimes','Caporegieme','Caporegiemes','Consigliere','Consiglieri','Consiglieres','Kingpin','Kingpins','  SOLDIERS  ']) {
+  const f=fixture();const higher={id:'higher',name,editable:false};f.roles.set(higher.id,higher);f.member.roles.cache.set(higher.id,higher);
+  await processOnboardingDelivery(f.context,f.job);
+  assert.deepEqual(f.actions,['remove:g'],name);assert.ok(f.member.roles.cache.has(higher.id),name);assert.ok(f.member.roles.cache.has('other'),name);
+  assert.equal(f.member.roles.cache.has('a'),false,name);assert.equal(f.finishes.at(-1).done,true,name);assert.equal(f.finishes.at(-1).promoted,false,name);
+ }
+});
+test('higher-rank cleanup does not require a manageable member or an editable Associate role',async()=>{
+ const f=fixture();const higher={id:'higher',name:'Kingpin',editable:false};f.roles.set(higher.id,higher);f.member.roles.cache.set(higher.id,higher);f.member.manageable=false;f.roles.delete('a');
+ await processOnboardingDelivery(f.context,f.job);assert.deepEqual(f.actions,['remove:g']);assert.equal(f.finishes.at(-1).done,true);
+});
+test('uncertain Gangsters removal resumes cleanup without adding Associates or notifying',async()=>{
+ const f=fixture();const higher={id:'higher',name:'Soldiers',editable:false};f.roles.set(higher.id,higher);f.member.roles.cache.set(higher.id,higher);
+ f.member.roles.remove=async id=>{f.actions.push('remove:'+id);f.member.roles.cache.delete(id);throw Error('uncertain acknowledgement');};
+ await processOnboardingDelivery(f.context,f.job);assert.match(f.finishes.at(-1).error,/uncertain/);
+ await processOnboardingDelivery(f.context,f.job);assert.deepEqual(f.actions,['remove:g']);assert.equal(f.finishes.at(-1).done,true);assert.equal(f.finishes.at(-1).promoted,false);
+});
+test('existing Associates are retained during higher-rank cleanup and uneditable Gangsters fail safely',async()=>{
+ for(const editable of [true,false]){const f=fixture();const higher={id:'higher',name:'Capo',editable:false};f.roles.set(higher.id,higher);f.member.roles.cache.set(higher.id,higher);f.member.roles.cache.set('a',f.roles.get('a'));f.roles.get('g').editable=editable;
+  await processOnboardingDelivery(f.context,f.job);assert.ok(f.member.roles.cache.has('a'));assert.ok(f.member.roles.cache.has('higher'));
+  if(editable)assert.deepEqual(f.actions,['remove:g']);else{assert.deepEqual(f.actions,[]);assert.match(f.finishes.at(-1).error,/Gangsters/);}
+ }
 });
