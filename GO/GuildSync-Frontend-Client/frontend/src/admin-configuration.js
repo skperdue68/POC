@@ -1,8 +1,15 @@
 const escape=value=>String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function createAccordionState(){return {open:'',toggle(id){this.open=this.open===id?'':id;},close(){this.open='';}};}
+function isDefaultValue(setting,value) {
+ if(setting.type==='boolean')return String(value).toLowerCase()===String(setting.defaultValue).toLowerCase();
+ if(setting.type==='number')return String(value).trim()!=='' && Number(value)===Number(setting.defaultValue);
+ return String(value ?? '')===String(setting.defaultValue ?? '');
+}
 export function draftSetting(setting,changes){
- if(Object.hasOwn(changes,setting.key))return changes[setting.key]===null?{value:setting.defaultValue,override:false,source:'Default (pending Save)'}:{value:changes[setting.key],override:true,source:'GuildSync override (pending Save)'};
- return {value:setting.value,override:setting.source==='GuildSync override',source:setting.source==='.env'?'Default':setting.source};
+ const pending=Object.hasOwn(changes,setting.key);
+ const value=pending?(changes[setting.key]===null?setting.defaultValue:changes[setting.key]):setting.value;
+ const override=!isDefaultValue(setting,value);
+ return {value,override,source:override?'Overridden':'Default'};
 }
 export function formatConfigurationValue(setting,value) {
  if(setting.type==='boolean')return value===true || String(value).toLowerCase()==='true'?'Enabled':'Disabled';
@@ -16,8 +23,8 @@ Total Tickets: 24`,note:'',note_block:'',ticket_type:'Bi-Weekly',ticket_type_raw
  const rendered=String(template).replace(/{([a-zA-Z0-9_]+)}/g,(match,key)=>values[key] ?? match);
  return body&&!String(template).includes('{bonus_block}')?rendered+'\n\n'+values.bonus_block:rendered;
 }
-export function wireReportAccordions(accordion){
- const refresh=()=>{
+export function wireReportAccordions(accordion,{refresh=false}={}){
+ const update=()=>{
   for(const button of document.querySelectorAll('[data-report-toggle]')){
    const open=button.dataset.reportToggle===accordion.open;
    button.setAttribute('aria-expanded',String(open));
@@ -25,14 +32,20 @@ export function wireReportAccordions(accordion){
    if(content){content.classList.toggle('is-open',open);content.inert=!open;}
   }
  };
- for(const button of document.querySelectorAll('[data-report-toggle]'))button.addEventListener('click',()=>{accordion.toggle(button.dataset.reportToggle);refresh();});
- for(const button of document.querySelectorAll('.reports-panel .report-run-button:not([type="submit"])'))button.addEventListener('click',()=>{accordion.close();refresh();});
- refresh();
+ for(const button of document.querySelectorAll('[data-report-toggle]'))button.addEventListener('click',()=>{accordion.toggle(button.dataset.reportToggle);update();});
+ for(const button of document.querySelectorAll('.reports-panel .report-run-button:not([type="submit"])'))button.addEventListener('click',()=>{accordion.close();update();});
+ const sections=refresh?Array.from(document.querySelectorAll('.report-section-content')):[];
+ const transitions=sections.map(section=>section.style.transition);
+ for(const section of sections)section.style.transition='none';
+ update();
+ // Settle the reopened layout before restoring scrolling; later clicks still animate.
+ for(const section of sections)void section.offsetHeight;
+ sections.forEach((section,index)=>section.style.transition=transitions[index]);
 }
 export function createConfigurationPanel(){
  let configuration=null,changes={},loading=false,message='',saving=false;
  const input=(setting,draft)=>{
-  const attrs=`data-config-value="${escape(setting.key)}" id="config-${escape(setting.key)}" ${draft.override?'':'disabled'}`;
+  const attrs=`data-config-value="${escape(setting.key)}" id="config-${escape(setting.key)}" `;
   if(setting.type==='boolean')return `<select ${attrs}><option value="true" ${String(draft.value)==='true'?'selected':''}>Enabled</option><option value="false" ${String(draft.value)==='false'?'selected':''}>Disabled</option></select>`;
   if(setting.type==='select')return `<select ${attrs}>${setting.options.map(value=>`<option value="${escape(value)}" ${value===draft.value?'selected':''}>${escape(formatConfigurationValue(setting,value))}</option>`).join('')}</select>`;
   if(setting.type==='template')return `<textarea ${attrs} rows="${setting.key.includes('BODY')?9:3}" maxlength="${setting.maxLength}">${escape(draft.value)}</textarea>`;
@@ -43,7 +56,7 @@ export function createConfigurationPanel(){
   return `<article class="report-option-card admin-configuration-card"><div class="report-option-copy">
    <h3><button type="button" class="report-section-toggle" data-report-toggle="configuration" aria-expanded="false" aria-controls="adminConfigurationContent">Administrator Configuration <span aria-hidden="true">▾</span></button></h3>
    <div id="adminConfigurationContent" class="report-section-content" inert><div class="report-section-inner">
-   <p>Changes take effect only after Save. Return to default to remove a saved override. Settings apply live; active deliveries finish safely.</p>
+   <p>Edit any setting to override its default. Changes take effect only after Save. Return to default to restore the default value. Settings apply live; active deliveries finish safely.</p>
    <p role="status" class="configuration-status">${escape(message)}</p>
    ${!configuration?`<p>${loading?'Loading configuration...':'Configuration is not loaded.'}</p><button type="button" id="reloadAdminConfiguration">Load configuration</button>`:`
    ${configuration.botDefaultsReported?'':'<p>Bot defaults have not been reported yet. Connect the updated bot before editing its settings.</p>'}
@@ -52,7 +65,6 @@ export function createConfigurationPanel(){
      ${configuration.settings.filter(s=>s.group===group).map(setting=>{const draft=draftSetting(setting,changes);return `<div class="configuration-setting">
       <label for="config-${escape(setting.key)}">${escape(setting.label)}</label>
       <small>${escape(setting.key)} · <span data-config-source="${escape(setting.key)}">${escape(draft.source)}</span></small>
-      <label class="configuration-override"><input type="checkbox" data-config-override="${escape(setting.key)}" ${draft.override?'checked':''}> Use a GuildSync override</label>
       <div class="configuration-values">
        <div class="configuration-selected-value"><span>Current selection</span>${input(setting,draft)}</div>
        <div class="configuration-default-value"><span>Default value</span><output>${escape(formatConfigurationValue(setting,setting.defaultValue))}</output></div>
@@ -71,12 +83,9 @@ export function createConfigurationPanel(){
   if(!configuration&&!loading&&!message)void load();
   document.getElementById('reloadAdminConfiguration')?.addEventListener('click',()=>void load());
   for(const element of document.querySelectorAll('[data-config-value]'))element.addEventListener('input',()=>{
-   const key=element.dataset.configValue;changes[key]=element.value;
-   const source=document.querySelector(`[data-config-source="${key}"]`);if(source)source.textContent='GuildSync override (pending Save)';
+   const key=element.dataset.configValue;const setting=configuration.settings.find(s=>s.key===key);changes[key]=isDefaultValue(setting,element.value)?null:element.value;
+   const source=document.querySelector(`[data-config-source="${key}"]`);if(source)source.textContent=draftSetting(setting,changes).source;
    const preview=document.querySelector(`[data-config-preview="${key}"]`);if(preview)preview.textContent=receiptPreview(element.value,{body:key.endsWith('BODY_TEMPLATE')});
-  });
-  for(const element of document.querySelectorAll('[data-config-override]'))element.addEventListener('change',()=>{
-   const key=element.dataset.configOverride;const setting=configuration.settings.find(s=>s.key===key);changes[key]=element.checked?draftSetting(setting,changes).value:null;rerender();
   });
   for(const element of document.querySelectorAll('[data-config-default]'))element.addEventListener('click',()=>{changes[element.dataset.configDefault]=null;rerender();});
   document.getElementById('adminConfigurationForm')?.addEventListener('submit',async event=>{
