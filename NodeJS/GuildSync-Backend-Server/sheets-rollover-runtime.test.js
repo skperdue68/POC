@@ -62,6 +62,7 @@ async function fixture(t, { copyFailure = false, uncertainClear = false, sourceA
     beginTransaction: async()=>{},commit:async()=>{},rollback:async()=>{},
     async execute(sql, params) {
       if (sql.includes('guildsync_raffle_archive_cells')) { if (cellSaveFailure) throw Error('archive cell storage failed'); return [{}]; }
+      if (sql.startsWith('UPDATE guildsync_settings')) return [{}];
       if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
       if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
       if (sql.startsWith('SELECT value')) return [[{ value: JSON.stringify(state) }]];

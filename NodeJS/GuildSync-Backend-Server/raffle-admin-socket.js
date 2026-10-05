@@ -1,7 +1,7 @@
 import { loadArchiveCells } from './raffle-archive-cells.js';
 import { formatArchiveMessage } from './raffle-archive-message.js';
 import { loadRaffleResults, loadFormulaTemplates, saveFormulaTemplates } from './raffle-results.js';
-import { refreshBankingEntriesToGoogleSheets, googleSheetsBankingConfig, exportLog } from './google-sheets-banking-sync.js';
+import { refreshBankingEntriesToGoogleSheets, googleSheetsBankingConfig, exportLog, coordinateSpreadsheetOperation } from './google-sheets-banking-sync.js';
 
 export async function isConsigliere(db, discordUserId) {
   if (typeof discordUserId !== 'string' || !discordUserId) return false;
@@ -17,7 +17,7 @@ export function entriesForRafflePeriods(entries, periods, asOf) {
 }
 
 export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelection, getBankingDataJSON,
-  authorize = isConsigliere, refreshEntries = refreshBankingEntriesToGoogleSheets, log = exportLog, loadResults = loadArchiveCells, loadTemplates = loadFormulaTemplates }) {
+  authorize = isConsigliere, refreshEntries = refreshBankingEntriesToGoogleSheets, log = exportLog, loadResults = loadArchiveCells, loadTemplates = loadFormulaTemplates, historical, coordinate = coordinateSpreadsheetOperation }) {
   let running = false;
   socket.on('guildsync:raffle-refresh', async (payload = {}, callback) => {
     if (typeof callback !== 'function') return;
@@ -28,19 +28,36 @@ export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelect
     running = true;
     try {
       if (!await authorize(db, payload.discordUserId)) throw new Error('Only users with the exact Consigliere role can refresh raffles. Check Discord role synchronization if necessary.');
-      if (!['plan', 'export'].includes(payload.action)) throw new Error('Unknown raffle refresh action.');
+      if (!['plan', 'export', 'save'].includes(payload.action)) throw new Error('Unknown raffle refresh action.');
+      if (payload.action === 'save' && typeof payload.date !== 'string') throw Error('Save requires a raffle date in MMDDYY format.');
       let selection = getRaffleRefreshSelection(payload.date, undefined, payload.boundaryChoices);
       if (payload.action === 'plan') { callback({ ok: true, selection }); return; }
-      if (selection.boundaryTypes?.some(type => !['starts','ends'].includes(payload.boundaryChoices?.[type]))) throw Error('Choose whether each boundary raffle starts or ends on this date before loading.');
+      if (selection.boundaryTypes?.some(type => !['starts','ends'].includes(payload.boundaryChoices?.[type]))) throw Error('Choose whether the boundary raffle starts or ends on this date before loading or saving.');
       const requestedBy = String(payload.requestedBy || '').trim().slice(0, 100);
       if (!requestedBy) throw new Error('The initiating Discord display name is required.');
+      if (payload.action === 'save') {
+        if (!historical) throw Error('Historical archive service is unavailable.');
+        const result = await coordinate(async () => {
+          selection = getRaffleRefreshSelection(payload.date, undefined, payload.boundaryChoices);
+          await log('SAVE requested by ' + JSON.stringify(requestedBy) + ': ' + JSON.stringify(selection));
+          return historical.save(selection);
+        });
+        callback({ok:true,selection,saved:result.saved,sheetUrl:result.sheetUrl,historical:true});
+        return;
+      }
+      let target;
       const result = await refreshEntries(async () => {
         selection = getRaffleRefreshSelection(payload.date, undefined, payload.boundaryChoices);
         await log('REFRESH requested by ' + JSON.stringify(requestedBy) + ': ' + JSON.stringify(selection));
-        return { entries: entriesForRafflePeriods(await getBankingDataJSON(db), selection.raffles, selection.asOf), periods: selection.raffles, results: await loadResults(db, selection.raffles, googleSheetsBankingConfig().spreadsheetId), templates: await loadTemplates(db, googleSheetsBankingConfig().spreadsheetId) };
-      }, { uploadedBy: requestedBy, saveTemplates: formulas => saveFormulaTemplates(db, formulas, googleSheetsBankingConfig().spreadsheetId) });
+        target = historical ? await historical.prepare(selection,payload.date) : {spreadsheetId:googleSheetsBankingConfig().spreadsheetId,historical:false};
+        return { entries: entriesForRafflePeriods(await getBankingDataJSON(db), selection.raffles, selection.asOf), periods: selection.raffles, targetId:target.spreadsheetId,
+          results: target.results ?? await loadResults(db, selection.raffles, googleSheetsBankingConfig().spreadsheetId), templates: await loadTemplates(db, googleSheetsBankingConfig().spreadsheetId) };
+      }, { uploadedBy: requestedBy, processRollover:payload.date===undefined,
+        saveTemplates: formulas => target?.historical ? Promise.resolve() : saveFormulaTemplates(db, formulas, googleSheetsBankingConfig().spreadsheetId),
+        onComplete:()=>historical?.complete(selection,target) });
       callback({ ok: true, selection, synced: result.synced,
-        workingSheetUrl: 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(googleSheetsBankingConfig().spreadsheetId) + '/edit' });
+        historical:target?.historical || false, sheetUrl:target?.sheetUrl,
+        workingSheetUrl: target?.historical ? undefined : 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(googleSheetsBankingConfig().spreadsheetId) + '/edit' });
     } catch (error) {
       await log('REFRESH failed: ' + error.message).catch(console.error);
       callback({ ok: false, message: 'Raffle refresh failed: ' + error.message });

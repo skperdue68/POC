@@ -7,6 +7,7 @@ import { registerRaffleSocket, registerArchiveSocket } from './raffle-socket.js'
 import { getActiveRaffleSummary, getRaffleUserTickets, getSheetsRaffleWindows, getRaffleRefreshSelection, selectSheetsCatchupEntries } from './guildsync-database-actions.js';
 import { startSheetsRollover } from './sheets-rollover-runtime.js';
 import { registerRaffleManagementSocket, registerRaffleRefreshSocket } from './raffle-admin-socket.js';
+import { createHistoricalRaffles } from './historical-raffles.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
@@ -449,7 +450,8 @@ io.on('connection', (socket) => {
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerArchiveSocket(socket, applicationDB);
   registerRaffleManagementSocket(socket, applicationDB, { sheets: sheetsRuntime });
-  registerRaffleRefreshSocket(socket, applicationDB, { getRaffleRefreshSelection, getBankingDataJSON });
+  registerRaffleRefreshSocket(socket, applicationDB, { getRaffleRefreshSelection, getBankingDataJSON,
+    historical:createHistoricalRaffles(applicationDB,{currentSelection:()=>getRaffleRefreshSelection()}) });
 
   const user = socket.guildSyncUser;
 

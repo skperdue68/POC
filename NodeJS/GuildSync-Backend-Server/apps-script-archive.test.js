@@ -20,6 +20,9 @@ test('web app client validates identity and never accepts source as archive', as
   assert.equal(await requestArchive('archive', payload), 'copy');
   result = { ...result, name: '260926 Raffle' };
   assert.equal((await requestArchive('archive', { ...payload, details: true })).name, '260926 Raffle');
+  assert.equal(await requestArchive('historical-resolve', { ...payload, archiveId: 'trashed-old-copy' }), 'copy');
+  await assert.rejects(requestArchive('historical-read', { ...payload, archiveId: 'trashed-old-copy' }), /verify/);
+  await assert.rejects(requestArchive('historical-complete', { ...payload, archiveId: 'trashed-old-copy' }), /verify/);
   for (const override of [{ ok: false }, { sourceId: 'other' }, { key: 'other' }, { archiveId: 'source' }]) {
     result = { ok: true, sourceId: 'source', key: 'closure', archiveId: 'copy', ...override };
     await assert.rejects(requestArchive('archive', payload), /verify/);

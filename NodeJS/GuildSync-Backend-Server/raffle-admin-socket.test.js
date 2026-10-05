@@ -9,6 +9,31 @@ const entries = [
   { type: 'biweekly', eventId: 'future', time: 201 }
 ];
 
+test('historical endpoint routes target and save under the lock without running a ticket refresh for save',async()=>{
+ let handler;const calls=[];
+ const selection={asOf:200,boundaryTypes:['biweekly'],raffles:[{type:'biweekly',start:101,end:250},{type:'monthly',start:50,end:250}]};
+ const socket={guildSyncAuthenticated:true,guildSyncAuthType:'discord-bot',on(_event,callback){handler=callback;}};
+ endpoints.registerRaffleRefreshSocket(socket,{}, {
+  getRaffleRefreshSelection:()=>selection,getBankingDataJSON:async()=>entries,authorize:async(_db,id)=>id==='officer',log:async()=>{},loadTemplates:async()=>({}),
+  historical:{prepare:async()=>{calls.push('prepare');return {spreadsheetId:'archive',sheetUrl:'archive-url',historical:true,results:{biweekly:[],monthly:[]}};},
+   complete:async()=>calls.push('complete'),save:async()=>{calls.push('save');return {saved:5,sheetUrl:'archive-url'};}},
+  coordinate:async operation=>{calls.push('lock');return operation();},
+  refreshEntries:async(load,options)=>{calls.push('refresh');assert.equal(options.processRollover,false);const snapshot=await load();assert.equal(snapshot.targetId,'archive');await options.onComplete(snapshot);return {synced:2};}
+ });
+ const request=payload=>new Promise(resolve=>handler({date:'092626',discordUserId:'officer',requestedBy:'Officer',...payload},resolve));
+ assert.equal((await request({action:'export'})).ok,false);
+ assert.equal((await request({action:'save'})).ok,false);assert.deepEqual(calls,[]);
+ const loaded=await request({action:'export',boundaryChoices:{biweekly:'ends'}});
+ assert.equal(loaded.historical,true);assert.equal(loaded.sheetUrl,'archive-url');assert.equal(loaded.workingSheetUrl,undefined);
+ assert.deepEqual(calls,['refresh','prepare','complete']);calls.length=0;
+ const saved=await request({action:'save',boundaryChoices:{biweekly:'ends'}});
+ assert.equal(saved.saved,5);assert.deepEqual(calls,['lock','save']);
+ calls.length=0;
+ assert.equal((await request({action:'save',date:undefined})).ok,false);
+ assert.equal((await request({action:'save',discordUserId:'member'})).ok,false);
+ assert.deepEqual(calls,[]);
+});
+
 test('refresh endpoint uses both independently selected windows without test enablement', async t => {
   const old = process.env.GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED;
   process.env.GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED = 'false';
