@@ -4,7 +4,7 @@ Use **Reports & Admin → Administrator Configuration** in the web or desktop cl
 
 ## Saving, resetting, and defaults
 
-Every operational setting shows its environment key, current effective value, source, and default. Check **Use a GuildSync override** to edit. **Use .env default** marks an override for deletion. Neither action applies until **Save Configuration** succeeds. **Discard edits and reload** discards pending edits and refreshes the server values. Concurrent saves are rejected if another administrator changed the configuration; reload before retrying.
+Every operational setting shows its environment key, current effective value, source, and default. The selected value and default are aligned side by side (stacked on narrow screens). Boolean switches consistently display **Enabled** or **Disabled**; their underlying true/false storage is not shown as the default label. The UI identifies inherited values as **Default** and saved values as **GuildSync override**. Check **Use a GuildSync override** to edit. **Return to default** marks an override for deletion. Neither action applies until **Save Configuration** succeeds. **Discard edits and reload** discards pending edits and refreshes the server values. Concurrent saves are rejected if another administrator changed the configuration; reload before retrying.
 
 Backend settings inherit the backend process environment; bot settings inherit the bot process environment. The authenticated bot reports only the listed operational defaults when it connects. Blank or missing optional environment settings use the application's documented fallback. The UI may show fallback defaults until the updated bot has connected. Deploy both backend and bot before using these controls. Each deployment should have one backend process and one bot worker instance; saved settings are global for this GuildSync deployment.
 
@@ -77,7 +77,7 @@ All settings below are optional environment settings. Existing configured destin
 
 ## Templates and bonus policies
 
-Onboarding placeholders are `{mention}`, `{eso_name}`, `{associate_role}`, and `{hours}`. The bot restricts allowed mentions to the recipient. Unknown placeholders are rejected. Private-thread mode prefers a private thread and falls back to a public thread in the same channel when necessary; channel mode posts directly. Existing reminder enrollment cutoffs and one-time history are preserved when workers restart.
+Onboarding placeholders are `{mention}`, `{eso_name}`, `{associate_role}`, and `{hours}`. The bot restricts allowed mentions to the recipient. Unknown placeholders are rejected. Higher guild ranks (Soldiers, Capo, Caporegime, Consigliere, Kingpin, and recognized singular/plural aliases) receive Gangsters-role cleanup only: no Associates role is added and no Associate-promotion notification is sent. Other roles and existing Associates are preserved. Private-thread mode prefers a private thread and falls back to a public thread in the same channel when necessary; channel mode posts directly. Existing reminder enrollment cutoffs and one-time history are preserved when workers restart.
 
 Receipt placeholders are listed beside each template. The example preview uses a fictional purchase with a 20% bonus. The backend always appends positive bonus information when a custom body omits `{bonus_block}`; 0% receipts omit that block. Already rendered/checked-out receipt records keep their existing text; newly checked-out receipts use the saved templates.
 

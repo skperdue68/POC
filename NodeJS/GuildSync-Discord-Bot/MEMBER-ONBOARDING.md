@@ -8,7 +8,7 @@ This optional feature promotes Gangsters members when their Discord account has 
 
 Deploy the backend and bot from the same merged PR. Backend startup automatically creates the onboarding tables. Keep your existing database when restarting or redeploying.
 
-Create the Gangsters and Associates Discord roles. Configure Associates' server permissions to provide the intended full access; GuildSync assigns roles, not channel permissions. Place the bot's highest role above both roles and grant **Manage Roles**. GuildSync adds Associates before removing Gangsters and leaves other roles unchanged.
+Create the Gangsters and Associates Discord roles. Configure Associates' server permissions to provide the intended full access; GuildSync assigns roles, not channel permissions. Place the bot's highest role above both roles and grant **Manage Roles**. GuildSync adds Associates before removing Gangsters and leaves other roles unchanged. If the member already holds Soldiers, Capo, Caporegime, Consigliere, Kingpin, or a recognized singular/plural variant, GuildSync removes only Gangsters. It preserves higher ranks and any existing Associates role, does not add Associates, and does not send an Associate-promotion notification for that cleanup. The result is recorded in the bot log; cleanup retries remain safe after an uncertain removal response. Rank matching ignores case, spaces, and decorative punctuation; unrelated roles do not qualify as a higher guild rank.
 
 Create a normal text channel for onboarding threads. Both Gangsters and Associates members need **View Channel** on that parent. Grant the bot **View Channel**, **Create Private Threads**, **Create Public Threads** (for fallback), **Send Messages in Threads**, **Read Message History**, and preferably **Manage Threads** for full private archive discovery/moderation. Without Manage Threads, discovery uses only joined private threads. Moderators with Manage Threads and administrators can see private threads; ordinary uninvited members cannot. Each private thread is non-invitable and includes the intended member. Notifications tag only that member; Discord/user notification settings can still suppress push alerts.
 
@@ -45,7 +45,7 @@ Restart the backend and bot. No slash command redeployment or Google Apps Script
 | `GUILDSYNC_ONBOARDING_PROMOTION_MESSAGE` | blank | Use default or supply an editable message template. |
 | `GUILDSYNC_ONBOARDING_REMINDER_MESSAGE` | blank | Use default or supply an editable message template. |
 
-Restart the bot after any changes. Use one bot instance/configuration per guild. `channel` mode sends ordinary visible messages to the configured channel or thread. It intentionally does not provide the privacy of per-member private threads. If private-thread creation permission is unavailable or Discord rejects creation for permission/access reasons, GuildSync creates a public thread under the same configured channel. That thread is visible to members with parent-channel access, is logged, and is reused afterward. Network failures and unreadable history remain retryable rather than triggering fallback. No DMs are sent.
+Restart the bot after editing `.env`. Operational overrides saved in **Reports & Admin → Administrator Configuration** apply live; use **Return to default** and Save to remove an override. Use one bot instance/configuration per guild. `channel` mode sends ordinary visible messages to the configured channel or thread. It intentionally does not provide the privacy of per-member private threads. If private-thread creation permission is unavailable or Discord rejects creation for permission/access reasons, GuildSync creates a public thread under the same configured channel. That thread is visible to members with parent-channel access, is logged, and is reused afterward. Network failures and unreadable history remain retryable rather than triggering fallback. No DMs are sent.
 
 ## Message templates
 
@@ -68,7 +68,7 @@ Disabling reminders/master onboarding and restarting the bot ends enrollment and
 
 Member threads, including public fallback threads, are reused for the member's reminder and later promotion message. Archived threads are reopened. Role-change retries finish a partial promotion without announcing premature success. Message retries reconcile history before resending after an uncertain acknowledgement. Missing history/permissions stops delivery until corrected. This avoids knowingly repeating a reminder, although no distributed network operation can guarantee exactly-once delivery in every failure scenario.
 
-If you change the destination while a notification is pending, restore the old destination first to let the pending delivery reconcile safely. GuildSync does not blindly resend potentially delivered notifications in a new destination.
+If you change the destination while a notification is pending, that job retains its original delivery destination and rendered content so it can reconcile safely. New jobs use the new destination. Disabled promotion notifications pause already pending notification retries; they resume when re-enabled.
 
 ## Database and logs
 

@@ -21,3 +21,11 @@ All four tasks are complete. Full suite: 252/252 tests pass. Desktop and web Vit
 Independent review identified three P2 issues. Each was reproduced with a failing regression test and fixed in one pass: stale workers on reconnect (including updates arriving during refresh), paused promotion notification retries, and uploads queued after disabling ordinary sheet writes. The full suite passes after these fixes.
 
 Operational decisions retained after review: active deliveries finish with their recorded snapshot rather than being interrupted (changes may wait for them); explicit admin sheet commands remain available when ordinary writes are disabled (operators can still modify sheets); an empty archive channel list pauses pending reconciliation (delivery waits until a destination is configured). These behaviors are documented in the operator guide. No deferred minor findings.
+
+
+## Follow-up user feedback
+
+Higher-rank linked members (Soldiers, Capo, Caporegime/Caporegieme, Consigliere, Kingpin and recognized plurals) receive only Gangsters cleanup. Existing roles are retained, no Associates role is added, and no misleading promotion notice is sent. Removal retry tests cover uncertain acknowledgements and permissions without requiring the higher member or Associates role to be editable.
+
+Default reset labels become Return to default. Selected and default values align; booleans use Enabled/Disabled consistently, and delivery-mode defaults use the same display labels as their selector. Storage and save-only deletion semantics remain unchanged. Both clients and documentation are updated.
+Follow-up validation: 258/258 tests pass; both production frontend builds pass; headless Edge confirms aligned default values, consistent Enabled/Disabled labels, and save-only Return to default behavior.

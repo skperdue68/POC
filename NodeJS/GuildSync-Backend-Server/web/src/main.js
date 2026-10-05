@@ -1960,10 +1960,10 @@ function renderRaffleBonusSettings() {
             ${raffleBonusRaffles.map((raffle) => `<option value="${escapeAttribute(`${raffle.type}:${raffle.salesEnd}`)}" ${selectedBonusRaffle === `${raffle.type}:${raffle.salesEnd}` ? 'selected' : ''}>${escapeHtml(raffle.label)}${raffle.enabled ? ' (Bonuses)' : ''}</option>`).join('')}
           </select>
         </label>
-        <p>Source: ${escapeHtml(selected ? (selected.overridden ? 'Raffle override' : 'Saved raffle policy') : (raffleBonusSettings.source || '.env'))}</p>
+        <p>Source: ${escapeHtml(selected ? (selected.overridden ? 'Raffle override' : 'Saved raffle policy') : (raffleBonusSettings.source === '.env' ? 'Default' : (raffleBonusSettings.source || 'Default')))}</p>
         ${bonusResetToDefaults ? '<p role="status">Default restoration is pending. Click Save Bonus Settings to apply it, or change the selected raffle to cancel.</p><button type="button" id="cancelBonusDefaults">Cancel default restoration</button>' : ''}
         <form id="raffleBonusSettingsForm">
-          ${canEdit ? `<button type="button" id="resetBonusDefaults">${selected ? 'Remove this raffle override (on Save)' : 'Use .env bonus defaults (on Save)'}</button>` : ''}
+          ${canEdit ? `<button type="button" id="resetBonusDefaults">${selected ? 'Return to raffle default (on Save)' : 'Return to default (on Save)'}</button>` : ''}
           ${selected ? fields(selected.type, selected.label) : fields('biweekly', 'Bi-Weekly Raffle') + fields('monthly', '50/50 Raffle')}
           ${canEdit ? '<button class="refresh-discord-button report-run-button" type="submit">Save Bonus Settings</button>' : '<p>Admin access is required to change these settings.</p>'}
         </form>

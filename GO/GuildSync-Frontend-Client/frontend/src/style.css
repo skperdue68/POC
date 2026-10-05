@@ -6833,3 +6833,10 @@ body {
 .configuration-default,.configuration-actions button,#resetBonusDefaults,#cancelBonusDefaults,#reloadAdminConfiguration { background:#2563eb; color:white; border:1px solid #3b82f6; border-radius:6px; padding:7px 12px; cursor:pointer; }
 .configuration-default:hover,.configuration-actions button:hover { background:#1d4ed8; }
 .configuration-actions button:disabled { opacity:.6; cursor:wait; }
+
+.configuration-values { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); align-items:start; gap:12px; }
+.configuration-selected-value,.configuration-default-value { display:grid; gap:6px; min-width:0; }
+.configuration-values span { font-size:13px; }
+.configuration-selected-value input,.configuration-selected-value select { min-height:38px; }
+.configuration-default-value output { display:block; box-sizing:border-box; min-height:38px; max-height:220px; overflow:auto; padding:8px; background:#18212e; color:#f3f5fa; border:1px solid #64748b; border-radius:5px; white-space:pre-wrap; overflow-wrap:anywhere; }
+@media (max-width:600px) { .configuration-values { grid-template-columns:1fr; } }

@@ -433,3 +433,10 @@ Both desktop and web **Reports & Admin** provide collapsible bonus and administr
 See [Administrator Configuration](GuildSync-Admin-Configuration.md) for the complete override catalog, defaults, validation, live refresh behavior, and database inspection query. Overrides are stored in the existing startup-created `guildsync_settings` table under `admin_configuration`; no manual migration is required. Bonus settings retain their separate policy/version/raffle override tables. Changing `.env` itself still requires restarting its owning process; removing an override restores that process's original environment default.
 
 The additional optional bot switches `GUILDSYNC_RAFFLE_ANNOUNCEMENTS_ENABLED` and `GUILDSYNC_RAFFLE_ARCHIVE_ANNOUNCEMENTS_ENABLED` default to `true`. A destination must still be configured, so existing deployments remain opt-in. Set either to `false`, or save a disabled override in GuildSync, to pause that notification system without removing its destination. Existing delivery records are retained.
+
+
+### Higher-rank onboarding and default labels
+
+Confirmed-linked Gangsters who already hold a higher guild rank (Soldiers, Capo, Caporegime, Consigliere, Kingpin, or recognized singular/plural naming variants) keep that rank and lose only Gangsters. Existing Associates is preserved; Associates is not newly granted and no Associate-promotion notification is sent. Cleanup is logged and safely retried if Discord's removal acknowledgement is uncertain. Non-rank/decorative roles do not block a normal Associate promotion.
+
+Administrator Configuration uses **Return to default** and shows the default alongside the current selection. Switches consistently display **Enabled/Disabled**, while saved boolean data remains true/false internally. Resetting still deletes the override only after Save; collapsing a section does not save. **Default** identifies the inherited environment/application fallback value.

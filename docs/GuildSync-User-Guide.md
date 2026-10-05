@@ -132,7 +132,7 @@ Automatic archiving is optional. When enabled, spreadsheet writes pause at sales
 
 ## Joining Discord and gaining access
 
-If onboarding is enabled, members with **Gangsters** are promoted to **Associates** after a confirmed Discord-to-ESO link is made. GuildSync adds Associates, removes Gangsters, and retains unrelated roles. Your ESO rank is not changed by this feature. The server's Associates permissions determine your access.
+If onboarding is enabled, members with **Gangsters** are promoted to **Associates** after a confirmed Discord-to-ESO link is made. GuildSync adds Associates, removes Gangsters, and retains unrelated roles. If you already have Soldiers, Capo, Caporegime, Consigliere, Kingpin, or a matching singular/plural role, GuildSync removes only Gangsters and preserves your existing rank without adding Associates or sending an Associate-promotion message. Your ESO rank is not changed by this feature. The server's Associates permissions determine your access.
 
 GuildSync tags you in an account-linked message. It normally uses a private thread in the configured onboarding channel. If private-thread creation is unavailable, it creates a **public thread in that same channel**; members who can view the channel may see it. Staff with appropriate moderation permissions can view private threads too. No direct messages are sent.
 
@@ -151,10 +151,10 @@ If something seems missing, check upload status, save ESO data with `/reloadui`,
 
 **Raffle Bonus Tickets** and **Administrator Configuration** now open by clicking their headings. Opening another section or report closes the previous section. Closing a section keeps your unsaved edits.
 
-GuildSync administrators can configure onboarding, raffle announcements, archive notifications, spreadsheet automation, and receipt templates under **Administrator Configuration**. Each field identifies its effective value and whether it comes from the server's `.env` defaults or a saved GuildSync override. Check **Use a GuildSync override** to edit a field. **Use .env default** schedules removal of the override. Click **Save Configuration** to apply either choice; closing the section does not save.
+GuildSync administrators can configure onboarding, raffle announcements, archive notifications, spreadsheet automation, and receipt templates under **Administrator Configuration**. Each field identifies its effective value and whether it comes from the server's **Default** or a saved GuildSync override. Check **Use a GuildSync override** to edit a field. **Return to default** schedules removal of the override. The selection and default appear side by side and use the same wording: **Enabled** or **Disabled** for switches. Click **Save Configuration** to apply either choice; closing the section does not save.
 
 Settings apply without restarting the backend or connected bot. Active operations finish safely before switching settings; an offline bot uses saved settings when it reconnects. A rollover already on hold keeps its original deadline.
 
-Bonus settings have their own **Save Bonus Settings** button. **Use .env bonus defaults** restores upcoming/default policies; **Remove this raffle override** restores the saved policy for that particular raffle. Both require Save. Completed raffle policy history is retained.
+Bonus settings have their own **Save Bonus Settings** button. **Return to default** restores upcoming/default policies; **Return to raffle default** restores the saved policy for that particular raffle. Both require Save. Completed raffle policy history is retained.
 
 See [configuration details](GuildSync-Admin-Configuration.md) for the full setting list and setup requirements.

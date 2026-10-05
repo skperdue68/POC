@@ -16,6 +16,14 @@ function roleByName(roles,id,name) {
  if(matches.length!==1)throw Error('Onboarding needs one unambiguous '+name+' role; configure its role ID.');
  return matches[0];
 }
+// Match guild ranks, not decorative roles or arbitrary Discord role positions.
+const HIGHER_GUILD_RANKS=new Set([
+ 'soldier','soldiers','capo','capos','caporegime','caporegimes','caporegieme','caporegiemes',
+ 'consigliere','consiglieri','consiglieres','kingpin','kingpins'
+]);
+function higherGuildRank(member) {
+ return member.roles.cache.find(role=>HIGHER_GUILD_RANKS.has(String(role.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g,'')));
+}
 function requirePermissions(channel,subject,flags,label) {
  if(!channel.permissionsFor(subject)?.has(flags))throw Error('Onboarding missing '+label+' permissions in channel '+channel.id+'.');
 }
@@ -113,7 +121,25 @@ export async function processOnboardingDelivery(context,job) {
   if(!validity.valid){await finish({cancelled:true});return;}
   let associateName='Associates';
   if(job.kind==='promotion') {
-   const roles=await guild.roles.fetch(),gangster=roleByName(roles,config.gangsterRoleId,'Gangsters'),associate=roleByName(roles,config.associateRoleId,'Associates');
+   const roles=await guild.roles.fetch(),gangster=roleByName(roles,config.gangsterRoleId,'Gangsters');
+   const higherRank=higherGuildRank(member);
+   if(higherRank) {
+    if(member.roles.cache.has(gangster.id)) {
+     // Only Gangsters must be editable; higher ranks and Associates are untouched.
+     if(!gangster.editable)throw Error('Bot cannot remove the Gangsters role; check Manage Roles and role hierarchy.');
+     validity=await request(socket,'validate',payload);
+     if(!validity.valid){await finish({cancelled:true});return;}
+     await progress({roleStarted:true});job.roleStarted=true;
+     await member.roles.remove(gangster.id,'GuildSync confirmed ESO link; higher guild rank retained');
+    }else if(!(job.roleStarted || job.roleChanged)) {
+     await finish({cancelled:true});return;
+    }
+    await progress({roleChanged:true});job.roleChanged=true;
+    await finish({done:true,promoted:false});
+    log('Onboarding removed '+gangster.name+' from '+job.userId+'; retained higher guild rank '+higherRank.name+'.');
+    return; // No Associate-promotion message for a member whose rank was retained.
+   }
+   const associate=roleByName(roles,config.associateRoleId,'Associates');
    associateName=associate.name;
    if(gangster.id===associate.id)throw Error('Gangsters and Associates must be different roles.');
    if(!member.roles.cache.has(gangster.id)) {
