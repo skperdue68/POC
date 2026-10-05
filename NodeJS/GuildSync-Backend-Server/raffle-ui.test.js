@@ -16,6 +16,7 @@ for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', '
       getBankingRaffleWindow: () => ({ salesEnd: 200 }), selectedBonusRaffle: '',
       raffleBonusSettings: { enabledByType: { biweekly: true, monthly: false }, biweekly: [{ hours: 24, percent: 0 }], monthly: [{ hours: 24, percent: 0 }] },
       guildSyncSession: { user: { role: 'admin' } }, raffleBonusDraft: null,bonusResetToDefaults:false,
+      canEditGuildSyncData:()=>true,
       reportsAccordion:{},wireReportAccordions(){},adminConfigurationPanel:{wire(){}},renderGuildSyncTabLayout(){}
     });
   }
@@ -31,6 +32,12 @@ for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', '
     ctx.raffleBonusRaffles[0].enabled = false;
     assert.equal(vm.runInContext('isBankingRaffleBonusEnabled("biweekly")', ctx), false);
     assert.doesNotMatch(vm.runInContext('getBankingExportTsv([entry])', ctx), /Bonus/);
+  });
+  test(`${path}: viewers can see bank entries and bonus values without Move controls`,()=>{
+    const ctx=context();ctx.canEditGuildSyncData=()=>false;vm.runInContext(functions,ctx);
+    const html=vm.runInContext('renderBankDepositRow({displayName:"Viewer test",amount:1000,purchasedTickets:10,bonusPercent:20,bonusTickets:2,totalTickets:12},true,true)',ctx);
+    assert.match(html,/Viewer test|20%/);assert.doesNotMatch(html,/data-bank-entry-move/);
+    ctx.guildSyncSession.user.role='viewer';assert.doesNotMatch(vm.runInContext('renderRaffleBonusSettings()',ctx),/Save Bonus Settings|id="resetBonusDefaults"/);
   });
   test(`${path}: settings render independent switches without applying edits`, () => {
     const ctx = context();

@@ -1,3 +1,6 @@
+import {createUserAdministration,registerUserAdministrationSocket} from './user-administration.js';
+import {canEditGuildSyncRole} from './role-permissions.js';
+import {registerRolePermissions} from './role-permissions-socket.js';
 import {createConfigurationService} from './admin-configuration.js';
 import {registerConfigurationSocket} from './admin-configuration-socket.js';
 import { createDiscordOnboarding } from './discord-onboarding.js';
@@ -153,6 +156,7 @@ app.post('/api/auth/discord/desktop-token', async (req, res) => {
     const discordToken = await exchangeCodeWithDiscord(code, effectiveRedirectURI);
     const discordUser = await fetchDiscordUser(discordToken.access_token);
     const dbUser = await upsertLoginUser(loginDB, discordUser);
+    void broadcastUserAdministrationCounts();
 
     if (!dbUser.allowed) {
       return res.status(403).json({
@@ -234,6 +238,7 @@ app.get('/api/auth/discord/web-callback', async (req, res) => {
     const discordToken = await exchangeCodeWithDiscord(code, DISCORD_WEB_REDIRECT_URI);
     const discordUser = await fetchDiscordUser(discordToken.access_token);
     const dbUser = await upsertLoginUser(loginDB, discordUser);
+    void broadcastUserAdministrationCounts();
 
     if (!dbUser.allowed) {
       return res.status(403).send(renderWebAuthResultPage({
@@ -456,7 +461,38 @@ io.use(async (socket, next) => {
 
 const onboardingService = createDiscordOnboarding(applicationDB, {log:Log,wake:()=>io.to('GuildSyncDiscordBot').emit('guildsync:onboarding-wake')});
 
+const userAdministration = createUserAdministration(loginDB, {log:Log,onChange:async change=>{
+  Log(`GuildSync user ${change.action} by ${change.actor_id}: ${change.discord_user_id}`);
+  for(const client of io.sockets.sockets.values()) {
+    if(client.guildSyncUser?.discord_user_id!==change.discord_user_id)continue;
+    if(change.removed){client.emit('guildsync:account-removed');client.disconnect(true);}
+    else {client.guildSyncUser.role=change.user.role;client.guildSyncUser.display_name=preferredUserName(change.user);await sendCurrentAccountProfile(client);}
+  }
+  await broadcastUserAdministrationCounts();
+}});
+
+async function broadcastUserAdministrationCounts() {
+  try {
+    const [admins]=await loginDB.execute("SELECT discord_user_id FROM guildsync_users WHERE allowed = 1 AND role = 'admin'");
+    if(!admins.length)return;
+    const {pending_count}=await userAdministration.pending(admins[0].discord_user_id);
+    const ids=new Set(admins.map(row=>row.discord_user_id));
+    for(const client of io.sockets.sockets.values())if(client.guildSyncAuthenticated&&client.guildSyncAuthType!=='discord-bot'&&ids.has(client.guildSyncUser?.discord_user_id))client.emit('guildsync:users-changed',{pending_count});
+  }catch(error){Log('Could not refresh pending GuildSync account counts: '+error.message);}
+}
+
+async function sendCurrentAccountProfile(socket) {
+  if(!socket.guildSyncAuthenticated||socket.guildSyncAuthType==='discord-bot'||!socket.guildSyncUser?.discord_user_id)return;
+  try {
+    const [rows]=await loginDB.execute('SELECT discord_user_id, username, global_name, guild_member_name, email, avatar, role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[socket.guildSyncUser.discord_user_id]);
+    if(rows[0])socket.emit('guildsync:account-profile',buildGuildSyncUserFromDBUser(rows[0]));
+  }catch(error){Log('Could not load current GuildSync account profile: '+error.message);}
+}
+
 io.on('connection', (socket) => {
+  registerRolePermissions(socket,loginDB);
+  registerUserAdministrationSocket(socket,userAdministration);
+  void sendCurrentAccountProfile(socket);
   registerConfigurationSocket(socket,configurationService,{
     authorizeViewer: async id => {const [rows]=await loginDB.execute('SELECT discord_user_id FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows.length>0;},
     authorizeAdmin: async id => {const [rows]=await loginDB.execute('SELECT role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows[0]?.role==='admin';},
@@ -2789,6 +2825,7 @@ function buildGuildSyncUserFromDBUser(dbUser = {}) {
     avatar: dbUser.avatar || '',
     avatar_url: discordAvatarURL(dbUser.discord_user_id, dbUser.avatar),
     email: dbUser.email || '',
+    guild_member_name: dbUser.guild_member_name || '',
     role: dbUser.role || 'user'
   };
 }
@@ -2819,15 +2856,17 @@ async function verifyGuildSyncSession(token) {
   const claims = jwt.verify(token, GUILDSYNC_JWT_SECRET, {
     issuer: 'guildsync-auth-server', audience: 'guildsync-desktop'
   });
-  if (!claims.jti) return claims; // Existing time-limited sessions remain valid until they expire.
-  const [rows] = await loginDB.execute(
+  const [rows] = claims.jti ? await loginDB.execute(
     `SELECT users.role FROM guildsync_login_sessions AS sessions
      JOIN guildsync_users AS users ON users.discord_user_id = sessions.discord_user_id
      WHERE sessions.session_id = ? AND sessions.discord_user_id = ? AND users.allowed = 1 LIMIT 1`,
-    [claims.jti, claims.sub]);
-  if (!rows.length) {
+    [claims.jti, claims.sub]) : await loginDB.execute('SELECT role, requested_at FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[claims.sub]);
+  // A recreated account must never revive an older legacy token. Persistent sessions use their session ID.
+  const recreatedLegacyAccount = !claims.jti && rows.length &&
+    (!Number.isFinite(claims.iat) || claims.iat * 1000 < Date.parse(rows[0].requested_at));
+  if (!rows.length || recreatedLegacyAccount) {
     for (const socket of io.sockets.sockets.values()) {
-      if (socket.guildSyncSessionId === claims.jti) socket.disconnect(true);
+      if (claims.jti ? socket.guildSyncSessionId === claims.jti : socket.guildSyncUser?.discord_user_id === claims.sub) socket.disconnect(true);
     }
     throw new Error('Session was logged out.');
   }
@@ -2853,6 +2892,9 @@ async function requireGuildSyncWebUser(req, res, next) {
     const claims = await verifyGuildSyncSession(token);
 
     req.guildSyncUser = claims;
+    if (!canEditGuildSyncRole(claims.role)) {
+      return res.status(403).json({ok:false,message:'This account has read-only access. A User or Admin role is required to upload SavedVariables files.'});
+    }
     return next();
   } catch {
     return res.status(401).json({ ok: false, message: 'Invalid or expired GuildSync session.' });
@@ -2971,7 +3013,8 @@ function toGuildSyncUser(discordUser, allowedUser) {
     global_name: discordUser.global_name,
     avatar: discordUser.avatar || '',
     avatar_url: discordAvatarURL(discordUser.id, discordUser.avatar),
-    email: discordUser.email || '',
+    email: allowedUser ? allowedUser.email || '' : discordUser.email || '',
+    guild_member_name: allowedUser?.guild_member_name || '',
     role: allowedUser?.role || 'user'
   };
 }

@@ -1,0 +1,31 @@
+.user-pending-badge-wrap { position:absolute; top:-5px; right:-5px; pointer-events:none; z-index:2; }
+#runMemberAutoLinkButton[hidden], #openManualBiweeklyTicketButton[hidden], .member-link-dialog-section[hidden] { display:none !important; }
+.user-pending-badge { display:grid; place-items:center; min-width:23px; height:23px; padding:0 4px; box-sizing:border-box; border:2px solid #182238; border-radius:50%; background:#ef9840; color:#182238; font-size:12px; font-weight:800; }
+.user-admin-menu-button { display:flex; justify-content:space-between; gap:12px; width:100%; margin-top:12px; padding:10px 12px; border:1px solid #526b93; border-radius:6px; color:#fff; background:#234679; cursor:pointer; }
+.user-admin-overlay { position:fixed; inset:0; z-index:19000; display:grid; place-items:center; padding:20px; box-sizing:border-box; background:rgba(5,10,20,.78); }
+.user-admin-dialog { display:flex; flex-direction:column; width:min(1050px,100%); max-height:88vh; padding:22px; box-sizing:border-box; border:1px solid #52617b; border-radius:14px; color:#eef3fb; background:#182238; box-shadow:0 20px 70px #0008; }
+.user-admin-header, .user-admin-card header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
+.user-admin-dialog h2, .user-admin-dialog h3 { margin:0 0 6px; color:#fff; }
+.user-admin-dialog p { margin:4px 0 12px; }
+.user-admin-dialog button { padding:9px 13px; border:1px solid #6584b2; border-radius:6px; background:#23548d; color:#fff; font:inherit; cursor:pointer; }
+.user-admin-dialog button:disabled { opacity:.55; cursor:wait; }
+.user-admin-dialog input, .user-admin-dialog select { width:100%; box-sizing:border-box; margin-top:6px; padding:9px; border:1px solid #64728b; border-radius:5px; background:#101a2b; color:#fff; font:inherit; }
+.user-admin-dialog :focus-visible { outline:2px solid #80bbff; outline-offset:2px; }
+.user-admin-toolbar { display:flex; align-items:flex-end; flex-wrap:wrap; gap:12px; padding:12px 0 18px; }
+.user-admin-toolbar label:first-child { flex:1; min-width:180px; }
+.user-admin-toolbar [data-user-admin-count] { padding:8px 0; color:#bac8dc; }
+.user-admin-list { overflow:auto; overscroll-behavior:contain; min-height:0; padding-right:6px; }
+.user-admin-card { margin:0 0 16px; padding:18px; border:1px solid #455672; border-radius:9px; background:#202e47; }
+.user-admin-card header p, .user-admin-dates { font-size:12px; color:#becbdd; overflow-wrap:anywhere; }
+.user-admin-status { flex-shrink:0; padding:5px 8px; border-radius:5px; background:#244d40; font-size:12px; }
+.user-admin-status.is-pending { background:#694925; color:#ffdda4; }
+.user-admin-fields { display:grid; grid-template-columns:1fr 1fr .65fr; gap:16px; padding:12px 0; margin:0; border:0; min-width:0; }
+.user-admin-fields label { min-width:0; }
+.user-admin-own-role { padding-top:4px; }
+.user-admin-own-role small { display:block; margin-top:8px; color:#becbdd; }
+.user-admin-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.user-admin-dialog .user-admin-remove, .user-admin-confirmation [data-confirm-remove] { background:#793439; border-color:#be777c; }
+.user-admin-confirmation { margin-top:14px; padding:12px; border:1px solid #be777c; border-radius:6px; }
+.user-admin-confirmation button { margin-right:8px; }
+[data-user-admin-message] { min-height:22px; color:#c4ddff; }
+@media(max-width:650px) { .user-admin-overlay { padding:8px; } .user-admin-dialog { padding:14px; max-height:95vh; } .user-admin-fields { grid-template-columns:1fr; } .user-admin-card header { flex-wrap:wrap; } }
