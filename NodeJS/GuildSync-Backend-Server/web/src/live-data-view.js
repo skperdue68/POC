@@ -8,6 +8,12 @@ export function reconcileDataRows(current, incoming, keyAttribute, bindNew = () 
   let row = existing.get(key(wanted));
   if (!row) { row = wanted.cloneNode(true); bindNew(row); }
   else if (!row.isEqualNode(wanted)) {
+   for (const attribute of Array.from(row.attributes)) {
+    if (!wanted.hasAttribute(attribute.name)) row.removeAttribute(attribute.name);
+   }
+   for (const attribute of Array.from(wanted.attributes)) {
+    if (row.getAttribute(attribute.name) !== attribute.value) row.setAttribute(attribute.name, attribute.value);
+   }
    Array.from(wanted.children).forEach((cell, cellIndex) => {
     const old = row.children[cellIndex];
     if (old?.isEqualNode(cell)) return;

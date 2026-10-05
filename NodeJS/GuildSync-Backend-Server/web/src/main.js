@@ -263,6 +263,7 @@ const GUILDSYNC_TABS = [
 ];
 
 let activeGuildSyncTab = GUILDSYNC_TABS[0].id;
+const pendingTabDataRefreshes = new Set();
 
 function showSplash() {
   app.innerHTML = `
@@ -850,6 +851,24 @@ function wireGuildSyncConfirmDialog() {
   }
 }
 
+function refreshActiveTabData(tab = activeGuildSyncTab) {
+  if (!socket?.connected) return;
+  const loading = tab === 'discord-members' ? discordDataLoading
+    : tab === 'eso-members' ? rosterDataLoading : tab === 'more' ? bankingDataLoading : false;
+  if (loading) { pendingTabDataRefreshes.add(tab); return; }
+  pendingTabDataRefreshes.delete(tab);
+  if (tab === 'discord-members') refreshDiscordData({ silent: true });
+  if (tab === 'eso-members') {
+    rosterAutoRefreshAttempted = true;
+    refreshRosterDataFromBackend({ silent: true });
+  }
+  if (tab === 'more') refreshBankingDataFromBackend({ silent: true });
+}
+
+function refreshPendingTabData(tab) {
+  if (pendingTabDataRefreshes.has(tab)) refreshActiveTabData(tab);
+}
+
 function wireGuildSyncTabs() {
   document.querySelectorAll('.guildsync-tab').forEach((tabButton) => {
     tabButton.addEventListener('click', () => {
@@ -859,12 +878,11 @@ function wireGuildSyncTabs() {
 
       const nextTab = tabButton.dataset.tabId;
 
-      if (!nextTab || nextTab === activeGuildSyncTab) {
-        return;
-      }
-
+      if (!nextTab) return;
+      const changed = nextTab !== activeGuildSyncTab;
       activeGuildSyncTab = nextTab;
-      renderGuildSyncTabLayout();
+      refreshActiveTabData();
+      if (changed) renderGuildSyncTabLayout();
     });
   });
 }
@@ -3323,8 +3341,7 @@ function handleMemberLinksUpdated(payload = {}) {
   memberLinks = payload.links;
   // Reports & Admin has no live member rows unless a member-link dialog is open.
   if (changed && shouldRefreshMemberLinksView()) {
-    if (activeGuildSyncTab === 'discord-members' && !memberLinkDialogOpen && !memberLinksReportDialogOpen && !discordLastSeenReportDialogOpen) updateDiscordDataView();
-    else renderGuildSyncTabLayout();
+    updateMemberLinksView();
   }
 }
 
@@ -3339,14 +3356,14 @@ function updateMemberLinksReportButton() {
 async function refreshMemberLinks(options = {}) {
   if (!socket?.connected) {
     memberLinksError = 'You must be connected to load member links.';
-    if (shouldRefreshMemberLinksView()) renderGuildSyncTabLayout();
+    if (shouldRefreshMemberLinksView()) updateMemberLinksView();
     return;
   }
 
   memberLinksLoading = true;
   memberLinksError = '';
   updateMemberLinksReportButton();
-  if (!options.silent && shouldRefreshMemberLinksView()) renderGuildSyncTabLayout();
+  if (!options.silent && shouldRefreshMemberLinksView()) updateMemberLinksView();
 
   try {
     const response = await emitSocketWithAck('guildsync:request-member-links', {}, 30000);
@@ -3357,7 +3374,7 @@ async function refreshMemberLinks(options = {}) {
   } finally {
     memberLinksLoading = false;
     updateMemberLinksReportButton();
-    if (shouldRefreshMemberLinksView()) renderGuildSyncTabLayout();
+    if (shouldRefreshMemberLinksView()) updateMemberLinksView();
   }
 }
 
@@ -5459,16 +5476,10 @@ function formatRosterHistoryTimestamp(value) {
 
 async function handleRosterDataUpdated(payload = {}) {
   const members = normalizeRosterMembers(payload.members);
-  const changed = JSON.stringify(rosterMembers) !== JSON.stringify(members);
   rosterMembers = members;
   rosterLastRefreshValue = payload.last_refresh || new Date().toISOString();
 
-  if (changed && (activeGuildSyncTab === 'eso-members' || memberLinkDialogOpen)) {
-    renderGuildSyncTabLayout();
-  } else if (activeGuildSyncTab === 'eso-members') {
-    const refreshText = document.querySelector('.eso-roster-panel .discord-last-refresh');
-    if (refreshText) refreshText.textContent = `Last Refresh: ${formatRosterRefreshDate(rosterLastRefreshValue)}`;
-  }
+  updateRosterDataView();
 
   addSystemMessage('roster-data-updated', `Roster data updated. Loaded ${rosterMembers.length} member record${rosterMembers.length === 1 ? '' : 's'}.`, {
     ttlMs: TRANSIENT_MESSAGE_TTL_MS
@@ -5481,7 +5492,7 @@ async function refreshRosterDataFromBackend(options = {}) {
   }
 
   rosterDataLoading = true;
-  if (activeGuildSyncTab === 'eso-members' || memberLinkDialogOpen) renderGuildSyncTabLayout();
+  updateRosterDataView();
 
   try {
     const response = await emitSocketWithAck('guildsync:request-roster-data', {}, 30000);
@@ -5503,8 +5514,9 @@ async function refreshRosterDataFromBackend(options = {}) {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
     });
   } finally {
-    rosterDataLoading = false;
-    if (activeGuildSyncTab === 'eso-members' || memberLinkDialogOpen) renderGuildSyncTabLayout();
+    rosterDataLoading = Boolean(options.deferPendingRefresh);
+    updateRosterDataView();
+    if (!options.deferPendingRefresh) refreshPendingTabData('eso-members');
   }
 }
 
@@ -5521,7 +5533,7 @@ async function collectAndSendGuildSyncRosterData(payload = {}) {
   }
 
   rosterDataLoading = true;
-  renderGuildSyncTabLayout();
+  updateRosterDataView();
 
   try {
     const result = await CollectGuildSyncRosterData(payload);
@@ -5551,14 +5563,15 @@ async function collectAndSendGuildSyncRosterData(payload = {}) {
       throw sendError;
     }
 
-    await refreshRosterDataFromBackend({ silent: true });
+    await refreshRosterDataFromBackend({ silent: true, deferPendingRefresh: true });
   } catch (error) {
     addSystemMessage('roster-data-error', formatError(error), {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
     });
   } finally {
     rosterDataLoading = false;
-    renderGuildSyncTabLayout();
+    updateRosterDataView();
+    refreshPendingTabData('eso-members');
   }
 }
 
@@ -7274,12 +7287,15 @@ function bindLiveDataActions(root) {
   root.querySelectorAll('[data-open-member-link-dialog]').forEach(button => {
     button.addEventListener('click', () => openMemberLinkDialog(button.dataset.openMemberLinkDialog || '', button.dataset.memberLinkValue || ''));
   });
+  root.querySelectorAll('[data-open-roster-notes]').forEach(button => {
+    button.addEventListener('click', () => openRosterNotesDialog(button.dataset.openRosterNotes || ''));
+  });
   root.querySelectorAll('[data-bank-entry-move]').forEach(button => {
     button.addEventListener('click', () => openBankingMoveDialog(button.dataset.bankEntryMove || ''));
   });
 }
 
-function updateLiveDataView(selector, markup, banking = false) {
+function updateLiveDataView(selector, markup, banking = false, roster = false) {
   const panel = document.querySelector(selector);
   if (!panel) return;
   const restoreScroll = captureGuildSyncScrollPosition(panel);
@@ -7288,11 +7304,11 @@ function updateLiveDataView(selector, markup, banking = false) {
   const template = document.createElement('template');
   template.innerHTML = markup;
   const next = template.content.firstElementChild;
-  const table = banking ? '.bank-deposit-table' : '.discord-member-table';
-  reconcileDataRows(panel.querySelector(`${table} tbody`), next.querySelector(`${table} tbody`), banking ? 'data-bank-event-id' : 'data-discord-user-id', bindLiveDataActions);
+  const table = banking ? '.bank-deposit-table' : roster ? '.eso-roster-table' : '.discord-member-table';
+  reconcileDataRows(panel.querySelector(`${table} tbody`), next.querySelector(`${table} tbody`), banking ? 'data-bank-event-id' : roster ? 'data-eso-account-name' : 'data-discord-user-id', bindLiveDataActions);
   syncDataHTML(panel.querySelector(`${table} thead`), next.querySelector(`${table} thead`));
   syncDataText(panel.querySelector('.discord-data-actions .discord-last-refresh'), next.querySelector('.discord-data-actions .discord-last-refresh'));
-  const buttonSelector = banking ? '#refreshBankingDataButton' : '#refreshDiscordDataButton';
+  const buttonSelector = banking ? '#refreshBankingDataButton' : roster ? '#refreshRosterDataButton' : '#refreshDiscordDataButton';
   const button = panel.querySelector(buttonSelector), wantedButton = next.querySelector(buttonSelector);
   if (button && wantedButton) {
     button.disabled = wantedButton.disabled;
@@ -7300,7 +7316,8 @@ function updateLiveDataView(selector, markup, banking = false) {
   }
   if (!banking) {
     syncDataText(panel.querySelector('.discord-results-count'), next.querySelector('.discord-results-count'));
-    const select = panel.querySelector('#discordRoleFilter'), wanted = next.querySelector('#discordRoleFilter');
+    const filterSelector = roster ? '#rosterRankFilter' : '#discordRoleFilter';
+    const select = panel.querySelector(filterSelector), wanted = next.querySelector(filterSelector);
     if (select && wanted && select.innerHTML !== wanted.innerHTML) {
       const value = select.value; select.innerHTML = wanted.innerHTML; select.value = value;
     }
@@ -7331,6 +7348,18 @@ function updateLiveDataView(selector, markup, banking = false) {
     if (selection && selection[0] !== null) focused.setSelectionRange(...selection);
   }
   restoreScroll();
+}
+
+function updateRosterDataView() {
+  if (activeGuildSyncTab === 'eso-members' && document.querySelector('.eso-roster-panel')) {
+    updateLiveDataView('.eso-roster-panel', renderEsoRosterPanel(), false, true);
+  }
+}
+
+function updateMemberLinksView() {
+  if (memberLinkDialogOpen || memberLinksReportDialogOpen || discordLastSeenReportDialogOpen) renderGuildSyncTabLayout();
+  else if (activeGuildSyncTab === 'discord-members') updateDiscordDataView();
+  else if (activeGuildSyncTab === 'eso-members') updateRosterDataView();
 }
 
 function updateDiscordDataView() {
@@ -7406,9 +7435,7 @@ async function handleBankingDataUpdated(payload = {}) {
   applyBankingBonusData(payload);
   markBankingLastRefreshNow();
 
-  if (activeGuildSyncTab === 'more') {
-    updateBankingDataView();
-  }
+  updateBankingDataView();
 
   addSystemMessage('banking-data-updated', `Banking data updated. Loaded ${bankingEntries.length} deposit record${bankingEntries.length === 1 ? '' : 's'}.`, {
     ttlMs: TRANSIENT_MESSAGE_TTL_MS
@@ -7457,9 +7484,10 @@ async function refreshBankingDataFromBackend(options = {}) {
     }
   } finally {
     if (!background) {
-      bankingDataLoading = false;
+      bankingDataLoading = Boolean(options.deferPendingRefresh);
     }
     updateBankingDataView();
+    if (!options.deferPendingRefresh) refreshPendingTabData('more');
   }
 }
 
@@ -7629,7 +7657,7 @@ async function collectAndSendGuildSyncBankingData(payload = {}) {
       throw sendError;
     }
 
-    await refreshBankingDataFromBackend({ silent: true });
+    await refreshBankingDataFromBackend({ silent: true, deferPendingRefresh: true });
   } catch (error) {
     addSystemMessage('banking-data-error', formatError(error), {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
@@ -7637,6 +7665,7 @@ async function collectAndSendGuildSyncBankingData(payload = {}) {
   } finally {
     bankingDataLoading = false;
     updateBankingDataView();
+    refreshPendingTabData('more');
   }
 }
 
@@ -8179,6 +8208,7 @@ async function refreshDiscordData(options = {}) {
   } finally {
     discordDataLoading = false;
     updateDiscordDataView();
+    refreshPendingTabData('discord-members');
   }
 }
 
