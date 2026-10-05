@@ -22,3 +22,8 @@ test('SQL store retains completed state and queries confirmed links only',async(
  await store.promotionCandidates({gangsterRoleId:'role'});assert.match(queries.at(-1).sql,/r.role_id=\?/);assert.deepEqual(queries.at(-1).args,['role']);
  await store.putJob(job);assert.ok(queries.at(-1).args.every(value=>value!==undefined));
 });
+
+test('default promotion candidates use the plural Gangsters Discord rank',async()=>{
+ const queries=[];const store=createOnboardingStore({execute:async(sql,args)=>{queries.push({sql,args});return [[]];}});
+ await store.promotionCandidates({});assert.deepEqual(queries.at(-1).args,['gangsters']);
+});

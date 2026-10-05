@@ -1,0 +1,147 @@
+# GuildSync user guide
+
+Updated October 5, 2026. This guide covers the commands and systems in the current source, including optional member onboarding. A feature becomes available on your server after its changes are deployed and its administrator enables any required settings.
+
+For setup, every environment setting, database details, and troubleshooting, see the [detailed reference](GuildSync-Detailed-Help.md).
+
+## What GuildSync does
+
+GuildSync connects your guild's ESO activity with Discord and the raffle spreadsheets. It collects guild bank deposits and roster changes, keeps the records in a database, and uses those records to show raffle tickets, fill spreadsheets, and prepare receipt mail. It also helps officers review applications and match Discord members with ESO accounts.
+
+Data appears after an officer's ESO add-ons save it and the GuildSync desktop app uploads it. GuildSync does not query the live ESO bank when you run a Discord command.
+
+## Discord: commands for members
+
+Type these in your guild's Discord server. In the examples, text after a colon is a Discord command option.
+
+| Command | What it does |
+| --- | --- |
+| `/raffle` | Privately shows the current Bi-Weekly and 50/50 raffles, prizes, tickets, draw times, and available early purchase bonus. |
+| `/raffle public:true` | Shows the raffle summary publicly in the channel. |
+| `/tickets` | Privately shows the raffle summary and your current ticket purchases for your linked ESO account. |
+| `/raffle tickets:true` | Does the same ticket lookup as `/tickets`. |
+
+Ticket details are private even if you also choose `public:true`. Bi-Weekly and 50/50 purchases appear separately. When a purchase earned a bonus, its percentage appears with bonus and total tickets.
+
+If your tickets cannot be found, check that your Discord account is linked to your ESO account and that recent deposits have been uploaded. Matching your server nickname to your ESO account helps the matching process. Ask an officer to review the link if it still does not work.
+
+## Discord: raffle commands for Consigliere
+
+These require the Discord role named exactly **Consigliere**. `/gsr` is a shorter name for `/gsraffle`; both do the same thing.
+
+| Command | What it does |
+| --- | --- |
+| `/tickets verify:AccountName` | Privately checks current tickets for an ESO account. Enter the account name without `@`, a mention, or a link. |
+| `/raffle verify:AccountName` | The same officer ticket lookup. |
+| `/gsr load` | Clears and refills the current working raffle sheets from the database, including saved result fields. Returns an **Open Working Raffle** button. |
+| `/gsr load date:092526` | Loads the raffle containing September 25, 2026. Historical raffles use their archived spreadsheet, leaving the current working sheet alone. Creates an archive if needed. |
+| `/gsr update date:092526` | Saves winners, attendance, and other supported result fields from that archived sheet back into the database. It does not clear the sheet or import ticket purchases. |
+| `/gsr archive` | Archives the current raffle sheet, saves its supported result fields, resets both working tabs, and repopulates current raffle data. Returns buttons for the archive and working sheet. |
+| `/gsr reset` | Clears managed data and draw dates on both working tabs without deleting database records. Use `load` afterward to restore data. |
+
+Dates use **MMDDYY**: `100326` means October 3, 2026. If your date is the start/end boundary of a Bi-Weekly raffle, choose **Starts on this date** or **Ends on this date** when asked. GuildSync selects the corresponding 50/50 raffle for you. You have one minute to answer; no answer cancels the operation.
+
+To edit an old raffle:
+
+1. Run `/gsr load date:MMDDYY` and answer any boundary question.
+2. Open the returned archive button. Review or edit the supported winner, attendance, bonus-ticket, or winnings-sent fields.
+3. Run the **update command shown in the response**, using the same date and boundary choice.
+
+Existing historical files keep their file ID during load and update. Archive filenames use the Bi-Weekly ending date: **YYMMDD Raffle**, such as `261010 Raffle` for October 10, 2026. Archiving the live sheet again can replace an older same-name archive and give that replacement a new link.
+
+Loading rebuilds the managed fields. Update an edited historical archive before loading it again if you want to explicitly save your edits. An existing ready archive is also read before a historical reload, but `update` is the deliberate save operation.
+
+If a command times out, ask the operator to check the logs before retrying: the operation may still be running. Archive errors leave records in the database and pause the reset until recovery succeeds.
+
+## Discord: synchronization and applications
+
+| Command | What it does / access |
+| --- | --- |
+| `/roles` | Refreshes Discord roles and members in GuildSync. Discord defaults access to members with **Manage Roles**. |
+| `/gsa post name:AccountName` | Reposts saved ESO application decisions matching a full or partial account name to the configured application thread. |
+| `/gsa stop` | Pauses automatic application posts to Discord. |
+| `/gsa start` | Resumes automatic application posts. |
+
+The administrator should restrict `/gsa` through Discord's command permissions if only officers should use it. GuildSync currently has no built-in officer check for those three application commands. Stopping automatic posts does not block a manual `post`; restarting the bot enables automatic posting again.
+
+## ESO: commands typed in game
+
+These are **ESO chat commands**, not Discord commands. In particular, ESO `/gsr` manages the **roster**, while Discord `/gsr` manages **raffles**.
+
+### GuildSyncBanking
+
+Banking collection starts automatically when its history library is ready. It records gold deposits for Alphabet Mafia.
+
+| ESO command | What it does |
+| --- | --- |
+| `/gsb` or `/gsb help` | Shows banking command help. |
+| `/gsb status` | Shows whether collection is running and its saved progress. |
+| `/gsb stream` | Starts or resumes collection. |
+| `/gsb stop` | Stops collection. |
+| `/gsb dump` | Prints matching cached deposits for inspection; does not collect or save them. |
+| `/gsb reset` | Restarts history collection from the beginning. Existing event IDs prevent saved duplicates. Use for recovery when directed by an operator. |
+| `/gsb debug on` / `/gsb debug off` | Enables/disables extra in-game banking output. |
+
+### GuildSyncRoster
+
+Roster collection also starts automatically when its history library is ready.
+
+| ESO command | What it does |
+| --- | --- |
+| `/gsr` or `/gsr help` | Shows roster command help. |
+| `/gsr guildlist` | Captures the current member list and ranks. |
+| `/gsr stream` | Starts or resumes collection of roster events. |
+| `/gsr stop` | Stops collection. |
+| `/gsr dump` | Prints cached matching events without saving them. |
+| `/gsr debug on` / `/gsr debug off` | Enables/disables extra in-game roster output. |
+
+### GuildSyncApplications
+
+| ESO command | What it does |
+| --- | --- |
+| `/gsa` or `/gsa help` | Shows application add-on help. |
+| `/gsa settings` | Opens welcome-message and welcome-email settings. Create, enable/disable, edit, and save your templates here. |
+| `/gsa list` | Prints saved application decisions. |
+
+The application add-on records accept/decline/reject actions performed through ESO's application interface. After an accepted applicant's membership is confirmed, it sends a welcome mail. For an online applicant, it prepares welcome text in **officer chat** and plays an alert; the officer presses **Enter** to send that chat message. `{name}` in a welcome template becomes the applicant's account name.
+
+Use ESO's normal `/reloadui`, logout, or exit to save add-on data to disk so the desktop app can upload it. Receipt mail is different: **close ESO completely** when GuildSync needs to write a queued mail batch, then reopen ESO to send it.
+
+## Buying tickets and early purchase bonuses
+
+Deposit gold into the guild bank using the appropriate marker:
+
+| Raffle | Examples |
+| --- | --- |
+| Bi-Weekly | `501` gold buys 1 base ticket; `1001` buys 2. Base cost is 500 gold per ticket plus 1 gold per deposit. |
+| 50/50 | `2503` gold buys 1 base ticket; `5003` buys 2. Base cost is 2,500 gold per ticket plus 3 gold per deposit. |
+
+Other gold deposits are recorded as other deposits. Bonus tickets do not add prize gold.
+
+Early purchase bonuses are optional and can be enabled separately for each raffle type or individual raffle. The administrator sets the time periods and percentages in GuildSync's **Raffle Bonus Settings**. Earlier purchases can receive higher bonuses; the final period has 0%. Bonus tickets round down **for each purchase**. For example, 5 purchased tickets with a 20% bonus earns 1 extra, for 6 total. Manually added ticket entries do not earn an additional early purchase bonus.
+
+When a purchase has a positive bonus percentage, its ESO receipt includes the percentage, the buy-before deadline, bonus tickets, and total tickets. At 0%, that section is omitted. The settings selector marks enabled raffles **(Bonuses)** and removes that label when disabled.
+
+## What happens to the spreadsheets
+
+The current working file is reused. New uploaded purchases are written only when they belong to the raffle shown by that tab's draw date. Purchases for another period stay in the database until that period is loaded; they are not lost.
+
+Archiving copies the workbook into the archive folder, captures supported results, and only then resets and reloads both working tabs. Bi-Weekly attendance/bonus cells have fills and other managed formatting cleared while **borders remain**. An ongoing 50/50 raffle is repopulated after a Bi-Weekly archive too.
+
+Automatic archiving is optional. When enabled, spreadsheet writes pause at sales cutoff while purchases continue to enter the database. After the configured delay, normally four hours, GuildSync archives and reloads. A Consigliere can use `archive` to complete that rollover sooner. Public raffle announcements and archive notifications are also separate optional features.
+
+## Joining Discord and gaining access
+
+If onboarding is enabled, members with **Gangsters** are promoted to **Associates** after a confirmed Discord-to-ESO link is made. GuildSync adds Associates, removes Gangsters, and retains unrelated roles. Your ESO rank is not changed by this feature. The server's Associates permissions determine your access.
+
+GuildSync tags you in an account-linked message. It normally uses a private thread in the configured onboarding channel. If private-thread creation is unavailable, it creates a **public thread in that same channel**; members who can view the channel may see it. Staff with appropriate moderation permissions can view private threads too. No direct messages are sent.
+
+Members who join after reminders are enabled and remain unlinked receive one reminder after the configured delay, normally 24 hours. Existing members are not enrolled just because the feature was enabled. The reminder is once per Discord member, including after leaving/rejoining. Role promotion, promotion messages, and reminders each have their own switches; ask an administrator if the feature is unavailable.
+
+## Using the desktop app
+
+Sign in through Discord using your authorized GuildSync account. Use **Discord Member Data**, **Guild Roster**, and **Bank Deposits / Raffle Tickets** to browse the records. Officers can review account links, member history, deposits, applications, and reports according to their GuildSync access.
+
+In the profile settings, each add-on file watcher can be switched on or off. Disabled watchers do not upload that file. The desktop app performs local ESO uploads and queues receipt mail; the browser view is for server data and does not watch local ESO files.
+
+If something seems missing, check upload status, save ESO data with `/reloadui`, and confirm the right raffle period/account link. For setup or persistent errors, use the [detailed help and troubleshooting reference](GuildSync-Detailed-Help.md).

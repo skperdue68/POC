@@ -30,7 +30,7 @@ export function createOnboardingStore(db) {
   async promotionCandidates(config) {return (await rows(`SELECT DISTINCT l.discord_user_id FROM guildsync_member_links l
    JOIN discord_members m ON m.discord_id=l.discord_user_id JOIN discord_member_roles mr ON mr.discord_id=m.discord_id
    JOIN discord_roles r ON r.role_id=mr.role_id WHERE l.link_status='linked' AND l.auto_link_blocked=0
-   AND ${config.gangsterRoleId?'r.role_id=?':'LOWER(r.role_name)=?'} ORDER BY l.discord_user_id`,[config.gangsterRoleId || 'gangster'])).map(r=>r.discord_user_id);},
+   AND ${config.gangsterRoleId?'r.role_id=?':'LOWER(r.role_name)=?'} ORDER BY l.discord_user_id`,[config.gangsterRoleId || 'gangsters'])).map(r=>r.discord_user_id);},
   async jobs(g) {return (await rows('SELECT * FROM guildsync_discord_onboarding_deliveries WHERE guild_id=? ORDER BY retry_at, delivery_id',[g])).map(decode);},
   async job(id) {return decode((await rows('SELECT * FROM guildsync_discord_onboarding_deliveries WHERE delivery_id=?',[id]))[0]);},
   async putJob(j) {await db.execute(`INSERT INTO guildsync_discord_onboarding_deliveries

@@ -1,5 +1,7 @@
 # GuildSync 1.2.7 release and deployment
 
+For the current command list and later raffle/onboarding changes, use the [user guide](GuildSync-User-Guide.md) and [detailed reference](GuildSync-Detailed-Help.md). This page describes release packaging.
+
 The desktop and web application display version 1.2.7. Run `go run tools/update-version.go 1.2.7` at the repository root when preparing this release. It updates the desktop and web source version, Wails metadata, backend package version, backend example environment, ESO manifests, and Windows installer metadata. Existing local backend `.env` files are updated only for the client version; keep all other environment values private.
 
 ## Build and package
@@ -31,7 +33,7 @@ Run `node --test` in the backend directory and `node --test tools/update-version
 
 Deploy the backend and bot from this version together. The bot requests raffle summaries over its existing authenticated GuildSync socket; it does not need database credentials. Preserve matching `GUILDSYNC_BOT_KEY` (bot) and `GUILDSYNC_BOT_SOCKET_KEY` (backend), and the existing `GUILDSYNC_SOCKET_URL`.
 
-From `NodeJS/GuildSync-Discord-Bot`, run `npm ci`, then `npm run deploy` to register `/raffle` alongside the existing commands in `DISCORD_GUILD_ID`. This uses the existing `DISCORD_TOKEN` and `DISCORD_CLIENT_ID`. Restart the bot with the existing service manager. `/raffle` posts a public response in the channel where it is invoked; Discord channel/command permissions control who can use it.
+From `NodeJS/GuildSync-Discord-Bot`, run `npm ci`, then `npm run deploy` to register `/raffle` alongside the existing commands in `DISCORD_GUILD_ID`. This uses the existing `DISCORD_TOKEN` and `DISCORD_CLIENT_ID`. Restart the bot with the existing service manager. `/raffle` returns a private response by default; `/raffle public:true` posts publicly. Discord channel/command permissions control who can use it.
 
 Both `/raffle` and automatic posts advertise **prize gold**, never total deposited gold:
 

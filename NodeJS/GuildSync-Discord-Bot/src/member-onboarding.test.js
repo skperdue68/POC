@@ -7,7 +7,7 @@ import {readOnboardingConfig} from './member-onboarding-config.js';
 function fixture(kind='promotion') {
  const config=readOnboardingConfig({GUILDSYNC_ONBOARDING_ENABLED:'true',GUILDSYNC_ONBOARDING_CHANNEL_ID:'123'});
  const actions=[],progress=[],finishes=[],messages=new Collection();
- const roles=new Collection([['g',{id:'g',name:'gangster',editable:true}],['a',{id:'a',name:'Associate',editable:true}],['other',{id:'other',name:'Other',editable:true}]]);
+ const roles=new Collection([['g',{id:'g',name:'Gangsters',editable:true}],['a',{id:'a',name:'Associates',editable:true}],['other',{id:'other',name:'Other',editable:true}]]);
  const member={id:'user',guild:{id:'guild'},user:{bot:false},manageable:true,joinedTimestamp:1001000,roles:{cache:new Collection([['g',roles.get('g')],['other',roles.get('other')]]),
   add:async id=>{actions.push('add:'+id);member.roles.cache.set(id,roles.get(id));},remove:async id=>{actions.push('remove:'+id);member.roles.cache.delete(id);}}};
  const permissions={has:()=>true};
@@ -71,7 +71,7 @@ test('notification retry refuses changed destinations and handles missing member
  await processOnboardingDelivery(gone.context,gone.job);assert.equal(gone.finishes.at(-1).cancelled,true);assert.equal(gone.actions.length,0);
 });
 test('ambiguous role names and role hierarchy failures stop promotion',async()=>{
- const duplicate=fixture();duplicate.roles.set('g2',{id:'g2',name:'Gangster',editable:true});
+ const duplicate=fixture();duplicate.roles.set('g2',{id:'g2',name:'Gangsters',editable:true});
  await processOnboardingDelivery(duplicate.context,duplicate.job);assert.match(duplicate.finishes.at(-1).error,/unambiguous/);assert.equal(duplicate.actions.length,0);
  const hierarchy=fixture();hierarchy.roles.get('a').editable=false;
  await processOnboardingDelivery(hierarchy.context,hierarchy.job);assert.match(hierarchy.finishes.at(-1).error,/hierarchy/);assert.equal(hierarchy.actions.length,0);
@@ -86,9 +86,9 @@ test('private archive pagination requests all private threads with timestamp cur
  f.parent.threads.fetchArchived=async options=>{
   assert.equal(options.fetchAll,true);
   if(pages++===0)return {threads:new Collection([['other',{id:'other',name:'other',archiveTimestamp:1500000}]]),hasMore:true};
-  assert.equal(options.before,1500000);return {threads:new Collection(),hasMore:false};
+  if(options.type==='private')assert.equal(options.before,1500000);return {threads:new Collection(),hasMore:false};
  };
- await processOnboardingDelivery(f.context,f.job);assert.equal(f.finishes.at(-1).done,true);assert.equal(pages,2);
+ await processOnboardingDelivery(f.context,f.job);assert.equal(f.finishes.at(-1).done,true);assert.equal(pages,3);
 });
 test('message recovery does not adopt another recipient or a different delivery nonce',async()=>{
  for(const cause of ['recipient','nonce']) {
@@ -115,4 +115,38 @@ test('recovery excludes successful messages from earlier promotion generations',
  f.messages.set('prior',{id:'prior',author:{id:'bot'},content,createdTimestamp:2000000});
  await processOnboardingDelivery(f.context,{...f.job,threadId:'thread',content,attemptAt:1999,previousMessageIds:['prior']});
  assert.ok(f.actions.includes('send'));assert.notEqual(f.finishes.at(-1).messageId,'prior');
+});
+
+test('default role resolution promotes Gangsters to Associates',async()=>{
+ const f=fixture();f.roles.get('g').name='Gangsters';f.roles.get('a').name='Associates';
+ await processOnboardingDelivery(f.context,f.job);assert.equal(f.finishes.at(-1).done,true);assert.deepEqual(f.actions.slice(0,2),['add:a','remove:g']);
+});
+
+test('missing private-thread creation permission creates and reuses a public thread in the configured channel',async()=>{
+ const f=fixture('reminder');f.parent.permissionsFor=()=>({has:flags=>!([].concat(flags).includes(PermissionFlagsBits.CreatePrivateThreads))});
+ f.thread.type=ChannelType.PublicThread;f.parent.threads.create=async options=>{assert.equal(options.type,ChannelType.PublicThread);assert.equal(options.invitable,undefined);f.actions.push('create-public');return f.thread;};
+ await processOnboardingDelivery(f.context,f.job);assert.equal(f.finishes.at(-1).done,true);assert.ok(f.actions.includes('create-public'));
+ f.actions.length=0;await processOnboardingDelivery(f.context,{...f.job,threadId:'thread'});assert.equal(f.actions.includes('create-public'),false);assert.equal(f.finishes.at(-1).done,true);
+});
+
+test('private creation permission rejection falls back to a public thread but network failures do not',async()=>{
+ for(const code of [50013,'ECONNRESET']) {
+  const f=fixture('reminder');let calls=0;f.parent.threads.create=async options=>{calls++;if(options.type===ChannelType.PrivateThread)throw Object.assign(Error('create rejected'),{code});f.thread.type=ChannelType.PublicThread;return f.thread;};
+  await processOnboardingDelivery(f.context,f.job);
+  assert.equal(calls,code===50013?2:1);assert.equal(Boolean(f.finishes.at(-1).done),code===50013);
+ }
+});
+
+test('a discovered public fallback is reused and unavailable public permission stops delivery',async()=>{
+ const reuse=fixture('reminder');reuse.thread.type=ChannelType.PublicThread;reuse.parent.threads.fetchActive=async()=>({threads:new Collection([['thread',reuse.thread]])});
+ await processOnboardingDelivery(reuse.context,reuse.job);assert.equal(reuse.actions.includes('create'),false);assert.equal(reuse.finishes.at(-1).done,true);
+ const denied=fixture('reminder');denied.parent.permissionsFor=()=>({has:flags=>!([].concat(flags).some(flag=>[PermissionFlagsBits.CreatePrivateThreads,PermissionFlagsBits.CreatePublicThreads].includes(flag)))});
+ await processOnboardingDelivery(denied.context,denied.job);assert.equal(denied.actions.includes('send'),false);assert.ok(denied.finishes.at(-1).error);
+});
+
+test('public fallback works without Manage Threads and privately enumerates only joined threads',async()=>{
+ const f=fixture('reminder');f.parent.permissionsFor=()=>({has:flags=>!([].concat(flags).some(flag=>[PermissionFlagsBits.CreatePrivateThreads,PermissionFlagsBits.ManageThreads].includes(flag)))});
+ f.parent.threads.fetchArchived=async options=>{if(options.type==='private')assert.equal(options.fetchAll,false);return {threads:new Collection(),hasMore:false};};
+ f.thread.type=ChannelType.PublicThread;f.parent.threads.create=async options=>{assert.equal(options.type,ChannelType.PublicThread);return f.thread;};
+ await processOnboardingDelivery(f.context,f.job);assert.equal(f.finishes.at(-1).done,true);
 });

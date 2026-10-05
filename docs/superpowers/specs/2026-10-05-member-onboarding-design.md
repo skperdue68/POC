@@ -1,5 +1,7 @@
 # Discord member linking, promotion, and onboarding notifications
 
+Historical design record: the later documentation/fallback follow-up changes default role names to **Gangsters/Associates** and permits a public thread in the same configured channel if private creation is unavailable. Current behavior and configuration are in [detailed help](../../GuildSync-Detailed-Help.md#discord-links-and-onboarding).
+
 ## Approved requirements
 
 Discover the new `gangster` role through the existing Discord role synchronization. When an automatic or manual ESO/Discord link is confirmed, members holding that role receive `Associate` and lose `gangster`. Unconfirmed fuzzy candidates do not trigger promotion. Keep every unrelated role.

@@ -88,7 +88,7 @@ test('production clear/archive require bot authentication and exact role without
   for (const action of ['clear', 'archive']) {
     assert.equal((await request({ action, discordUserId: 'member', requestedBy: 'Member' })).ok, false);
     const result = await request({ action, discordUserId: 'officer', requestedBy: 'Officer' });
-    assert.equal(result.ok, true); if (action === 'clear') assert.match(result.message, /[Bb]oth/);
+    assert.equal(result.ok, true); if (action === 'clear') {assert.match(result.message, /[Bb]oth/);assert.match(result.message, /Use \/gsr load/);}
     if(action === 'archive') {
       assert.match(result.message, /archived by Officer/);
       assert.match(result.message, /working-sheet\/edit/);

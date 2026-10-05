@@ -1,16 +1,16 @@
 # Member onboarding
 
-GuildSync already synchronizes every Discord role except `@everyone`, including newly created roles. No role whitelist needs updating for `gangster`.
+GuildSync already synchronizes every Discord role except `@everyone`, including newly created roles. No role whitelist needs updating for `Gangsters`.
 
-This optional feature promotes Gangster members when their Discord account has a confirmed ESO link. It also sends one account-linking reminder to new members who remain unlinked for 24 hours. Automatic exact matches, manual links, and accepted candidates count as confirmed links; unaccepted fuzzy candidates do not.
+This optional feature promotes Gangsters members when their Discord account has a confirmed ESO link. It also sends one account-linking reminder to new members who remain unlinked for 24 hours. Automatic exact matches, manual links, and accepted candidates count as confirmed links; unaccepted fuzzy candidates do not.
 
 ## Enable
 
 Deploy the backend and bot from the same merged PR. Backend startup automatically creates the onboarding tables. Keep your existing database when restarting or redeploying.
 
-Create the Gangster and Associate Discord roles. Configure Associate's server permissions to provide the intended full access; GuildSync assigns roles, not channel permissions. Place the bot's highest role above both roles and grant **Manage Roles**. GuildSync adds Associate before removing Gangster and leaves other roles unchanged.
+Create the Gangsters and Associates Discord roles. Configure Associates' server permissions to provide the intended full access; GuildSync assigns roles, not channel permissions. Place the bot's highest role above both roles and grant **Manage Roles**. GuildSync adds Associates before removing Gangsters and leaves other roles unchanged.
 
-Create a normal text channel for onboarding threads. Both Gangster and Associate members need **View Channel** on that parent. Grant the bot **View Channel**, **Create Private Threads**, **Send Messages in Threads**, **Read Message History**, and **Manage Threads**. Moderators with Manage Threads and administrators can see private threads; ordinary uninvited members cannot. Each thread is non-invitable and includes the intended member. Notifications tag only that member; Discord/user notification settings can still suppress push alerts.
+Create a normal text channel for onboarding threads. Both Gangsters and Associates members need **View Channel** on that parent. Grant the bot **View Channel**, **Create Private Threads**, **Create Public Threads** (for fallback), **Send Messages in Threads**, **Read Message History**, and preferably **Manage Threads** for full private archive discovery/moderation. Without Manage Threads, discovery uses only joined private threads. Moderators with Manage Threads and administrators can see private threads; ordinary uninvited members cannot. Each private thread is non-invitable and includes the intended member. Notifications tag only that member; Discord/user notification settings can still suppress push alerts.
 
 Copy the following into the **Discord bot's** `.env` and replace the IDs:
 
@@ -34,18 +34,18 @@ Restart the backend and bot. No slash command redeployment or Google Apps Script
 | Bot `.env` setting | Default | Purpose |
 | --- | --- | --- |
 | `GUILDSYNC_ONBOARDING_ENABLED` | `false` | Master switch; disables role changes and notifications. |
-| `GUILDSYNC_ONBOARDING_PROMOTION_ENABLED` | `true` | Promote confirmed-linked Gangster members. |
+| `GUILDSYNC_ONBOARDING_PROMOTION_ENABLED` | `true` | Promote confirmed-linked Gangsters members. |
 | `GUILDSYNC_ONBOARDING_PROMOTION_NOTIFY_ENABLED` | `true` | Notify after successful promotion; disable for silent role changes. |
 | `GUILDSYNC_ONBOARDING_REMINDER_ENABLED` | `true` | Enroll new joins and send one unlinked reminder. |
 | `GUILDSYNC_ONBOARDING_REMINDER_HOURS` | `24` | Positive delay, at most 8760 hours. |
-| `GUILDSYNC_ONBOARDING_NOTIFICATION_MODE` | `private_thread` | `private_thread` or `channel`; no DM mode. |
-| `GUILDSYNC_ONBOARDING_CHANNEL_ID` | blank | Private-thread text parent, or channel/thread destination in `channel` mode. Required for enabled notifications. |
-| `GUILDSYNC_ONBOARDING_GANGSTER_ROLE_ID` | blank | Prefer a stable role ID; blank requires a unique case-insensitive `gangster` name. |
-| `GUILDSYNC_ONBOARDING_ASSOCIATE_ROLE_ID` | blank | Prefer a stable role ID; blank requires a unique case-insensitive `Associate` name. |
+| `GUILDSYNC_ONBOARDING_NOTIFICATION_MODE` | `private_thread` | `private_thread` (private first, public thread fallback) or direct `channel`; no DM mode. |
+| `GUILDSYNC_ONBOARDING_CHANNEL_ID` | blank | Member-thread text parent, or channel/thread destination in `channel` mode. Required for enabled notifications. |
+| `GUILDSYNC_ONBOARDING_GANGSTER_ROLE_ID` | blank | Prefer a stable role ID; blank requires a unique case-insensitive `Gangsters` name. |
+| `GUILDSYNC_ONBOARDING_ASSOCIATE_ROLE_ID` | blank | Prefer a stable role ID; blank requires a unique case-insensitive `Associates` name. |
 | `GUILDSYNC_ONBOARDING_PROMOTION_MESSAGE` | blank | Use default or supply an editable message template. |
 | `GUILDSYNC_ONBOARDING_REMINDER_MESSAGE` | blank | Use default or supply an editable message template. |
 
-Restart the bot after any changes. Use one bot instance/configuration per guild. `channel` mode sends ordinary visible messages to the configured channel or thread. It intentionally does not provide the privacy of per-member private threads. Failed private delivery never falls back to a public channel or a DM.
+Restart the bot after any changes. Use one bot instance/configuration per guild. `channel` mode sends ordinary visible messages to the configured channel or thread. It intentionally does not provide the privacy of per-member private threads. If private-thread creation permission is unavailable or Discord rejects creation for permission/access reasons, GuildSync creates a public thread under the same configured channel. That thread is visible to members with parent-channel access, is logged, and is reused afterward. Network failures and unreadable history remain retryable rather than triggering fallback. No DMs are sent.
 
 ## Message templates
 
@@ -64,9 +64,9 @@ Blank values use these defaults. Quote templates in `.env` when they contain `#`
 
 Reminder enrollment includes only non-bot members whose actual Discord join timestamp is after the enabled cutoff. Existing members are excluded on first enable. Restarting or reconnecting preserves the cutoff. Startup checks recover joins missed during downtime using their true join time, not the time of synchronization.
 
-Disabling reminders/master onboarding and restarting the bot ends enrollment and clears pending eligibility. Re-enabling establishes a new cutoff; members joining while disabled are excluded. A completed reminder is retained across leave/rejoin, so the same Discord member is not reminded again. Linking or leaving cancels pending reminder work. A member who rejoins with Gangster can be promoted again; each promotion keeps a separate delivery identity, while reminders remain once per member. Existing linked Gangster members can still qualify for promotion; promotion is independent of new-join reminder enrollment.
+Disabling reminders/master onboarding and restarting the bot ends enrollment and clears pending eligibility. Re-enabling establishes a new cutoff; members joining while disabled are excluded. A completed reminder is retained across leave/rejoin, so the same Discord member is not reminded again. Linking or leaving cancels pending reminder work. A member who rejoins with Gangsters can be promoted again; each promotion keeps a separate delivery identity, while reminders remain once per member. Existing linked Gangsters members can still qualify for promotion; promotion is independent of new-join reminder enrollment.
 
-Private threads are reused for the member's reminder and later promotion message. Archived threads are reopened. Role-change retries finish a partial promotion without announcing premature success. Message retries reconcile history before resending after an uncertain acknowledgement. Missing history/permissions stops delivery until corrected. This avoids knowingly repeating a reminder, although no distributed network operation can guarantee exactly-once delivery in every failure scenario.
+Member threads, including public fallback threads, are reused for the member's reminder and later promotion message. Archived threads are reopened. Role-change retries finish a partial promotion without announcing premature success. Message retries reconcile history before resending after an uncertain acknowledgement. Missing history/permissions stops delivery until corrected. This avoids knowingly repeating a reminder, although no distributed network operation can guarantee exactly-once delivery in every failure scenario.
 
 If you change the destination while a notification is pending, restore the old destination first to let the pending delivery reconcile safely. GuildSync does not blindly resend potentially delivered notifications in a new destination.
 
@@ -80,6 +80,8 @@ Backend startup creates these persistent tables:
 
 Keep these tables through deployments. Completed reminder records enforce the one-time rule; deleting them can permit another notification. Onboarding jobs do not undo a valid ESO link if promotion fails.
 
-Logs use `Onboarding` / `Member onboarding` and identify queueing, successful role changes, notification recipient/destination, recovery, and failures. For problems, inspect role IDs/hierarchy, parent-channel visibility for Gangster, private-thread permissions, backend connection, and the delivery table's `last_error`. Invalid configuration prevents the worker from starting and is logged clearly. Pending jobs retry after roughly one minute; claims expire after five minutes if a worker disappears.
+Logs use `Onboarding` / `Member onboarding` and identify queueing, successful role changes, notification recipient/destination, recovery, and failures. For problems, inspect role IDs/hierarchy, parent-channel visibility for Gangsters, private-thread permissions, backend connection, and the delivery table's `last_error`. Invalid configuration prevents the worker from starting and is logged clearly. Pending jobs retry after roughly one minute; claims expire after five minutes if a worker disappears.
 
 Discord references: [private thread access and permissions](https://discord.com/developers/docs/topics/threads), [role management](https://discord.com/developers/docs/topics/permissions).
+
+See the [user guide](../../docs/GuildSync-User-Guide.md) and [complete technical/environment reference](../../docs/GuildSync-Detailed-Help.md) for the other systems and commands.

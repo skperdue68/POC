@@ -1,92 +1,23 @@
-# Raffle spreadsheet administration
+# Raffle spreadsheet commands
 
-After updating backend and bot, restart both and run `npm run deploy` from
-`NodeJS/GuildSync-Discord-Bot`. Deployment replaces the guild command list,
-removing the old test commands and registering these production commands:
+Updated October 5, 2026. The [user guide](GuildSync-User-Guide.md) is the everyday reference; the [detailed help](GuildSync-Detailed-Help.md#banking-spreadsheets-archives-and-updates) covers selection, recovery, and configuration.
+
+All commands below require the exact **Consigliere** Discord role, checked by the bot and synced backend role records, and respond privately. `/gsr` is an exact alias of `/gsraffle`.
 
 | Command | Operation |
 | --- | --- |
-| `/gsraffle load` | Clear both managed raffle areas, reload current periods and set draw dates. |
-| `/gsraffle load date:091526` | Clear/reload both periods containing the supplied date. |
-| `/gsraffle reset` | Clear both managed raffle areas, including R7/P7 draw dates; leave database records intact. |
-| `/gsraffle archive` | Archive immediately, reset both original tabs, and restore current database entries and draw dates. |
+| `/gsraffle load` | Rebuild both current working tabs from the database and set draw dates. |
+| `/gsraffle load date:092526` | Load the Bi-Weekly raffle containing September 25, 2026, and its containing 50/50 period. Historical selections rebuild their archive, not the working sheet. A missing historical archive is created in the archive folder. |
+| `/gsraffle update date:092526` | Save supported editable result fields from the matching ready archive to the database; keep the sheet contents/ID. |
+| `/gsraffle reset` | Clear managed working data and R7/P7; retain database records. Run `load` afterward. |
+| `/gsraffle archive` | Archive the current file, save result fields, reset both working tabs, and restore current database data. |
 
-All three commands require the **exact Consigliere role**, checked by both bot
-and backend. Progress/results/errors are ephemeral. `/gsa post`, `start` and
-`stop` retain application-posting behavior. No test enablement flag is required.
-Remove `GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED` from both .env files.
-The `/gsr test` group, test-preview/test-close and legacy `/raffle-test` commands
-are retired. Redeploying the command list removes them from Discord.
+Dates are valid **MMDDYY** dates in 2000–2099, interpreted in America/New_York. At a Bi-Weekly boundary, choose **Starts on this date** or **Ends on this date** within one minute. The containing 50/50 raffle is selected automatically. Use the original lookup date and the same boundary choice when running `update` after a historical load.
 
-## Archive and holds
+Historical load finds the archive by `YYMMDD Raffle` name inside the configured archive folder. It preserves an existing ID, captures supported edits before rebuilding, or creates/prepares a new copy with the requested dates. Update requires an existing ready archive and imports result fields, not ticket purchases. Details and persistence tables are in [result snapshots](raffle-result-snapshots.md).
 
-During the automatic four-hour hold, refresh and clear are blocked. Archive
-explicitly bypasses the hold and finishes the pending rollover immediately.
-Outside a hold it archives and rebuilds the current raffle periods without
-advancing their schedules. The archive copy is named for the closed draw during
-rollover, or the current Bi-Weekly draw for an on-demand archive before cutoff.
-Both tabs are cleared and repopulated, including any ongoing 50/50 entries.
+Current load/reset are blocked during an unfinished rollover hold. Manual archive can complete the delayed rollover immediately. All archive operations verify the copy and save results before clearing originals. Failure recovery retains database records and reuses persisted operation identity. The working link stays stable; deliberate replacement of a same-name archive creates a new archive ID.
 
-The original spreadsheet ID and public link stay unchanged. Archive must succeed
-and be verified before clearing. A failed/partial operation resumes its saved job;
-it does not deliberately create another copy on retry. After a completed command,
-another archive command requests another snapshot (names may match).
+Reset clears ticket/donation/result values, bonus notes, updater values, and draw dates. G formulas remain. Bi-Weekly J5:K254 has managed formatting cleared **except borders**; 50/50 J5:K254 is preserved. See the detailed help for exact ranges.
 
-See [Apps Script deployment and environment setup](google-sheets-logging.md#apps-script-setup).
-Archive requires the web app; refresh/clear only need Sheets credentials.
-
-## Date selection
-
-Dates must contain exactly six digits, `MMDDYY` (years 2000–2099). Invalid dates,
-including February 31 and February 29 in a non-leap year, are rejected before any
-sheet update. An omitted date uses the current instant; a supplied date is
-evaluated at **7:00 PM America/New_York**, the local timezone used by the repository.
-Daylight-saving offsets are calculated for each boundary.
-
-As approved, this uses the repository's existing schedule anchors and its rule
-for the last biweekly raffle in a month; there is no stored raffle-period table.
-Bi-Weekly and 50/50 are evaluated independently, including 50/50 periods spanning
-six weeks. On a transition date the new raffle beginning that evening wins.
-Each export includes committed entries at or after the selected start and before
-the selected end, never future-dated entries beyond the export's current time.
-The response shows the lookup date and both selected periods.
-
-## What refresh and clear remove
-
-Both use the same configured closure ranges. Both preserve G5:G254 and hide G/H
-during preparation. Refresh shows G/H again when exported bonus entries require it.
-
-| Cleared area | Bi-Weekly | 50/50 |
-| --- | --- | --- |
-| Ticket ID/name/gold values | D5:F254 | D5:F254 |
-| Bonus values and notes | H5:H254 | H5:H254 |
-| Donation ID/name/gold values | P62:R70 | N36:P44 |
-| Updater name/time | R3:R4 | P3:P4 |
-| Additional values | J5:K254, Q33:Q52 | P25, M28 |
-| Draw date | R7 | P7 |
-
-Refresh writes the selected period's draw date into R7/P7 as a real date formatted
-`mm/dd/yy` in America/New_York. Clear leaves those dates empty. J5:K254 is
-preserved on 50/50. Other cells, formats and protections remain unchanged.
-
-Refresh clears and repopulates both sheets in one atomic batch after capacity
-checks. Empty results still clear managed ranges and set dates/attribution.
-Manual edits and synthetic test records in managed ranges are removed.
-Service-account editing permission is needed on every cleared/date field.
-
-Refresh uses existing member names, manual notes, gold-marker removal and bonus
-calculations. It deduplicates input transaction IDs and rebuilds from the database,
-so repeated refreshes do not accumulate copies. It changes neither database
-entries nor the raffle schedule. Historical refresh fills the original file
-with historical data; ordinary live writes and rollover still follow the current
-schedule, so use a separate configured test spreadsheet for historical inspection.
-
-## Operations
-
-Clear does not pause later live writes. Use refresh to restore database data after
-a clear. During automatic rollover, both tabs are rebuilt from current banking
-periods, restoring ongoing 50/50 data as well as deposits received during the hold.
-Backend Sheets logs record requests and written rows. If Discord times out,
-inspect those logs before retrying; an operation may still be running.
-
-See [raffle result snapshots](raffle-result-snapshots.md) for historical result restoration, archive replacement and upgrade steps.
+After slash command definitions change, run `npm run deploy` in the bot directory. Retired `/save`, `/gsr save`, `/gsr raffle refresh`, `clear`, and test command forms are not the current Discord commands. No test enablement flag is required. For archive/historical setup, use the [Apps Script guide](google-apps-script-setup.md).
