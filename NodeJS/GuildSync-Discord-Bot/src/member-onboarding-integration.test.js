@@ -6,13 +6,13 @@ import {syncDiscordRolesAndMembers} from './discord-sync.js';
 import {createOnboardingWorker} from './member-onboarding.js';
 import {readOnboardingConfig} from './member-onboarding-config.js';
 
-test('existing Discord role discovery includes newly created Gangster without a whitelist',async()=>{
+test('existing Discord role discovery includes newly created Gangsters without a whitelist',async()=>{
  const payloads=[];const guild={id:'1',name:'Guild',roles:{fetch:async()=>new Collection([
-  ['1',{id:'1',name:'@everyone',position:0}],['2',{id:'2',name:'gangster',position:1,color:0}]
+  ['1',{id:'1',name:'@everyone',position:0}],['2',{id:'2',name:'Gangsters',position:1,color:0}]
  ])},members:{list:async()=>new Collection()}};
  const socket={connected:true,emit:(event,payload,cb)=>{payloads.push({event,payload});cb({ok:true,roles_processed:1,members_processed:0,members_removed:0});}};
  await syncDiscordRolesAndMembers(guild,socket);
- assert.deepEqual(payloads[0].payload.roles.map(role=>role.role_name),['gangster']);
+ assert.deepEqual(payloads[0].payload.roles.map(role=>role.role_name),['Gangsters']);
 });
 test('worker serializes startup/reconnect, observes true join timestamps and excludes bots',async()=>{
  const listeners=new Map(),socketListeners=new Map(),calls=[];

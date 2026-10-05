@@ -1,56 +1,38 @@
-# Raffle results, historical loads and archive replacement
+# Raffle results and historical archive identity
+
+Updated October 5, 2026. See the [detailed help](GuildSync-Detailed-Help.md#result-persistence-and-update) for the authoritative field/table reference and the [user guide](GuildSync-User-Guide.md#discord-raffle-commands-for-consigliere) for everyday commands.
 
 ## Commands
 
-Run `npm run deploy` from `NodeJS/GuildSync-Discord-Bot` after updating the bot. Bulk registration removes the old /gsr command and registers:
+`/gsraffle` and `/gsr` expose `load [date:MMDDYY]`, `update date:MMDDYY`, `reset`, and `archive`. All require exact **Consigliere** and return private results. On a Bi-Weekly date boundary, choose starts or ends; the enclosing 50/50 period follows that choice. `/save` is retired. Run `npm run deploy` in the bot directory when changing registered commands.
 
-- `/gsraffle load [date:MMDDYY]`: rebuild both selected raffle periods from banking records and saved raffle results. No date uses current periods.
-- `/gsraffle reset`: clear both tabs' managed values and draw dates without archiving or deleting database records.
-- `/gsraffle archive`: archive now, capture results, then prepare and reload both current raffle tabs.
+Current `load` uses the working file. A historical `load` searches the archive folder by ending-date filename, reuses a ready archive or creates one if absent, captures supported existing edits, and rebuilds only that archive. The live file remains unchanged. New copies are populated with the requested dates before their historical result fields are saved. Copied live winners are not treated as historical results.
 
-All require the exact **Consigliere** role and respond privately. Existing archive-channel announcements remain enabled through the existing bot .env settings.
+`update` explicitly reads supported results from the matching ready archive and replaces saved database cells. It does not clear or replace the archive, create a missing file, or import ticket purchase rows. Use the date and boundary answer from the load. Discord supplies a button to the chosen spreadsheet.
 
-The load date may be any day within a period. On a transition date, load selects the NEW period, as before. To load a raffle drawn September 26, 2026, use a date inside its ending period, such as `092526`, rather than its transition date. Bi-Weekly and 50/50 are selected independently.
+## Saved fields and storage
 
-## Saved fields
+| Raffle | Current sparse archive-cell fields |
+| --- | --- |
+| Bi-Weekly | Q33:Q52; J5:K254 attendance/bonus; O55 winnings sent by |
+| 50/50 | P25 winner; M28 winnings sent by |
 
-| Raffle | Meaning | Cells |
-| --- | --- | --- |
-| Bi-Weekly | Winners | Q33:Q48 |
-| Bi-Weekly | Winnings sent by | O55 |
-| Bi-Weekly | Prize amounts to send | S31:S50 |
-| Bi-Weekly | Attendance names and bonus tickets | J5:K254 |
-| 50/50 | Winner | L23 |
-| 50/50 | Winnings sent by | J26 |
+`guildsync_raffle_archive_cells` stores nonempty displayed values by archive ID/type/cell with draw date, source ID, tab, and capture time. Numeric zero is nonempty. Save clears the previous source/type/draw-date cells transactionally before writing the replacement, so deleted sheet entries disappear from the database. Historical load restores the chosen raffle's cells; K bonus amounts are numeric where valid.
 
-Nonempty values retain their exact A1 addresses and types; numeric zero is saved. Formula cells retain both their calculated value at capture and their formula; historical load restores the captured literal value so winners and amounts cannot recalculate. A separate formula-template table supports future resets. Blank literal cells do not create cell entries. Re-archiving a period replaces its saved snapshot, including clearing entries which are now blank.
+General typed-result support in `guildsync_raffle_results` also defines Bi-Weekly S31:S50 and 50/50 L23/J26, with formula templates in `guildsync_raffle_result_formulas`. Its snapshot identity is type/start/end; this is distinct from the current sparse historical load/update path. Do not assume every general-layout field is imported by historical `update`.
 
-Snapshots are read from the verified archive, not from a changing live worksheet, and committed before the original is reset. The snapshot identity is raffle type plus period start/end. The period ending on R7/P7 is used for capture; capture does not mistakenly select the new period starting on that date.
+Backend startup creates these tables idempotently. The standalone [raffle-results migration](../NodeJS/GuildSync-Backend-Server/migrations/20261001_raffle_results.sql) covers the typed result/formula tables; startup also creates the archive-cell table. Existing Drive archives are not automatically backfilled en masse.
 
-50/50 results are saved only when its draw has occurred and its draw date is no later than the Bi-Weekly raffle being archived. Ongoing 50/50 winner/sender cells are preserved during a Bi-Weekly-only rollover without saving them as finalized results.
+## Naming, reuse, and replacement
 
-Historical load clears stale result values and restores the selected period's saved cells to their original rows. Periods with no snapshot have no saved literal results to restore. Existing formulas in managed result cells are preserved when clearing; all other existing layout-preservation rules remain.
+R7 supplies the Bi-Weekly date and P7 the 50/50 date. Names are **YYMMDD Raffle**: October 10, 2026 is `261010 Raffle`. R7 must be valid; P7 is required when capturing nonempty 50/50 fields. A blank required date fails before reset instead of substituting today's date.
 
-## Archive name and replacement
+Loading/updating an existing historical file keeps its ID. A deliberate live archive replacement verifies a new copy, moves older same-name files in the configured folder to Trash, and reports their old IDs. Database result/registry references are updated to the new ID and fresh cell snapshots replace old ones. The source is reused indefinitely, so source ID alone does not identify an individual archived raffle. Old external links do not redirect; the working file link stays unchanged.
 
-The Apps Script reads **Bi-Weekly R7** and names the copy **YYMMDD Raffle**. October 10, 2026 becomes `261010 Raffle`. R7 must contain a valid Sheets date or MM/DD/YY (or MM/DD/YYYY) text. P7 must also identify a valid 50/50 draw date. The backend verifies both against the raffle schedule.
+Persisted operation markers permit recovery after uncertain responses without intentionally making duplicate copies. Preserve rollover/registry state in `guildsync_settings`; finish pending recovery before changing source/project configuration.
 
-After creating and verifying the new copy and its sharing, the script moves older same-name spreadsheets in the configured archive folder to **Trash**. It never trashes the original source or the new copy. Replacement creates a new file ID: previously posted links to an old archive do not redirect. The current working spreadsheet link remains unchanged.
+## Setup and validation
 
-Retries use the persisted operation key, not just a filename. Existing archives named with the former YYMMDD convention are not renamed or treated as same-name MMDDYY archives automatically.
+Use the [Apps Script deployment guide](google-apps-script-setup.md), including owner execution, Drive v3 service, three Script Properties, matching backend secret/source ID, service-account editor/protected-range access, and `/exec` deployment. Changes to Archive.gs require saving and deploying a new version of the existing project. This documentation/onboarding update does not change Archive.gs.
 
-## Upgrade and migration
-
-1. Finish any pending archive/reset/replay using the old deployment before this upgrade. Do not remove recovery records or switch script projects mid-recovery.
-2. Back up the database and working spreadsheet.
-3. Deploy the backend and bot changes. Backend database initialization creates `guildsync_raffle_results` and `guildsync_raffle_result_formulas` idempotently for new or existing installations. A standalone migration is also provided at [20261001_raffle_results.sql](../NodeJS/GuildSync-Backend-Server/migrations/20261001_raffle_results.sql). If migrations are applied separately, run it against the GuildSync application database before starting the updated backend.
-4. Copy the updated [Archive.gs](../scripts/google-apps-script/Archive.gs) into the **existing** Apps Script project. Save, then **Deploy ? Manage deployments ? Edit ? New version ? Deploy**. Keep the existing URL and Script Properties.
-5. Grant the service account access to all new protected result ranges above, including S31:S50. The Bi-Weekly sheet needs at least column S.
-6. Restart backend and bot, then run `npm run deploy` in the bot directory.
-7. Verify first on a test spreadsheet/database: archive with known sparse winner/attendance values, load a date inside that period and confirm exact cells; repeat archive and confirm the prior same-name copy is in Trash.
-
-No new .env variables or OAuth credentials are required. The original archive-secret, source-ID, folder and announcement settings remain valid.
-
-The SQL table stores an atomic snapshot header and its sparse cells JSON in one row. This avoids partial header/cell replacement and permits an empty captured snapshot. No existing raffle-result data is automatically backfilled from older archive files. Database failure prevents sheet reset; fix the cause and let the saved operation retry.
-
-After `/gsraffle reset`, run `/gsraffle load` before archiving or leaving automatic rollover enabled: reset deliberately clears the draw dates required to identify an archive.
+Test with a spare spreadsheet/database: archive known sparse values, reload a historical date, edit and update that same file, and verify removed cells are removed from storage. Check bot lookup logs for filename, folder, matches, selected ID, and created flag. After reset, run current load to restore R7/P7 before archiving.

@@ -1,19 +1,17 @@
-# README
+# GuildSync desktop client
 
-## About
+The Wails desktop client authenticates through Discord, displays GuildSync data, watches ESO SavedVariables exports, and safely writes queued ESO receipt mail when the game is closed. It shares administration concepts with the server-backed browser interface.
 
-This is the official Wails Vanilla template.
+- [Everyday user guide and Discord/ESO commands](../../docs/GuildSync-User-Guide.md)
+- [Detailed workflows, configuration, and troubleshooting](../../docs/GuildSync-Detailed-Help.md)
+- [Release packaging and deployment](../../docs/GuildSync-1.2.7.md)
 
-You can configure the project by editing `wails.json`. More information about the project settings can be found
-here: https://wails.io/docs/reference/project-config
+## Development and builds
 
-## Live Development
+Run `wails dev` here for desktop development with the Vite frontend. Run `wails build` for a desktop build. The frontend lives in `frontend`; install its locked dependencies with `npm ci` and build using `npm run build` as described in the release guide. Platform installers are prepared through the repository packaging/release workflow.
 
-To run in live development mode, run `wails dev` in the project directory. This will run a Vite development
-server that will provide very fast hot reload of your frontend changes. If you want to develop in a browser
-and have access to your Go methods, there is also a dev server that runs on http://localhost:34115. Connect
-to this in your browser, and you can call your Go code from devtools.
+## Local settings
 
-## Building
+Packaged defaults normally suffice. `.env` and `GuildSyncSettings.txt` can override local SavedVariables paths and backend connection settings. The profile's Banking/Roster/Applications watcher switches persist independently. Do not put server secrets in desktop configuration. See the [desktop environment table](../../docs/GuildSync-Detailed-Help.md#desktop-optional-local-overrides).
 
-To build a redistributable, production mode package, use `wails build`.
+ESO saves add-on data to disk at reload/logout/exit. Writing a receipt mail batch requires ESO to be fully closed; the queue sends on the next Banking add-on load. Backups are kept under SavedVariables/GuildSyncBackups before cleanup/queue edits.

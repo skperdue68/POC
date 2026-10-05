@@ -33,31 +33,47 @@ async function notificationDestination(context,job,member,progress) {
   return parent;
  }
  if(parent.type!==ChannelType.GuildText)throw Error('Private onboarding threads require a text parent channel.');
- requirePermissions(parent,client.user,[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.CreatePrivateThreads,
-  PermissionFlagsBits.SendMessagesInThreads,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageThreads],'bot private-thread');
+ requirePermissions(parent,client.user,[PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.SendMessagesInThreads,PermissionFlagsBits.ReadMessageHistory],'bot thread delivery');
  let thread;
  if(job.threadId) {
   try {thread=await client.channels.fetch(job.threadId);}catch(error){if(error.code!==10003)throw error;}
  }
  if(!thread) {
   const name='guildsync-'+job.userId;
-  const matches=[...(await parent.threads.fetchActive()).threads.values()].filter(t=>t.name===name && t.ownerId===client.user.id && t.type===ChannelType.PrivateThread);
-  let before;
-  do {
-   const page=await parent.threads.fetchArchived({type:'private',fetchAll:true,limit:100,...(before?{before}:{} )});
-   matches.push(...[...page.threads.values()].filter(t=>t.name===name && t.ownerId===client.user.id && t.type===ChannelType.PrivateThread));
-   if(!page.hasMore)break;
-   const last=page.threads.last();
-   if(!last?.archiveTimestamp || last.archiveTimestamp===before)throw Error('Could not reconcile archived onboarding threads.');
-   before=last.archiveTimestamp;
-  }while(true);
+  const matches=[...(await parent.threads.fetchActive()).threads.values()].filter(t=>t.name===name && t.ownerId===client.user.id && [ChannelType.PrivateThread,ChannelType.PublicThread].includes(t.type));
+  for(const archiveType of ['private','public']) {
+   const fetchAll=archiveType==='public' || parent.permissionsFor(client.user)?.has(PermissionFlagsBits.ManageThreads);
+   let before;
+   do {
+    const page=await parent.threads.fetchArchived({type:archiveType,fetchAll,limit:100,...(before?{before}:{} )});
+    matches.push(...[...page.threads.values()].filter(t=>t.name===name && t.ownerId===client.user.id && [ChannelType.PrivateThread,ChannelType.PublicThread].includes(t.type)));
+    if(!page.hasMore)break;
+    const last=page.threads.last();
+    const cursor=fetchAll?last?.archiveTimestamp:last?.id;
+    if(!cursor || cursor===before)throw Error('Could not reconcile archived onboarding threads.');
+    before=cursor;
+   }while(true);
+  }
   const unique=[...new Map(matches.map(t=>[t.id,t])).values()];
-  if(unique.length>1)throw Error('Multiple private onboarding threads exist for '+job.userId+'; resolve before retrying.');
-  thread=unique[0] || await parent.threads.create({name,type:ChannelType.PrivateThread,invitable:false,autoArchiveDuration:1440,reason:'GuildSync member onboarding'});
+  if(unique.length>1)throw Error('Multiple onboarding threads exist for '+job.userId+'; resolve before retrying.');
+  thread=unique[0];
+  if(!thread) {
+   const createPublic=async()=>{
+    requirePermissions(parent,client.user,PermissionFlagsBits.CreatePublicThreads,'bot public-thread fallback');
+    context.log?.('Onboarding private-thread creation unavailable; using a public thread in '+parent.id+' for '+job.userId+'.');
+    return parent.threads.create({name,type:ChannelType.PublicThread,autoArchiveDuration:1440,reason:'GuildSync member onboarding fallback'});
+   };
+   if(!parent.permissionsFor(client.user)?.has(PermissionFlagsBits.CreatePrivateThreads))thread=await createPublic();
+   else {
+    try {thread=await parent.threads.create({name,type:ChannelType.PrivateThread,invitable:false,autoArchiveDuration:1440,reason:'GuildSync member onboarding'});}
+    catch(error){if(![50013,50001].includes(error.code))throw error;thread=await createPublic();}
+   }
+  }
   await progress({threadId:thread.id});job.threadId=thread.id;
  }
- if(thread.guildId!==guildId || thread.parentId!==parent.id || thread.type!==ChannelType.PrivateThread || thread.ownerId!==client.user.id)
-  throw Error('Stored onboarding thread does not match its private destination.');
+ if(thread.guildId!==guildId || thread.parentId!==parent.id || ![ChannelType.PrivateThread,ChannelType.PublicThread].includes(thread.type) || thread.ownerId!==client.user.id)
+  throw Error('Stored onboarding thread does not match its configured onboarding destination.');
  if(thread.archived)await thread.setArchived(false);
  await thread.members.add(job.userId);
  requirePermissions(thread,client.user,[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessagesInThreads,PermissionFlagsBits.ReadMessageHistory],'bot thread delivery');
@@ -95,11 +111,11 @@ export async function processOnboardingDelivery(context,job) {
   await request(socket,'observe',{guildId,member:{discord_id:job.userId,joined_at:member.joinedTimestamp?Math.floor(member.joinedTimestamp/1000):undefined,present:true}});
   validity=await request(socket,'validate',payload);
   if(!validity.valid){await finish({cancelled:true});return;}
-  let associateName='Associate';
+  let associateName='Associates';
   if(job.kind==='promotion') {
-   const roles=await guild.roles.fetch(),gangster=roleByName(roles,config.gangsterRoleId,'gangster'),associate=roleByName(roles,config.associateRoleId,'Associate');
+   const roles=await guild.roles.fetch(),gangster=roleByName(roles,config.gangsterRoleId,'Gangsters'),associate=roleByName(roles,config.associateRoleId,'Associates');
    associateName=associate.name;
-   if(gangster.id===associate.id)throw Error('Gangster and Associate must be different roles.');
+   if(gangster.id===associate.id)throw Error('Gangsters and Associates must be different roles.');
    if(!member.roles.cache.has(gangster.id)) {
     if(!(job.roleStarted || job.roleChanged)){await finish({cancelled:true});return;}
     if(!member.roles.cache.has(associate.id))throw Error('Interrupted promotion no longer has the Associate role.');

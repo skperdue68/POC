@@ -24,7 +24,7 @@ export function readOnboardingConfig(env = process.env) {
  return config;
 }
 
-export function renderOnboardingMessage(template,{userId,esoName='',associateRole='Associate',hours=24}) {
+export function renderOnboardingMessage(template,{userId,esoName='',associateRole='Associates',hours=24}) {
  const escape=value=>String(value).replace(/@/g,'@\u200b').replace(/([\\`*_~|<>])/g,'\\$1');
  const values={mention:'<@'+userId+'>',eso_name:escape(esoName),associate_role:escape(associateRole),hours:String(hours)};
  let content=template.replace(/\{(mention|eso_name|associate_role|hours)\}/g,(_,key)=>values[key]);

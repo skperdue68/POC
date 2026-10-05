@@ -81,7 +81,7 @@ export function registerRaffleManagementSocket(socket, db, { sheets, authorize =
       await log(payload.action.toUpperCase() + ' requested by ' + JSON.stringify(requestedBy) + ' for both raffle sheets.');
       if (payload.action === 'clear') {
         await sheets.clear();
-        callback({ ok: true, message: 'Cleared both raffle sheets, including Bi-Weekly R7 and 50/50 P7 draw dates. Database records are unchanged. Use /gsr raffle refresh to reload them.' });
+        callback({ ok: true, message: 'Cleared both raffle sheets, including Bi-Weekly R7 and 50/50 P7 draw dates. Database records are unchanged. Use /gsr load to reload them.' });
       } else {
         const result = await sheets.archive({ requestedBy });
         callback({ ok: true, message: result.message || formatArchiveMessage({ ...result, requestedBy, sourceId: googleSheetsBankingConfig().spreadsheetId }) });

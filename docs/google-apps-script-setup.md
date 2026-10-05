@@ -1,5 +1,7 @@
 # GuildSync raffle archives: setup and account migration
 
+Updated October 5, 2026. For the full current command and setting reference, see [detailed help](GuildSync-Detailed-Help.md) and the [user guide](GuildSync-User-Guide.md).
+
 This guide sets up archiving in a personal Google Drive. Follow it from the beginning for a new account. You create a **standalone Google Apps Script project in your browser**, not a spreadsheet cell or a new Google Cloud project.
 
 ## What each part does
@@ -34,7 +36,7 @@ At ticket-sales cutoff, automatic writes to both tabs pause. Banking records sti
 
    Copy only the part between `/d/` and `/edit`. Do not include `#gid=...`; that identifies a tab, not the file.
 6. Share the working spreadsheet with the service account's `client_email` as **Editor**. Find this address in your existing service-account JSON file; do not paste that JSON into Apps Script.
-7. Allow that service account to edit protected ranges touched by GuildSync, including draw-date cells **R7** on Bi-Weekly and **P7** on 50/50. File-level Editor access alone does not override restricted ranges. See the [managed field list](google-sheets-logging.md#cleared-fields).
+7. Allow that service account to edit protected ranges touched by GuildSync, including draw-date cells **R7** on Bi-Weekly and **P7** on 50/50. File-level Editor access alone does not override restricted ranges. See the [managed field list](GuildSync-Detailed-Help.md#current-load-and-reset).
 
 ## 2. Create the Apps Script project
 
@@ -164,7 +166,8 @@ Other production commands, all private and restricted to Consigliere:
 | Command | Effect |
 | --- | --- |
 | `/gsraffle load` | Clears managed fields on both tabs and reloads current periods and draw dates. |
-| `/gsraffle load date:MMDDYY` | Rebuilds both tabs for periods selected by that local date. Use a test file for historical exports. |
+| `/gsraffle load date:MMDDYY` | Rebuilds the selected historical archive, creating it if absent. Keeps the working file unchanged for historical selections. Boundary dates ask starts/ends. |
+| `/gsraffle update date:MMDDYY` | Saves supported editable fields from the matching ready archive to the database without clearing/replacing it. |
 | `/gsraffle reset` | Clears managed fields on both tabs, including draw dates; database records remain. It does not permanently pause future writes. |
 
 Refresh and clear are blocked during an active rollover hold/recovery. See [command details](raffle-refresh.md).
@@ -251,7 +254,7 @@ Saving alone does not update the deployed web app. In **Executions**, check the 
 
 The current script returns failures as JSON, and the updated backend reports **Archive web app failed: <error message>** in its logs and command response. Shared secrets are redacted. This includes validation failures and Drive/Sheets errors, so execution details in Google's UI are not required. Update both the backend and the Apps Script deployment to enable this reporting.
 
-Archive date values use `America/New_York` explicitly, matching the Eastern raffle calendar and handling daylight saving time. The script does not read the spreadsheet timezone, so an empty setting cannot block archiving. Text dates retain their written calendar date. Date-formatting errors still identify the working spreadsheet or archive copy, tab and cell, and timezone used. Archive names remain `YYMMDD Raffle`.
+Raffle schedules use `America/New_York`, including daylight saving time; archive filenames preserve the displayed calendar date. The script does not read the spreadsheet timezone, so an empty setting cannot block archiving. Text dates retain their written calendar date. Date-formatting errors still identify the working spreadsheet or archive copy, tab and cell, and timezone used. Archive names remain `YYMMDD Raffle`.
 
 An older deployment or a Google access error can still return a non-JSON response, causing **Archive web app returned invalid JSON; check deployment access**. This does not by itself prove deployment access is wrong. A corresponding failed doPost execution means the request reached the script. If no corresponding execution appears, check the /exec URL, Execute as Me and access Anyone. Handled script failures in the current deployment return `ok: false` even if Google's execution list marks the function completed; the backend still blocks reset/export.
 
@@ -324,35 +327,12 @@ For exact cell ranges and operational details, see [spreadsheet export documenta
 See [raffle result snapshots](raffle-result-snapshots.md) for historical result restoration, archive replacement and upgrade steps.
 
 
-### Conditional 50/50 result capture and read diagnostics
+### Current archive fields and naming
 
-Update the backend and Apps Script together for conditional result capture. In Apps Script, save `Archive.gs`, then choose **Deploy > Manage deployments > Edit (pencil) > New version > Deploy**. Updating the existing deployment preserves its `/exec` URL. Restart the backend after updating its code. No new environment variables or database migration are required for this change.
+Archive capture is active for nonempty Bi-Weekly Q33:Q52, J5:K254, O55 and 50/50 P25/M28. It stores them in `guildsync_raffle_archive_cells` before resetting the source. Backend startup creates the required tables; changes replace the prior raffle snapshot, including removed cells. Temporary field-value diagnostics appear in backend Sheets logs. General typed-result/formula helpers also remain; their broader fields are described separately in the [result snapshot reference](raffle-result-snapshots.md).
 
-GuildSync sends eligible completed 50/50 draw dates from its existing schedule in Eastern time, including its variable-length monthly periods. The archive reader checks the archived 50/50 tab's `P7`. It reads `L23` and `J26` only when that date is in the completed-period list and does not follow the Bi-Weekly archive date in `R7`. The backend still validates the completed period before saving. Ongoing 50/50 results are neither captured nor cleared.
+The filename uses the date displayed in **Bi-Weekly R7 before reset**, accepting `MM/DD/YY` or `MM/DD/YYYY` and formatting **YYMMDD Raffle**. For example, `10/10/26` becomes `261010 Raffle`. Date-only values preserve their written calendar date rather than shifting midnight to the previous day. Empty/invalid R7 fails before reset; P7 must be valid when nonempty 50/50 result fields are captured. No today's-date fallback is used.
 
-If `P7` is missing, unreadable, or outside the draw schedule, the reader logs a skip and preserves existing 50/50 result fields. Correct that date before attempting to capture completed 50/50 results. The full workbook is still copied as the archive; skipping result capture does not remove its contents from the copy.
+Historical load searches the configured archive folder by expected name and preserves an existing file ID. A missing archive is copied from the configured working source, assigned requested dates, cleared/rebuilt from database data, and marked ready. Update reads that same ready archive. Deliberate replacement by live archive creates a new ID, moves verified older same-name copies to Trash, and updates saved database references. The original working link stays unchanged.
 
-Apps Script execution logs show each date/range before reading it and the number of captured cells afterward, without printing member names, cell values, or secrets. For example:
-
-```text
-Reading raffle results: bi-weekly raffle Q33:Q48
-Read raffle results: bi-weekly raffle Q33:Q48; captured cells=3
-```
-
-Read failures return an explicit tab/range diagnostic to GuildSync, such as `Archive web app failed: Unable to read 50/50 L23`. A generic invalid-JSON response can still indicate an error outside the authenticated archive operation or a deployment/access problem; it is not proof of an access problem. The backend logs when 50/50 capture is skipped.
-
-
-### Archive result capture temporarily paused
-
-Archive operations currently copy and verify the workbook, reconcile sharing, replace older same-name archives, reset the original tabs using the established reset ranges, and reload banking records. They do **not** read winners, prize amounts, attendance, or 50/50 result cells, and do not read/write result snapshots or formula templates during rollover. The Bi-Weekly `R7` date is still read for the archive filename. Archive announcements remain enabled as configured.
-
-The result helper code and existing database tables/data remain available for later troubleshooting. This pause applies to automatic rollover and `/gsraffle archive`; it does not change the separate `/gsraffle load` or `/gsraffle reset` workflows.
-
-Deploy both changes: update/restart the backend, then paste the updated `Archive.gs` into Apps Script and choose **Deploy > Manage deployments > Edit > New version > Deploy**. No environment-variable or database migration changes are required. The conditional-capture section above describes the retained feature, which is currently inactive during archiving.
-
-
-### Archive name uses the displayed draw date
-
-The archive filename uses the date displayed in **Bi-Weekly R7 before reset**, in `MM/DD/YY` or `MM/DD/YYYY` format, and formats it as `YYMMDD Raffle`. For example, `10/10/26` becomes `261010 Raffle`. It does not use 50/50 P7, today's date, or the draw date restored after reset. Date-only cells are no longer converted to Eastern time, which could move a midnight value into the previous day.
-
-The manual archive confirmation includes a clickable Google Sheets link. Same-name replacement still creates/verifies a new copy, then moves older same-name spreadsheets in the configured archive folder to trash, excluding the original and new archive. The replacement gets a new file ID; the original public spreadsheet link remains unchanged. Previously misnamed archives are not automatically renamed by this correction.
+Discord results use document buttons. See the [command guide](raffle-refresh.md) for `/gsr` aliases and boundary choices. Saving Apps Script code alone does not update the web app; use New version > Deploy when Archive.gs changes. This documentation/onboarding update does not change Archive.gs.
