@@ -1,3 +1,4 @@
+import { normalizeRaffleDate } from './raffle-date.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as endpoints from './raffle-admin-socket.js';
@@ -98,4 +99,23 @@ test('production clear/archive require bot authentication and exact role without
   socket.guildSyncAuthType = 'client';
   assert.equal((await request({ action: 'clear', discordUserId: 'officer' })).ok, false);
   assert.equal(calls.length, 2);
+});
+
+test('unpadded dates can be planned but cannot mutate until submitted in canonical form',async()=>{
+ let handler;const calls=[];
+ const selection={asOf:200,boundaryTypes:[],raffles:[{type:'biweekly',start:101,end:250},{type:'monthly',start:50,end:250}]};
+ const socket={guildSyncAuthenticated:true,guildSyncAuthType:'discord-bot',on(_event,callback){handler=callback;}};
+ endpoints.registerRaffleRefreshSocket(socket,{}, {
+  getRaffleRefreshSelection:date=>({...selection,dateNormalization:normalizeRaffleDate(date)}),authorize:async()=>true,log:async()=>{},
+  getBankingDataJSON:async()=>entries,loadResults:async()=>({}),loadTemplates:async()=>({}),
+  historical:{prepare:async()=>({spreadsheetId:'archive',historical:true,results:{}}),complete:async()=>{},save:async()=>{calls.push('update');return {saved:1};}},
+  coordinate:async operation=>operation(),refreshEntries:async load=>{calls.push('export');await load();return {synced:1};}
+ });
+ const request=(action,date)=>new Promise(resolve=>handler({action,date,discordUserId:'officer',requestedBy:'Officer'},resolve));
+ assert.equal((await request('plan','91526')).selection.dateNormalization.requiresConfirmation,true);
+ for(const action of ['export','update']) {
+  const unconfirmed=await request(action,'91526');assert.equal(unconfirmed.ok,false);assert.match(unconfirmed.message,/confirm.*MMDDYY/i);
+  assert.equal((await request(action,'091526')).ok,true);
+ }
+ assert.deepEqual(calls,['export','update']);
 });

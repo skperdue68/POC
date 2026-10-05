@@ -32,6 +32,8 @@ export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelect
       if (['update','save'].includes(payload.action) && typeof payload.date !== 'string') throw Error('Update requires a raffle date in MMDDYY format.');
       let selection = getRaffleRefreshSelection(payload.date, undefined, payload.boundaryChoices);
       if (payload.action === 'plan') { callback({ ok: true, selection }); return; }
+      if (selection.dateNormalization?.requiresConfirmation) throw Error('Confirm the interpreted date first, then submit its zero-padded MMDDYY value.');
+      if (selection.dateNormalization) payload.date = selection.dateNormalization.value;
       if (selection.boundaryTypes?.some(type => !['starts','ends'].includes(payload.boundaryChoices?.[type]))) throw Error('Choose whether the boundary raffle starts or ends on this date before loading or updating.');
       const requestedBy = String(payload.requestedBy || '').trim().slice(0, 100);
       if (!requestedBy) throw new Error('The initiating Discord display name is required.');

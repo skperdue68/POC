@@ -13,11 +13,11 @@ export function createGsaCommandData(env = process.env) {
 export function createGsrCommandData() {
   return new SlashCommandBuilder().setName('gsraffle').setDescription('GuildSync raffle administration').setDMPermission(false)
       .addSubcommand(sub => sub.setName('load').setDescription('Load current data to the working sheet or selected data to its archive.')
-        .addStringOption(option => option.setName('date').setDescription('MMDDYY; omitted uses current periods. Boundary dates ask which raffle to load.')))
+        .addStringOption(option => option.setName('date').setDescription('MMDDYY, MM/DD/YY or MM-DD-YY; omitted uses current. Unpadded dates ask for confirmation.')))
       .addSubcommand(sub => sub.setName('reset').setDescription('Clear both raffle sheets and draw dates; database records remain intact.'))
       .addSubcommand(sub => sub.setName('archive').setDescription('Archive now, reset both raffle sheets and reload current data.'))
       .addSubcommand(sub => sub.setName('update').setDescription('Update database winners and other result fields from the archived sheet.')
-        .addStringOption(option => option.setName('date').setDescription('MMDDYY within the raffle; boundary dates ask which raffle to update.').setRequired(true)));
+        .addStringOption(option => option.setName('date').setDescription('MMDDYY, MM/DD/YY or MM-DD-YY within the raffle. Unpadded dates ask for confirmation.').setRequired(true)));
 }
 
 export function createGsrAliasCommandData() { return createGsrCommandData().setName('gsr'); }
@@ -59,6 +59,22 @@ export async function execute(interaction, socket, log = Log) {
       payload.date = interaction.options.getString('date') ?? undefined;
       if (action === 'update' && !payload.date) throw Error('Update requires a raffle date in MMDDYY format.');
       let plan = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: 'plan' });
+      const normalized = plan.selection.dateNormalization;
+      if (normalized?.requiresConfirmation) {
+        const dateLabel = new Intl.DateTimeFormat('en-US', {timeZone:plan.selection.timeZone,month:'long',day:'numeric',year:'numeric'}).format(new Date(plan.selection.lookupAt*1000));
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('confirm-date').setLabel('Confirm date').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('cancel-date').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
+        const message = await interaction.editReply({content:`I interpreted your date as **${dateLabel} (${normalized.value}, MMDDYY)**. Confirm this date before I ${action} the raffle data.`,components:[row],allowedMentions:{parse:[]}});
+        let answer;
+        try { answer = await message.awaitMessageComponent({componentType:ComponentType.Button,time:60000,filter:choice=>choice.user.id===interaction.user.id}); }
+        catch { await interaction.editReply({content:`${action === 'update' ? 'Update' : 'Load'} cancelled: the date was not confirmed. No raffle data was changed.`,components:[],allowedMentions:{parse:[]}}); return; }
+        await answer.deferUpdate();
+        if (answer.customId !== 'confirm-date') {
+          await interaction.editReply({content:`${action === 'update' ? 'Update' : 'Load'} cancelled. No raffle data was changed.`,components:[],allowedMentions:{parse:[]}}); return;
+        }
+      }
+      if (normalized) payload.date = normalized.value;
       if (plan.selection.boundaryTypes?.length) {
         payload.boundaryChoices = {};
         for (const type of plan.selection.boundaryTypes.filter(type => type === 'biweekly')) {

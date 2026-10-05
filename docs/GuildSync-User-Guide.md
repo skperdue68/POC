@@ -39,13 +39,13 @@ These require the Discord role named exactly **Consigliere**. `/gsr` is a shorte
 | `/gsr archive` | Archives the current raffle sheet, saves its supported result fields, resets both working tabs, and repopulates current raffle data. Returns buttons for the archive and working sheet. |
 | `/gsr reset` | Clears managed data and draw dates on both working tabs without deleting database records. Use `load` afterward to restore data. |
 
-Dates use **MMDDYY**: `100326` means October 3, 2026. If your date is the start/end boundary of a Bi-Weekly raffle, choose **Starts on this date** or **Ends on this date** when asked. GuildSync selects the corresponding 50/50 raffle for you. You have one minute to answer; no answer cancels the operation.
+Dates use zero-padded **MMDDYY**: `100326` means October 3, 2026. You can also enter `10/03/26` or `10-03-26`; GuildSync converts them automatically. If zeros are missing and the date can be determined safely, it shows the full date and asks you to **Confirm date**. For example, `9/5/26` or `9526` becomes `090526`. An ambiguous value such as `11226` fails: enter `011226` for January 12 or `110226` for November 2. Invalid dates also fail with the required format. The year must have two digits. Canceling or ignoring the confirmation for one minute changes no data. If your date is the start/end boundary of a Bi-Weekly raffle, choose **Starts on this date** or **Ends on this date** when asked. GuildSync selects the corresponding 50/50 raffle for you. You have one minute to answer; no answer cancels the operation.
 
 To edit an old raffle:
 
 1. Run `/gsr load date:MMDDYY` and answer any boundary question.
 2. Open the returned archive button. Review or edit the supported winner, attendance, bonus-ticket, or winnings-sent fields.
-3. Run the **update command shown in the response**, using the same date and boundary choice.
+3. Run the **update command shown in the response**, using the normalized, zero-padded date and the same boundary choice.
 
 Existing historical files keep their file ID during load and update. Archive filenames use the Bi-Weekly ending date: **YYMMDD Raffle**, such as `261010 Raffle` for October 10, 2026. Archiving the live sheet again can replace an older same-name archive and give that replacement a new link.
 
