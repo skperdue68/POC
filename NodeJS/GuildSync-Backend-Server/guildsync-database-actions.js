@@ -363,7 +363,8 @@ async function initializeSchema(db) {
       role VARCHAR(50) NOT NULL DEFAULT 'viewer',
       requested_at VARCHAR(32) NOT NULL,
       approved_at VARCHAR(32),
-      last_login_at VARCHAR(32)
+      last_login_at VARCHAR(32),
+      revoked_at VARCHAR(32)
     )
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
@@ -371,6 +372,8 @@ async function initializeSchema(db) {
 
   // Change only the insertion default; existing account roles remain untouched.
   await db.query("ALTER TABLE guildsync_users ALTER COLUMN role SET DEFAULT 'viewer'");
+  // Preserve referenced login records when access is revoked; existing accounts remain unchanged.
+  await addColumnIfMissing(db, 'guildsync_users', 'revoked_at', 'VARCHAR(32) DEFAULT NULL');
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_applications (
@@ -935,6 +938,10 @@ export async function upsertLoginUser(loginDB, discordUser) {
         username = VALUES(username),
         global_name = VALUES(global_name),
         avatar = VALUES(avatar),
+        role = IF(revoked_at IS NOT NULL, 'viewer', role),
+        requested_at = IF(revoked_at IS NOT NULL, VALUES(requested_at), requested_at),
+        approved_at = IF(revoked_at IS NOT NULL, NULL, approved_at),
+        revoked_at = NULL,
         last_login_at = VALUES(last_login_at)
       `,
     [

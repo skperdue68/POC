@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import {DatabaseSync} from 'node:sqlite';
 import {createUserAdministration, registerUserAdministrationSocket} from './user-administration.js';
 
 function database() {
@@ -11,11 +12,11 @@ function database() {
   ['3',{discord_user_id:'3',username:'Member',role:'user',allowed:1,email:'old@example.com',guild_member_name:'@Member'}]
  ]);const sessions=new Set(['2','3']);let snapshot;
  const db={users,sessions,async getConnection(){return this},async beginTransaction(){snapshot=new Map([...users].map(([k,v])=>[k,{...v}]))},async commit(){snapshot=null},async rollback(){if(snapshot){users.clear();for(const [k,v] of snapshot)users.set(k,v)}},release(){},async execute(sql,args=[]){
-  if(sql.includes('COUNT(*)'))return [[{pending_count:[...users.values()].filter(u=>!u.allowed||u.role==='pending').length,admin_count:[...users.values()].filter(u=>u.allowed&&u.role==='admin').length}]];
+  if(sql.includes('COUNT(*)'))return [[{pending_count:[...users.values()].filter(u=>(!u.allowed||u.role==='pending')&&(!sql.includes('revoked_at IS NULL')||!u.revoked_at)).length,admin_count:[...users.values()].filter(u=>u.allowed&&u.role==='admin').length}]];
   if(sql.startsWith('SELECT')) {
    if(sql.includes("role = 'admin'"))return [[...users.values()].filter(u=>u.allowed&&u.role==='admin').map(u=>({...u}))];
    if(sql.includes('discord_user_id = ?'))return [[...users.values()].filter(u=>u.discord_user_id===args[0]).map(u=>({...u}))];
-   return [[...users.values()].map(u=>({...u}))];
+   return [[...users.values()].filter(u=>!sql.includes('revoked_at IS NULL')||!u.revoked_at).map(u=>({...u}))];
   }
   if(sql.startsWith('UPDATE')){const id=args.at(-1),row=users.get(id);const fields=sql.split(' SET ')[1].split(' WHERE ')[0].split(',').map(x=>x.trim().split(' = ')[0]);fields.forEach((key,i)=>row[key]=args[i]);return [{}]}
   if(sql.startsWith('DELETE FROM guildsync_login_sessions'))sessions.delete(args[0]);
@@ -57,9 +58,13 @@ test('self role changes and self removal are rejected but own profile edits work
  const db=database(),service=createUserAdministration(db);for(const change of [{action:'remove'},{action:'save',role:'user'}])await assert.rejects(service.change('1',{...change,discord_user_id:'1',expected:expected(db.users.get('1'))}),/own/);
  await service.change('1',{action:'save',discord_user_id:'1',expected:expected(db.users.get('1')),email:'self@example.com'});assert.equal(db.users.get('1').role,'admin');assert.equal(db.users.get('1').email,'self@example.com');
 });
-test('removal deletes the login record and all login sessions and notifies after commit',async()=>{
- const db=database(),changes=[],service=createUserAdministration(db,{onChange:async change=>{assert.equal(db.users.has('3'),false);changes.push(change)}});
- await service.change('1',{action:'remove',discord_user_id:'3',expected:expected(db.users.get('3'))});assert.equal(db.users.has('3'),false);assert.equal(db.sessions.has('3'),false);assert.equal(changes[0].removed,true);
+test('revocation preserves the referenced account and profile while clearing access and sessions',async()=>{
+ const db=database(),changes=[],original={...db.users.get('3')},execute=db.execute.bind(db);
+ db.execute=async(sql,args)=>{if(sql.startsWith('DELETE FROM guildsync_users'))throw Error('Foreign key constraint: banking checkout references this account');return execute(sql,args)};
+ const service=createUserAdministration(db,{onChange:async change=>{assert.equal(db.users.get('3').allowed,0);changes.push(change)}});
+ await service.change('1',{action:'remove',discord_user_id:'3',expected:expected(original)});
+ assert.equal(db.users.get('3').allowed,0);assert.ok(db.users.get('3').revoked_at);assert.equal(db.users.get('3').role,original.role);assert.equal(db.users.get('3').email,original.email);assert.equal(db.sessions.has('3'),false);assert.equal(changes[0].removed,true);
+ const list=await service.list('1');assert.deepEqual(list.users.map(u=>u.discord_user_id),['1','2']);assert.equal(list.pending_count,1);
 });
 test('reject invalid fields, stale edits and a demoted administrator without changing records',async()=>{
  const db=database(),service=createUserAdministration(db),base={action:'save',discord_user_id:'3',expected:expected(db.users.get('3'))};
@@ -72,6 +77,29 @@ test('Discord login preserves administrator-edited or cleared email',async()=>{
  const db=database(),ctx={};vm.createContext(ctx);vm.runInContext(fn,ctx);
  db.users.get('3').email='edited@example.com';await ctx.upsertLoginUser(db,{id:'3',username:'Member',email:'discord@example.com'});assert.equal(db.users.get('3').email,'edited@example.com');
  db.users.get('3').email=null;await ctx.upsertLoginUser(db,{id:'3',username:'Member',email:'discord@example.com'});assert.equal(db.users.get('3').email,null);
+});
+test('a revoked account requests approval again on login without losing historical references',async()=>{
+ const source=fs.readFileSync(new URL('./guildsync-database-actions.js',import.meta.url),'utf8');
+ const fn=source.match(/export async function upsertLoginUser\([^]*?(?=\nexport )/)[0].replace('export ','');
+ const db=new DatabaseSync(':memory:');
+ try{
+  db.exec(`PRAGMA foreign_keys=ON;
+   CREATE TABLE guildsync_users(discord_user_id TEXT PRIMARY KEY,username TEXT,global_name TEXT,email TEXT,avatar TEXT,allowed INTEGER,role TEXT,requested_at TEXT,last_login_at TEXT,approved_at TEXT,guild_member_name TEXT,revoked_at TEXT);
+   CREATE TABLE guildsync_login_sessions(discord_user_id TEXT);
+   CREATE TABLE banking(checked_out_by TEXT REFERENCES guildsync_users(discord_user_id));
+   INSERT INTO guildsync_users(discord_user_id,username,allowed,role,requested_at) VALUES('1','Admin',1,'admin','2020-01-01'),('3','Member',1,'user','2020-01-01');
+   INSERT INTO banking VALUES('3');INSERT INTO guildsync_login_sessions VALUES('3');`);
+  const adapter={async execute(sql,args=[]){sql=sql.replace('ON DUPLICATE KEY UPDATE','ON CONFLICT(discord_user_id) DO UPDATE SET').replace(/VALUES\((\w+)\)/g,'excluded.$1').replace(/\bIF\(/g,'IIF(').replace(/ FOR UPDATE/g,'');return [sql.trimStart().startsWith('SELECT')?db.prepare(sql).all(...args):db.prepare(sql).run(...args)];},async getConnection(){return this},async beginTransaction(){db.exec('BEGIN')},async commit(){db.exec('COMMIT')},async rollback(){db.exec('ROLLBACK')},release(){}};
+  const service=createUserAdministration(adapter),row=db.prepare("SELECT * FROM guildsync_users WHERE discord_user_id='3'").get();
+  await service.change('1',{action:'revoke',discord_user_id:'3',expected:expected(row)});
+  assert.equal((await service.pending('1')).pending_count,0);
+  const ctx={};vm.createContext(ctx);vm.runInContext(fn,ctx);
+  const login=await ctx.upsertLoginUser(adapter,{id:'3',username:'Updated'});
+  assert.equal(login.allowed,0);assert.equal(login.role,'viewer');assert.equal(login.revoked_at,null);assert.equal(login.approved_at,null);
+  assert.equal((await service.pending('1')).pending_count,1);
+  assert.equal(db.prepare('SELECT checked_out_by FROM banking').get().checked_out_by,'3');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM guildsync_login_sessions').get().n,0);
+ }finally{db.close()}
 });
 test('socket routes reject bots/anonymous callers and derive actor from authentication',async()=>{
  const handlers=new Map(),actors=[],socket={guildSyncAuthenticated:true,guildSyncAuthType:'discord-bot',guildSyncUser:{discord_user_id:'1'},on:(key,fn)=>handlers.set(key,fn)};
