@@ -79,9 +79,15 @@ export async function execute(interaction, socket) {
       if (action === 'save') {
         content = selectionMessage(result.selection) + '\n\nSaved ' + result.saved + ' result fields to the database from the archived raffle sheet [HERE](' + result.sheetUrl + '). No spreadsheet data was cleared.';
       } else {
-        content = selectionMessage(result.selection) + '\n\nLoad complete: ' + result.synced + ' entries written. Both worksheets were cleared and reloaded.';
-        if (result.historical) content += '\n\nRaffle data has been loaded to the archived raffle sheet [HERE](' + result.sheetUrl + ').\nAfter updating winners, attendance, bonus tickets, or other result fields, use `/gsr save date:' + payload.date + '` to save those changes to the database.';
-        else if (result.workingSheetUrl) content += '\n\nRaffle data has been loaded to the working sheet [HERE](' + result.workingSheetUrl + ').';
+        if (result.historical) {
+          const ending = result.selection.raffles.find(raffle => raffle.type === 'biweekly').end;
+          const endingDate = new Intl.DateTimeFormat('en-US', { timeZone: result.selection.timeZone,
+            month: 'long', day: 'numeric', year: 'numeric' }).format(new Date(ending * 1000));
+          content = 'Data for the raffle ending ' + endingDate + ' has been refreshed from the database. The sheet may be found [HERE](' + result.sheetUrl + ').\n\nAfter updating winners, attendance, bonus tickets, or other result fields, use `/gsr save date:' + payload.date + '` to save those changes to the database.';
+        } else {
+          content = selectionMessage(result.selection) + '\n\nLoad complete: ' + result.synced + ' entries written. Both worksheets were cleared and reloaded.';
+          if (result.workingSheetUrl) content += '\n\nRaffle data has been loaded to the working sheet [HERE](' + result.workingSheetUrl + ').';
+        }
       }
       if(result.historical) content += '\n\n50/50 results are shared with other Bi-Weekly archives for the same 50/50 raffle. This archive’s captured results are the latest saved snapshot.';
     } else {

@@ -62,7 +62,8 @@ export function createHistoricalRaffles(db, {settings=config, currentSelection, 
     const captured=await request('historical-read',{...args(selection),archiveId:target.spreadsheetId});
     await captureArchive(captured);
    }
-   // A preparing copy may still contain the current working raffle. Never capture it.
+   // Before refresh, an unfinished copy still contains the working raffle's values.
+   // Capture its managed fields in complete() after the selected data/dates are written.
    const results=await loadCells(db,selection.raffles,sourceId);
    return {...target,results};
   },

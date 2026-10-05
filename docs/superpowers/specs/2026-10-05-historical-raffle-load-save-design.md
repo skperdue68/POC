@@ -67,7 +67,7 @@ Persist complete captures before clearing; on capture/database failures leave sh
 
 Keep administrative responses ephemeral. Current loads link to the working sheet. Historical loads link to the archive and say:
 
-> Raffle data has been loaded to the archived raffle sheet [HERE](archive-link).
+> Data for the raffle ending <selected Bi-Weekly ending date> has been refreshed from the database. The sheet may be found [HERE](archive-link).
 > After updating winners, attendance, bonus tickets, or other result fields, use `/gsr save date:<original MMDDYY>` to save those changes to the database.
 
 Save completion identifies the selected raffle dates, archive link, and number of captured fields. Do not broadcast an ordinary archive-rollover announcement for historical load/save. Existing `/gsr archive` continues archiving the current working raffle and advancing it as before.
