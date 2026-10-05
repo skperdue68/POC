@@ -41,6 +41,12 @@ for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', '
     assert.doesNotMatch(html, /name="monthly-enabled"[^>]*checked/);
     assert.match(html, /Save Bonus Settings/);
   });
+  test(`${path}: users can inspect raffle bonus policies but cannot edit or save them`, () => {
+    const ctx = context();ctx.guildSyncSession.user.role = 'user';vm.runInContext(functions, ctx);
+    const html = vm.runInContext('renderRaffleBonusSettings()', ctx);
+    assert.match(html, /<select id="bonusRafflePicker">/);assert.match(html, /<fieldset class="raffle-bonus-tiers" disabled>/);
+    assert.match(html, /Admin access is required to change these settings/);assert.doesNotMatch(html, /id="resetBonusDefaults"|Save Bonus Settings/);
+  });
   test(`${path}: dropdown marks enabled bonuses and removes the marker when disabled`, () => {
     const ctx = context();
     ctx.raffleBonusRaffles[0].label = 'Bi-Weekly | Raffle 09/26/26';

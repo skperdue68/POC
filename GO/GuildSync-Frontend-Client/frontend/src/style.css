@@ -6858,3 +6858,6 @@ body {
 .configuration-help { margin:0; color:#d3deed; font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
 .configuration-values { padding-top:4px; gap:16px; }
 @media (max-width:600px) { .configuration-group { padding:10px; } .configuration-setting { padding:12px; } }
+
+.configuration-readonly-value { display:block; box-sizing:border-box; min-height:38px; padding:8px; background:#18212e; color:#f3f5fa; border:1px solid #64748b; border-radius:5px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.configuration-readonly-notice { border-left:3px solid #60a5fa; padding:8px 12px; }

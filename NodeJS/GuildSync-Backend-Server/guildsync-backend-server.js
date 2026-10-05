@@ -458,6 +458,7 @@ const onboardingService = createDiscordOnboarding(applicationDB, {log:Log,wake:(
 
 io.on('connection', (socket) => {
   registerConfigurationSocket(socket,configurationService,{
+    authorizeViewer: async id => {const [rows]=await loginDB.execute('SELECT discord_user_id FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows.length>0;},
     authorizeAdmin: async id => {const [rows]=await loginDB.execute('SELECT role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows[0]?.role==='admin';},
     broadcast: configuration => io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration)
   });

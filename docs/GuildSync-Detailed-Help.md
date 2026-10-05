@@ -428,7 +428,7 @@ External protocol references: [Discord threads](https://github.com/discord/disco
 
 ## Saved administrator overrides
 
-Both desktop and web **Reports & Admin** provide collapsible bonus and administrator configuration sections. Access to configuration reads and writes is checked against the current allowed `guildsync_users.role = admin` record in the login database. Discord Consigliere access alone does not grant configuration access.
+Both desktop and web **Reports & Admin** provide collapsible bonus and administrator configuration sections. Approved GuildSync users (`allowed = 1`) can view Administrator Configuration and inspect raffle bonus policies. Only users whose current login database role is `admin` can save either section. Administrator Configuration read requests check current approval; save requests recheck administrator access. Discord Consigliere access does not grant GuildSync administrator rights.
 
 See [Administrator Configuration](GuildSync-Admin-Configuration.md) for the complete override catalog, defaults, validation, live refresh behavior, and database inspection query. Overrides are stored in the existing startup-created `guildsync_settings` table under `admin_configuration`; no manual migration is required. Bonus settings retain their separate policy/version/raffle override tables. Changing `.env` itself still requires restarting its owning process; removing an override restores that process's original environment default.
 

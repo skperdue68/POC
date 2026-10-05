@@ -1,6 +1,6 @@
 # GuildSync Administrator Configuration
 
-Use **Reports & Admin → Administrator Configuration** in the web or desktop client. GuildSync login role **admin** is required. The bonus configuration has its own collapsible section. Opening another section or report closes the previous section; unsaved edits survive collapsing and background redraws.
+Use **Reports & Admin → Administrator Configuration** in the web or desktop client. Approved GuildSync users can view current values, defaults, and help text. GuildSync login role **admin** is required to edit, reset, or save Administrator Configuration and raffle bonus settings. Read-only users can refresh configuration and select a raffle to inspect its bonus policy. The bonus configuration has its own collapsible section. Opening another section or report closes the previous section; unsaved edits survive collapsing and background redraws.
 
 ## Saving, resetting, and defaults
 
