@@ -13,9 +13,9 @@ test('persistent sessions use current approval and role, and disconnect when rev
   try {
     db.exec(`
       CREATE TABLE guildsync_login_sessions (session_id TEXT, discord_user_id TEXT);
-      CREATE TABLE guildsync_users (discord_user_id TEXT, allowed INTEGER, role TEXT);
+      CREATE TABLE guildsync_users (discord_user_id TEXT, allowed INTEGER, role TEXT, requested_at TEXT);
       INSERT INTO guildsync_login_sessions VALUES ('session-1', 'user-1');
-      INSERT INTO guildsync_users VALUES ('user-1', 1, 'user');
+      INSERT INTO guildsync_users VALUES ('user-1', 1, 'user', '2020-01-01T00:00:00.000Z');
     `);
     let disconnected = false;
     const socket = { guildSyncSessionId: 'session-1', disconnect() { disconnected = true; } };
@@ -27,11 +27,17 @@ test('persistent sessions use current approval and role, and disconnect when rev
     });
     const token = jwt.sign({ sub: 'user-1', jti: 'session-1', role: 'admin' }, secret,
       { issuer: 'guildsync-auth-server', audience: 'guildsync-desktop' });
+    const legacyToken = jwt.sign({ sub: 'user-1', role: 'admin' }, secret, { issuer: 'guildsync-auth-server', audience: 'guildsync-desktop' });
+    assert.equal((await verify(legacyToken)).role, 'user');
     assert.equal((await verify(token)).role, 'user');
     assert.equal(disconnected, false);
     db.exec('UPDATE guildsync_users SET allowed = 0');
     await assert.rejects(verify(token), /Session was logged out/);
     assert.equal(disconnected, true);
+    db.exec('DELETE FROM guildsync_users');
+    await assert.rejects(verify(legacyToken), /Session was logged out/);
+    db.prepare('INSERT INTO guildsync_users VALUES (?, 1, ?, ?)').run('user-1','user',new Date((jwt.decode(legacyToken).iat * 1000) + 1).toISOString());
+    await assert.rejects(verify(legacyToken), /Session was logged out/);
   } finally {
     db.close();
   }

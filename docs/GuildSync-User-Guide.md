@@ -4,6 +4,8 @@ Updated October 5, 2026. This guide covers the commands and systems in the curre
 
 For setup, every environment setting, database details, and troubleshooting, see the [detailed reference](GuildSync-Detailed-Help.md).
 
+GuildSync admins can review pending accounts, approve access, and maintain user profiles through **Manage GuildSync Users** in the top-right avatar menu. A numbered circle shows pending requests. See [managing GuildSync users](GuildSync-User-Administration.md) for instructions and account protections.
+
 ## What GuildSync does
 
 GuildSync connects your guild's ESO activity with Discord and the raffle spreadsheets. It collects guild bank deposits and roster changes, keeps the records in a database, and uses those records to show raffle tickets, fill spreadsheets, and prepare receipt mail. It also helps officers review applications and match Discord members with ESO accounts.
