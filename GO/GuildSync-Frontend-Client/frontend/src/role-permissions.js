@@ -1,5 +1,23 @@
 export const GUILDSYNC_ROLES = ['viewer', 'user', 'admin'];
 export const canEditGuildSyncRole = role => role === 'user' || role === 'admin';
+export const canIngestGuildSyncRole = role => GUILDSYNC_ROLES.includes(role);
+export const canManageGuildSyncLinksRole = canEditGuildSyncRole;
+
+const adminEvents = new Set([
+  'guildsync:request-users','guildsync:request-pending-users','guildsync:change-user',
+  'guildsync:save-admin-configuration','guildsync:save-raffle-bonus-settings'
+]);
+const ingestionEvents = new Set([
+  'guildsync:upload-savedvars-raw','guildsync:sending-banking-data','guildsync:sending-roster-data',
+  'guildsync:gsa-post-application','guildsync:eso-guild-application-message',
+  'guildsync:run-member-auto-linking','guildsync:request-discord-data-refresh'
+]);
+export function canPerformGuildSyncEvent(role,event) {
+  if (!GUILDSYNC_ROLES.includes(role)) return false;
+  if (isReadOnlyGuildSyncEvent(event) || ingestionEvents.has(event)) return true;
+  if (adminEvents.has(event)) return role === 'admin';
+  return canEditGuildSyncRole(role);
+}
 
 // Explicit read allowlist: new operations are never implicitly available to viewers.
 const readEvents = new Set([

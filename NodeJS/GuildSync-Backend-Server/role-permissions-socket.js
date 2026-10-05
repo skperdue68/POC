@@ -1,6 +1,6 @@
-import {canEditGuildSyncRole, isReadOnlyGuildSyncEvent} from './role-permissions.js';
+import {canPerformGuildSyncEvent, isReadOnlyGuildSyncEvent} from './role-permissions.js';
 
-export function registerRolePermissions(socket, loginDB) {
+export function registerRolePermissions(socket, loginDB, views) {
   socket.use(async (packet, next) => {
     const event = String(packet[0] || '');
     if (!event.startsWith('guildsync:') || socket.guildSyncAuthType === 'discord-bot' || isReadOnlyGuildSyncEvent(event)) return next();
@@ -10,12 +10,13 @@ export function registerRolePermissions(socket, loginDB) {
           'SELECT role, allowed FROM guildsync_users WHERE discord_user_id = ? LIMIT 1',
           [socket.guildSyncUser.discord_user_id]
         );
-        if (Number(rows[0]?.allowed) === 1 && canEditGuildSyncRole(rows[0].role)) return next();
+        const actualRole=rows[0]?.role,role=views?.effective(socket.guildSyncRoleViewId,actualRole) || actualRole;
+        if (Number(rows[0]?.allowed) === 1 && (event === 'guildsync:set-role-view' ? actualRole === 'admin' : canPerformGuildSyncEvent(role,event))) return next();
       }
     } catch {
       // Fail closed if current permissions cannot be verified.
     }
-    const response = {ok:false, message:'This account has read-only access. A User or Admin role is required to change data.'};
+    const response = {ok:false, message:'Your current role or view does not have permission to perform this action.'};
     const callback = packet.at(-1);
     if (typeof callback === 'function') callback(response);
     else socket.emit('guildsync:permission-denied', response);

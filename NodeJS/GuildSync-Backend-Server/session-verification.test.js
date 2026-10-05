@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { DatabaseSync } from 'node:sqlite';
 import jwt from 'jsonwebtoken';
+import {createRoleViews,roleViewSessionKey} from './role-view.js';
 
 test('persistent sessions use current approval and role, and disconnect when revoked', async () => {
   // Exercise the real verifier without starting the server or opening production databases.
@@ -20,9 +21,10 @@ test('persistent sessions use current approval and role, and disconnect when rev
     let disconnected = false;
     const socket = { guildSyncSessionId: 'session-1', disconnect() { disconnected = true; } };
     const secret = 'test-only-secret';
+    const loginDB={ async execute(sql, params) { return [db.prepare(sql).all(...params)]; } },roleViews=createRoleViews(loginDB);
     const verify = vm.runInNewContext(`${verifier}\nverifyGuildSyncSession`, {
       jwt, GUILDSYNC_JWT_SECRET: secret,
-      loginDB: { async execute(sql, params) { return [db.prepare(sql).all(...params)]; } },
+      loginDB,roleViews,roleViewSessionKey,
       io: { sockets: { sockets: new Map([['socket-1', socket]]) } }
     });
     const token = jwt.sign({ sub: 'user-1', jti: 'session-1', role: 'admin' }, secret,
@@ -30,6 +32,11 @@ test('persistent sessions use current approval and role, and disconnect when rev
     const legacyToken = jwt.sign({ sub: 'user-1', role: 'admin' }, secret, { issuer: 'guildsync-auth-server', audience: 'guildsync-desktop' });
     assert.equal((await verify(legacyToken)).role, 'user');
     assert.equal((await verify(token)).role, 'user');
+    db.exec("UPDATE guildsync_users SET role = 'admin'");
+    await roleViews.set('user-1','session-1','viewer');
+    const preview=await verify(token);assert.equal(preview.actual_role,'admin');assert.equal(preview.role,'viewer');
+    roleViews.clear('session-1');assert.equal((await verify(token)).role,'admin');
+    db.exec("UPDATE guildsync_users SET role = 'user'");
     assert.equal(disconnected, false);
     db.exec('UPDATE guildsync_users SET allowed = 0');
     await assert.rejects(verify(token), /Session was logged out/);
