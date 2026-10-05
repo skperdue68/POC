@@ -360,7 +360,7 @@ async function initializeSchema(db) {
       email VARCHAR(255),
       avatar TEXT,
       allowed TINYINT(1) NOT NULL DEFAULT 0,
-      role VARCHAR(50) NOT NULL DEFAULT 'user',
+      role VARCHAR(50) NOT NULL DEFAULT 'viewer',
       requested_at VARCHAR(32) NOT NULL,
       approved_at VARCHAR(32),
       last_login_at VARCHAR(32)
@@ -368,6 +368,9 @@ async function initializeSchema(db) {
     CHARACTER SET utf8mb4
     COLLATE utf8mb4_unicode_ci
   `);
+
+  // Change only the insertion default; existing account roles remain untouched.
+  await db.query("ALTER TABLE guildsync_users ALTER COLUMN role SET DEFAULT 'viewer'");
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS guildsync_applications (
@@ -907,7 +910,7 @@ export async function upsertLoginUser(loginDB, discordUser) {
   const isFirstAdmin = Number(adminRows[0]?.admin_count || 0) === 0;
 
   const allowed = isFirstAdmin ? 1 : 0;
-  const role = isFirstAdmin ? 'admin' : 'pending';
+  const role = isFirstAdmin ? 'admin' : 'viewer';
 
   const username = discordUser.username || '';
   const globalName = discordUser.global_name || null;

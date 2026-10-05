@@ -4,13 +4,13 @@ Open your Discord avatar menu in the upper-right corner and select **Manage Guil
 
 Search by name, email, role, or Discord ID, or select **Pending approval** to review new requests. Each record shows the account's Discord identity, guild member name, email, role, approval status, request date, and last login.
 
-- **Approve account** grants access. New pending accounts default to the **User** role; select **Admin** only when administrative access is needed.
+- **Approve account** grants access. New pending accounts default to **Viewer**. Select **User** for normal data editing or **Admin** for administrative access. See the [role permissions](GuildSync-Roles.md).
 - **Save changes** updates the email, guild member name, and selected role. Saving a pending record does not approve it; use **Approve account** for that.
 - **Remove account** asks for confirmation, deletes the GuildSync login record, clears its saved sessions, and disconnects active clients. This does not remove the person from Discord or delete their ESO records. Their next Discord login creates a new pending approval request.
 
 You can edit your own email and guild member name, but cannot change your own role or remove your own account. These restrictions are enforced on the server as well as in the interface. Another admin can change your role or remove your account.
 
-GuildSync admins can change both administrator configuration and raffle bonus configuration. Approved users can view these sections but cannot save or reset them. Account management itself is restricted to admins.
+GuildSync admins can change both administrator configuration and raffle bonus configuration. Approved Viewers and Users can view these sections but cannot save or reset them. Viewer accounts can browse data and run reports but cannot edit links, banking entries, notes, or other shared data. Account management itself is restricted to admins.
 
 ## Updates and unsaved edits
 
@@ -20,7 +20,7 @@ Role changes update active client permissions. The backend checks the current da
 
 ## Storage and deployment
 
-Records remain in the existing login database table **`guildsync_users`**. Editable fields are `email`, `guild_member_name`, and `role`; approval also updates `allowed` and `approved_at`. Removal clears the associated rows in **`guildsync_login_sessions`**. No new tables, migrations, or environment settings are required.
+Records remain in the existing login database table **`guildsync_users`**. Editable fields are `email`, `guild_member_name`, and `role`; approval also updates `allowed` and `approved_at`. Removal clears the associated rows in **`guildsync_login_sessions`**. No new tables or environment settings are required. Startup automatically changes the role column's insertion default to Viewer without changing existing account roles.
 
 Discord supplies the initial email on first login. Subsequent logins preserve the stored email, including a blank email entered by an admin. Discord username, global name, and avatar continue to update from Discord.
 

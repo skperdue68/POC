@@ -1,14 +1,15 @@
+import {GUILDSYNC_ROLES} from './role-permissions.js';
 const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const pending=user=>!Number(user.allowed)||user.role==='pending';
 const snapshot=user=>({allowed:Number(user.allowed),role:user.role,email:user.email??'',guild_member_name:user.guild_member_name??''});
 export function pendingBadge(count){return Number(count)>0?`<span class="user-pending-badge" aria-hidden="true">${Number(count)>99?'99+':Number(count)}</span>`:'';}
 export function renderUserCard(user,actorId,draft={}){
- const own=user.discord_user_id===actorId,role=draft.role??(['user','admin'].includes(user.role)?user.role:'user'),key=escape(user.discord_user_id);
+ const own=user.discord_user_id===actorId,role=draft.role??(GUILDSYNC_ROLES.includes(user.role)?user.role:'viewer'),key=escape(user.discord_user_id);
  return `<form class="user-admin-card" data-user-id="${key}">
   <header><div><h3>${escape(user.guild_member_name||user.global_name||user.username||user.discord_user_id)}${own?' (You)':''}</h3><p>${escape(user.username)} · Discord ID: ${key}</p></div><span class="user-admin-status ${pending(user)?'is-pending':''}">${pending(user)?'Pending approval':'Approved'}</span></header>
   <fieldset class="user-admin-fields"><label>Email<input name="email" type="email" maxlength="255" value="${escape(draft.email??user.email??'')}" placeholder="Not configured"></label>
    <label>Guild member name<input name="guild_member_name" maxlength="255" value="${escape(draft.guild_member_name??user.guild_member_name??'')}" placeholder="ESO / guild display name"></label>
-   ${own?`<div class="user-admin-own-role">Role: ${escape(user.role)}<small>Your role cannot be changed here.</small></div>`:`<label>Role<select name="role"><option value="user" ${role==='user'?'selected':''}>User</option><option value="admin" ${role==='admin'?'selected':''}>Admin</option></select></label>`}
+   ${own?`<div class="user-admin-own-role">Role: ${escape(user.role)}<small>Your role cannot be changed here.</small></div>`:`<label>Role<select name="role">${GUILDSYNC_ROLES.map(value=>`<option value="${value}" ${role===value?'selected':''}>${value[0].toUpperCase()+value.slice(1)}</option>`).join('')}</select></label>`}
   </fieldset>
   <p class="user-admin-dates">Requested: ${escape(user.requested_at||'Not recorded')} · Last login: ${escape(user.last_login_at||'Never')}</p>
   <div class="user-admin-actions"><button type="submit">Save changes</button>${!own&&pending(user)?'<button type="button" data-user-approve>Approve account</button>':''}${!own?'<button type="button" class="user-admin-remove" data-user-remove>Remove account</button>':''}</div>

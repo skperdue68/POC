@@ -1,4 +1,6 @@
 import {createUserAdministration,registerUserAdministrationSocket} from './user-administration.js';
+import {canEditGuildSyncRole} from './role-permissions.js';
+import {registerRolePermissions} from './role-permissions-socket.js';
 import {createConfigurationService} from './admin-configuration.js';
 import {registerConfigurationSocket} from './admin-configuration-socket.js';
 import { createDiscordOnboarding } from './discord-onboarding.js';
@@ -488,6 +490,7 @@ async function sendCurrentAccountProfile(socket) {
 }
 
 io.on('connection', (socket) => {
+  registerRolePermissions(socket,loginDB);
   registerUserAdministrationSocket(socket,userAdministration);
   void sendCurrentAccountProfile(socket);
   registerConfigurationSocket(socket,configurationService,{
@@ -2889,6 +2892,9 @@ async function requireGuildSyncWebUser(req, res, next) {
     const claims = await verifyGuildSyncSession(token);
 
     req.guildSyncUser = claims;
+    if (!canEditGuildSyncRole(claims.role)) {
+      return res.status(403).json({ok:false,message:'This account has read-only access. A User or Admin role is required to upload SavedVariables files.'});
+    }
     return next();
   } catch {
     return res.status(401).json({ ok: false, message: 'Invalid or expired GuildSync session.' });

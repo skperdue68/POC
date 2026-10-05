@@ -6,6 +6,8 @@ For everyday use, start with the [user guide](GuildSync-User-Guide.md). This doc
 
 The avatar menu provides admin-only **Manage GuildSync Users**, including approval, profile and role edits, removal, and pending counts. See [user administration](GuildSync-User-Administration.md) for server authorization, session invalidation, existing database tables, and deployment details.
 
+See [GuildSync account roles](GuildSync-Roles.md) for the Viewer/User/Admin permissions matrix. Viewer is the default for new pending accounts after initial Admin bootstrap. Viewer access is read-only, including backend socket and HTTP upload enforcement; existing account roles are preserved. Login-database startup updates only the role column's insertion default.
+
 ## Contents
 
 - [System overview](#system-overview)

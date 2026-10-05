@@ -35,6 +35,24 @@ test('approve and edit records, including role, email and guild name',async()=>{
  await service.change('1',{action:'save',discord_user_id:'3',expected:expected(db.users.get('3')),role:'admin',email:'edited@example.com',guild_member_name:'@Edited'});
  assert.equal(db.users.get('3').role,'admin');assert.equal(db.users.get('3').email,'edited@example.com');assert.equal(db.users.get('3').guild_member_name,'@Edited');
 });
+
+test('approval defaults to Viewer and administrators can select and change all three roles',async()=>{
+ const db=database(),service=createUserAdministration(db);
+ await service.change('1',{action:'approve',discord_user_id:'2',expected:expected(db.users.get('2'))});
+ assert.equal(db.users.get('2').role,'viewer');assert.equal(db.users.get('2').allowed,1);
+ for(const role of ['user','admin','viewer']){await service.change('1',{action:'save',discord_user_id:'2',expected:expected(db.users.get('2')),role});assert.equal(db.users.get('2').role,role);}
+});
+
+test('the first login bootstraps Admin and later accounts await approval as Viewer',async()=>{
+ const source=fs.readFileSync(new URL('./guildsync-database-actions.js',import.meta.url),'utf8');const fn=source.match(/export async function upsertLoginUser\([^]*?(?=\nexport )/)[0].replace('export ','');
+ const ctx={};vm.createContext(ctx);vm.runInContext(fn,ctx);
+ for(const adminCount of [0,1]){
+  let inserted;
+  const db={async execute(sql,args){if(sql.includes('COUNT(*)'))return [[{admin_count:adminCount}]];if(sql.includes('INSERT INTO')){inserted=args;return [{}]};return [[{discord_user_id:args[0],allowed:inserted[5],role:inserted[6]}]];}};
+  const row=await ctx.upsertLoginUser(db,{id:'99',username:'New'});
+  assert.equal(row.role,adminCount?'viewer':'admin');assert.equal(row.allowed,adminCount?0:1);
+ }
+});
 test('self role changes and self removal are rejected but own profile edits work',async()=>{
  const db=database(),service=createUserAdministration(db);for(const change of [{action:'remove'},{action:'save',role:'user'}])await assert.rejects(service.change('1',{...change,discord_user_id:'1',expected:expected(db.users.get('1'))}),/own/);
  await service.change('1',{action:'save',discord_user_id:'1',expected:expected(db.users.get('1')),email:'self@example.com'});assert.equal(db.users.get('1').role,'admin');assert.equal(db.users.get('1').email,'self@example.com');

@@ -1,3 +1,4 @@
+import {GUILDSYNC_ROLES} from './role-permissions.js';
 const columns='discord_user_id, username, global_name, guild_member_name, email, allowed, role, requested_at, approved_at, last_login_at';
 const fields=columns.split(', ');
 const publicUser=row=>Object.fromEntries(fields.map(key=>[key,row[key]??null]));
@@ -5,7 +6,7 @@ const snapshot=row=>({allowed:Number(row.allowed),role:row.role,email:row.email?
 function id(value){const clean=String(value??'');if(!/^\d{1,32}$/.test(clean))throw Error('Invalid Discord user ID.');return clean;}
 function values(payload){
  const result={};
- if(Object.hasOwn(payload,'role')){if(!['user','admin'].includes(payload.role))throw Error('Role must be user or admin.');result.role=payload.role;}
+ if(Object.hasOwn(payload,'role')){if(!GUILDSYNC_ROLES.includes(payload.role))throw Error('Role must be viewer, user, or admin.');result.role=payload.role;}
  for(const key of ['email','guild_member_name'])if(Object.hasOwn(payload,key)){
   if(typeof payload[key]!=='string')throw Error(key+' must be text.');
   const text=payload[key].trim();if(text.length>255)throw Error(key+' must be at most 255 characters.');
@@ -43,7 +44,7 @@ export function createUserAdministration(db,{onChange=async()=>{},log=()=>{}}={}
      await connection.execute('DELETE FROM guildsync_users WHERE discord_user_id = ?',[target]);
      result={removed:true,discord_user_id:target};
     }else{
-     if(action==='approve'){updates.allowed=1;updates.role=updates.role||(['user','admin'].includes(row.role)?row.role:'user');updates.approved_at=new Date().toISOString();}
+     if(action==='approve'){updates.allowed=1;updates.role=updates.role||(GUILDSYNC_ROLES.includes(row.role)?row.role:'viewer');updates.approved_at=new Date().toISOString();}
      const names=Object.keys(updates);if(!names.length)throw Error('No user changes were provided.');
      await connection.execute(`UPDATE guildsync_users SET ${names.map(key=>`${key} = ?`).join(', ')} WHERE discord_user_id = ?`,[...names.map(key=>updates[key]),target]);
      result={removed:false,user:publicUser({...row,...updates}),discord_user_id:target};
