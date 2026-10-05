@@ -12,7 +12,7 @@ All commands below require the exact **Consigliere** Discord role, checked by th
 | `/gsraffle reset` | Clear managed working data and R7/P7; retain database records. Run `load` afterward. |
 | `/gsraffle archive` | Archive the current file, save result fields, reset both working tabs, and restore current database data. |
 
-Dates are valid **MMDDYY** dates in 2000–2099, interpreted in America/New_York. At a Bi-Weekly boundary, choose **Starts on this date** or **Ends on this date** within one minute. The containing 50/50 raffle is selected automatically. Use the original lookup date and the same boundary choice when running `update` after a historical load.
+Canonical dates are valid zero-padded **MMDDYY** dates in 2000–2099, interpreted in America/New_York. **MM/DD/YY** and **MM-DD-YY** translate automatically. Unpadded month/day input is offered for confirmation only when it has one valid interpretation; ambiguous/impossible input fails and specifies the format. Confirm within one minute before any change, or the operation cancels. At a Bi-Weekly boundary, choose **Starts on this date** or **Ends on this date** within one minute. The containing 50/50 raffle is selected automatically. Use the normalized zero-padded lookup date and the same boundary choice when running `update` after a historical load.
 
 Historical load finds the archive by `YYMMDD Raffle` name inside the configured archive folder. It preserves an existing ID, captures supported edits before rebuilding, or creates/prepares a new copy with the requested dates. Update requires an existing ready archive and imports result fields, not ticket purchases. Details and persistence tables are in [result snapshots](raffle-result-snapshots.md).
 

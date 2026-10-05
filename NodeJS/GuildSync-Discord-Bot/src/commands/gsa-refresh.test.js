@@ -156,3 +156,44 @@ test('gsr alias exposes the same subcommands and handler',()=>{
  assert.deepEqual(alias.data.toJSON().options,original.data.toJSON().options);
  assert.equal(alias.execute,original.execute);
 });
+
+test('unpadded load and update wait for the initiating user to confirm before any mutation',async()=>{
+ for(const action of ['load','update'])for(const decision of ['confirm-date','cancel-date','timeout']) {
+  const f=fixture({action,date:'91526'});let prompted=0;
+  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload:{...payload}});cb(null,{ok:true,selection:{...snapshot,dateNormalization:{value:'091526',requiresConfirmation:true}},synced:2,saved:1,historical:true,sheetUrl:'https://docs.google.com/spreadsheets/d/archive/edit'});};
+  f.interaction.editReply=async value=>{f.replies.push(value);return {awaitMessageComponent:async options=>{
+   prompted++;assert.equal(f.calls.some(call=>call.payload.action!=='plan'),false);
+   assert.equal(options.time,60000);assert.equal(options.filter({user:{id:'other'}}),false);
+   assert.equal(options.filter({user:{id:'123'}}),true);
+   if(decision==='timeout')throw Error('expired');return {customId:decision,deferUpdate:async()=>{}};
+  }};};
+  await command.execute(f.interaction,f.socket,()=>{});
+  assert.equal(prompted,1);assert.ok(f.replies.some(reply=>reply.content?.includes('091526')&&reply.content.includes('September 15, 2026')));
+  const mutation=f.calls.find(call=>call.payload.action!=='plan');
+  if(decision==='confirm-date') {assert.equal(mutation.payload.date,'091526');assert.equal(mutation.payload.action,action==='load'?'export':'update');if(action==='load')assert.match(f.replies.at(-1).content,/update date:091526/);}
+  else {assert.equal(mutation,undefined);assert.match(f.replies.at(-1).content,/cancelled.*No raffle data was changed/s);}
+ }
+});
+
+test('padded slash and dash input translate to compact date without confirmation',async()=>{
+ for(const action of ['load','update'])for(const date of ['09/15/26','09-15-26']) {
+  const f=fixture({action,date});
+  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload:{...payload}});cb(null,{ok:true,selection:{...snapshot,dateNormalization:{value:'091526',requiresConfirmation:false}},synced:2,saved:1,historical:true,sheetUrl:'https://docs.google.com/spreadsheets/d/archive/edit'});};
+  await command.execute(f.interaction,f.socket,()=>{});
+  assert.equal(f.calls.length,2);assert.equal(f.calls.at(-1).payload.date,'091526');
+  assert.equal(f.replies.some(reply=>reply.components?.[0]?.toJSON().components.some(component=>component.custom_id==='confirm-date')),false);
+ }
+});
+
+test('padding confirmation precedes the existing raffle boundary choice for load and update',async()=>{
+ for(const action of ['load','update']) {
+  const f=fixture({action,date:'92626'});let prompts=0;
+  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload:{...payload}});cb(null,{ok:true,selection:{...snapshot,lookupAt:Date.parse('2026-09-26T23:00:00Z')/1000,boundaryTypes:['biweekly'],dateNormalization:{value:'092626',requiresConfirmation:payload.date==='92626'}},synced:2,saved:1,sheetUrl:'https://docs.google.com/spreadsheets/d/archive/edit'});};
+  f.interaction.editReply=async value=>{f.replies.push(value);return {awaitMessageComponent:async()=>{
+   assert.equal(f.calls.some(call=>call.payload.action!=='plan'),false);
+   return {customId:++prompts===1?'confirm-date':'ends',deferUpdate:async()=>{}};
+  }};};
+  await command.execute(f.interaction,f.socket,()=>{});
+  assert.equal(prompts,2);const mutation=f.calls.at(-1).payload;assert.equal(mutation.date,'092626');assert.deepEqual(mutation.boundaryChoices,{biweekly:'ends'});
+ }
+});

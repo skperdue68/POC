@@ -4,7 +4,7 @@ Updated October 5, 2026. See the [detailed help](GuildSync-Detailed-Help.md#resu
 
 ## Commands
 
-`/gsraffle` and `/gsr` expose `load [date:MMDDYY]`, `update date:MMDDYY`, `reset`, and `archive`. All require exact **Consigliere** and return private results. On a Bi-Weekly date boundary, choose starts or ends; the enclosing 50/50 period follows that choice. `/save` is retired. Run `npm run deploy` in the bot directory when changing registered commands.
+`/gsraffle` and `/gsr` expose `load [date:MMDDYY]`, `update date:MMDDYY`, `reset`, and `archive`. All require exact **Consigliere** and return private results. Dates normalize to zero-padded MMDDYY. MM/DD/YY and MM-DD-YY convert directly; uniquely interpretable unpadded input needs confirmation, and ambiguous/invalid input fails. On a Bi-Weekly date boundary, choose starts or ends; the enclosing 50/50 period follows that choice. `/save` is retired. Run `npm run deploy` in the bot directory when changing registered commands.
 
 Current `load` uses the working file. A historical `load` searches the archive folder by ending-date filename, reuses a ready archive or creates one if absent, captures supported existing edits, and rebuilds only that archive. The live file remains unchanged. New copies are populated with the requested dates before their historical result fields are saved. Copied live winners are not treated as historical results.
 

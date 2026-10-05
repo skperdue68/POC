@@ -41,7 +41,7 @@ test('local boundaries stay at 7 PM across DST and monthly periods can span six 
   assert.equal((summer.raffles[1].end - summer.raffles[1].start) / 86400, 42);
 });
 test('invalid MMDDYY dates are rejected and leap dates accepted', () => {
-  for (const date of ['023126', '022926', '133126', '000126', '090026', '91526', '09/15/26', ' 091526', '', 91526]) {
+  for (const date of ['023126', '022926', '133126', '000126', '090026', '11226', '09/15/2026', '', 91526]) {
     assert.throws(() => select(date), /valid.*MMDDYY/i);
   }
   assert.equal(select('022928').raffles.length, 2);
@@ -68,4 +68,12 @@ test('Bi-Weekly boundary choice selects its containing monthly raffle while inte
  assert.equal(result.raffles[1].end,seconds('2026-09-26T23:00:00Z'));
  assert.deepEqual(actions.getRaffleRefreshSelection('091526',now).boundaryTypes,[]);
  assert.deepEqual(actions.getRaffleRefreshSelection('101026',now).boundaryTypes,['biweekly']);
+});
+
+test('date selection reports canonical dates and whether padding needs confirmation',()=>{
+ for(const input of ['09/15/26','09-15-26','91526']) {
+  const selected=select(input);assert.deepEqual(dates(selected),dates(select('091526')));
+  assert.equal(selected.dateNormalization.value,'091526');assert.equal(selected.dateNormalization.requiresConfirmation,input==='91526');
+ }
+ assert.deepEqual(select('09/26/26').boundaryTypes,['biweekly']);
 });

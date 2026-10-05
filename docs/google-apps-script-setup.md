@@ -170,7 +170,7 @@ Other production commands, all private and restricted to Consigliere:
 | `/gsraffle update date:MMDDYY` | Saves supported editable fields from the matching ready archive to the database without clearing/replacing it. |
 | `/gsraffle reset` | Clears managed fields on both tabs, including draw dates; database records remain. It does not permanently pause future writes. |
 
-Refresh and clear are blocked during an active rollover hold/recovery. See [command details](raffle-refresh.md).
+Load/update dates normalize to zero-padded MMDDYY; MM/DD/YY and MM-DD-YY translate automatically, while safely inferred unpadded dates need confirmation. Ambiguous or invalid dates fail with the format. Load and reset are blocked during an active rollover hold/recovery. See [command details](raffle-refresh.md).
 
 When verification succeeds, set `GUILDSYNC_GOOGLE_SHEETS_ROLLOVER_ENABLED=true` and restart the backend. Keep it running before the next cutoff; initial setup does not retroactively archive an unknown existing sheet.
 

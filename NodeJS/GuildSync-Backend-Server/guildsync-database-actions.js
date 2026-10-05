@@ -1,4 +1,5 @@
 import { notifyDiscordConfirmedLink } from './discord-onboarding.js';
+import { normalizeRaffleDate } from './raffle-date.js';
 import { initializeDiscordOnboardingSchema } from './discord-onboarding-schema.js';
 import { ARCHIVE_CELLS_SCHEMA } from './raffle-archive-cells.js';
 import { RAFFLE_RESULTS_SCHEMA, RAFFLE_FORMULAS_SCHEMA } from './raffle-results.js';
@@ -2008,8 +2009,10 @@ function raffleEvening({ year, month, day }) {
 }
 export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 1000), boundaryChoices = {}) {
   let lookupAt = now;
+  let dateNormalization;
   if (date !== undefined) {
-    if (typeof date !== 'string' || !/^\d{6}$/.test(date)) throw new Error('Enter a valid date in MMDDYY format.');
+    dateNormalization = normalizeRaffleDate(date);
+    date = dateNormalization.value;
     const month = Number(date.slice(0, 2)), day = Number(date.slice(2, 4)), year = 2000 + Number(date.slice(4));
     const check = new Date(Date.UTC(year, month - 1, day));
     if (check.getUTCFullYear() !== year || check.getUTCMonth() + 1 !== month || check.getUTCDate() !== day) {
@@ -2045,7 +2048,7 @@ export function getRaffleRefreshSelection(date, now = Math.floor(Date.now() / 10
     if (monthly.start > biweekly.start || monthly.end < biweekly.end) throw Error('Selected Bi-Weekly raffle is not contained in a single 50/50 raffle.');
     raffles[raffles.findIndex(raffle => raffle.type === 'monthly')] = monthly;
   }
-  return { asOf: now, lookupAt, timeZone: 'America/New_York', raffles, boundaryTypes };
+  return { asOf: now, lookupAt, timeZone: 'America/New_York', raffles, boundaryTypes, ...(dateNormalization ? { dateNormalization } : {}) };
 }
 
 export function selectSheetsCatchupEntries(entries, now = Math.floor(Date.now() / 1000)) {
