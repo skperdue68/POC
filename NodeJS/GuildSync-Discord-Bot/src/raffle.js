@@ -53,9 +53,14 @@ export function parseReminderHours(value, fallback) {
 function formatUserTickets(snapshot, verifyName = '') {
   if (snapshot.tickets?.linked === false) return verifyName ? `No linked ESO account was found for **${verifyName}**.` : 'I could not determine your ESO name. Link your ESO account, or make your Discord name match your ESO account name.';
   if (!snapshot.tickets?.purchases?.length) return `No raffle tickets are recorded for your linked ESO account${snapshot.tickets?.esoAccountName ? ` (${snapshot.tickets.esoAccountName})` : ''}.`;
-  return `**Your tickets (${snapshot.tickets.esoAccountName})**\n` + snapshot.tickets.purchases.map(item =>
-    `${item.raffleLabel}: ${item.totalTickets} tickets (${item.purchasedTickets} purchased${item.bonusTickets ? ` + ${item.bonusTickets} bonus` : ''}) — <t:${item.time}:f>`
-  ).join('\n');
+  const groups = new Map();
+  for (const item of snapshot.tickets.purchases) {
+    const type = item.raffleType || item.raffleLabel;
+    const lines = groups.get(type) || [];
+    lines.push(`${item.raffleLabel}: ${item.totalTickets} tickets (${item.purchasedTickets} purchased${item.bonusEnabled || item.bonusPercent > 0 || item.bonusTickets ? ` + ${item.bonusPercent || 0}% bonus: ${item.bonusTickets || 0} tickets` : ''}) — <t:${item.time}:f>`);
+    groups.set(type, lines);
+  }
+  return `**${verifyName ? 'Verified' : 'Your'} tickets (${snapshot.tickets.esoAccountName})**\n` + [...groups.values()].map(lines => lines.join('\n')).join('\n\n');
 }
 
 export function createRaffleAnnouncer({ channelId, intervalHours, thresholds, fetchRaffles, send, loadState, saveState,

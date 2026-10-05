@@ -6,7 +6,7 @@ import { DEFAULT_BONUS_TIERS, parseBonusTiers } from './raffle-bonus.js';
 process.env.MARIADB_USER ||= 'test';
 process.env.MARIADB_PASSWORD ||= 'test';
 const { getRaffleBonusSettings, saveRaffleBonusSettings, getRaffleBonusVersions,
-  getBankingDataJSON, getBankingHistoryForAccount, getRaffleBonusChoices, saveRaffleBonusOverride } = await import('./guildsync-database-actions.js');
+  getBankingDataJSON, getBankingHistoryForAccount, getRaffleBonusChoices, saveRaffleBonusOverride, getRaffleUserTickets } = await import('./guildsync-database-actions.js');
 
 function database(initial) {
   let saved = initial;
@@ -39,6 +39,23 @@ function database(initial) {
   return db;
 }
 const tiers = Object.fromEntries(Object.entries(DEFAULT_BONUS_TIERS).map(([type, value]) => [type, parseBonusTiers(value)]));
+
+test('ticket lookup returns each purchase bonus percentage and enabled state to the bot', async () => {
+  const db = database({ enabled: true, ...tiers });
+  const time = Date.parse('2026-09-15T12:00:00Z') / 1000;
+  for (const type of ['biweekly', 'monthly']) {
+    db.versions.push({ raffle_type: type, effective_from: 1, enabled: 1, tiers_json: JSON.stringify(tiers[type]) });
+    db.entries.push({ type, time, ticketAmount: 100, dataSource: 'GuildBank', displayName: '@Member' });
+  }
+  const result = await getRaffleUserTickets(db, '123', time + 1, 'Member');
+  assert.equal(result.purchases.length, 2);
+  for (const item of result.purchases) {
+    assert.equal(item.bonusEnabled, true);
+    assert.ok(item.bonusPercent > 0);
+    assert.equal(item.bonusTickets, item.bonusPercent);
+    assert.equal(item.totalTickets, 100 + item.bonusTickets);
+  }
+});
 
 test('legacy saved enable switch initializes both raffle types', async () => {
   for (const enabled of [true, false]) {
