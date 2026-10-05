@@ -58,3 +58,13 @@ test('two-choice settings identify only their default option and omit reset cont
  assert.match(html,/data-config-default="count"/);assert.match(html,/<output>24<\/output>/);
  assert.equal((html.match(/ \(Default\)<\/option>/g)||[]).length,3);
 });
+
+ test('settings carry useful help and render functional subsections with one labeled card per setting',async t=>{
+  const {configurationCatalog}=await import('./admin-configuration.js');
+  for(const setting of configurationCatalog) assert.ok(setting.help?.length>20,setting.key+' needs help');
+  const original=globalThis.document;t.after(()=>globalThis.document=original);globalThis.document={getElementById:()=>null,querySelectorAll:()=>[]};
+  const settings=configurationCatalog.map(s=>({...s,value:s.defaultValue}));
+  const panel=createConfigurationPanel();let ready;const loaded=new Promise(r=>ready=r);panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings}}),rerender:ready});await loaded;
+  const html=panel.render();assert.match(html,/Access and promotion/);assert.match(html,/Schedule and destination/);assert.match(html,/configuration-setting-header/);assert.match(html,/\.env:/);
+  for(const setting of settings){assert.match(html,new RegExp('id="config-help-'+setting.key+'"'));assert.match(html,new RegExp('aria-describedby="config-help-'+setting.key+'"'));}
+ });

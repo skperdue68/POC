@@ -6842,3 +6842,19 @@ body {
 @media (max-width:600px) { .configuration-values { grid-template-columns:1fr; } }
 
 .configuration-values.configuration-two-options { grid-template-columns:minmax(0,1fr); }
+
+/* Keep functional sections and each setting's explanation and controls together. */
+.configuration-group { min-width:0; min-inline-size:0; padding:18px; border:2px solid #526b8d; background:#172130; }
+.configuration-group legend { padding:0 10px; font-size:18px; font-weight:700; color:#dbeafe; }
+.configuration-subgroup { display:grid; gap:12px; margin:4px 0 20px; min-width:0; }
+.configuration-subgroup:last-child { margin-bottom:0; }
+.configuration-subgroup h4 { margin:8px 0 0; padding:4px 0 4px 10px; border-left:3px solid #60a5fa; color:#bfdbfe; font-size:15px; }
+.configuration-setting { padding:16px; margin:0; border:1px solid #42536d; border-radius:8px; background:#202d40; gap:10px; }
+.configuration-setting-header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.configuration-setting-header label { font-weight:600; color:#f3f5fa; }
+.configuration-source { padding:3px 9px; border:1px solid #64748b; border-radius:20px; font-size:12px; color:#dbeafe; }
+.configuration-setting .configuration-env-key { opacity:1; color:#b9c6d9; font-size:12px; }
+.configuration-env-key code { font-family:monospace; white-space:normal; overflow-wrap:anywhere; }
+.configuration-help { margin:0; color:#d3deed; font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
+.configuration-values { padding-top:4px; gap:16px; }
+@media (max-width:600px) { .configuration-group { padding:10px; } .configuration-setting { padding:12px; } }

@@ -49,7 +49,7 @@ function optionLabel(setting,value) {
 export function createConfigurationPanel(){
  let configuration=null,changes={},loading=false,message='',saving=false;
  const input=(setting,draft)=>{
-  const attrs=`data-config-value="${escape(setting.key)}" id="config-${escape(setting.key)}" `;
+  const attrs=`data-config-value="${escape(setting.key)}" id="config-${escape(setting.key)}" aria-describedby="config-help-${escape(setting.key)}" `;
   if(setting.type==='boolean' || setting.type==='select') {
    const options=setting.type==='boolean'?['true','false']:setting.options;
    return `<select ${attrs}>${options.map(value=>`<option value="${escape(value)}" ${String(value)===String(draft.value)?'selected':''}>${escape(optionLabel(setting,value))}</option>`).join('')}</select>`;
@@ -67,19 +67,29 @@ export function createConfigurationPanel(){
    ${!configuration?`<p>${loading?'Loading configuration...':'Configuration is not loaded.'}</p><button type="button" id="reloadAdminConfiguration">Load configuration</button>`:`
    ${configuration.botDefaultsReported?'':'<p>Bot defaults have not been reported yet. Connect the updated bot before editing its settings.</p>'}
    <form id="adminConfigurationForm">
-    ${groups.map(group=>`<fieldset class="configuration-group" ${saving?'disabled':''}><legend>${escape(group)}</legend>
-     ${configuration.settings.filter(s=>s.group===group).map(setting=>{const draft=draftSetting(setting,changes);return `<div class="configuration-setting">
-      <label for="config-${escape(setting.key)}">${escape(setting.label)}</label>
-      <small>${escape(setting.key)} · <span data-config-source="${escape(setting.key)}">${escape(draft.source)}</span></small>
-      <div class="configuration-values${hasTwoOptions(setting)?' configuration-two-options':''}">
-       <div class="configuration-selected-value"><span>Current selection</span>${input(setting,draft)}</div>
-       ${hasTwoOptions(setting)?'':`<div class="configuration-default-value"><span>Default value</span><output>${escape(formatConfigurationValue(setting,setting.defaultValue))}</output></div>`}
-      </div>
-      ${hasTwoOptions(setting)?'':`<button type="button" class="configuration-default" data-config-default="${escape(setting.key)}" aria-label="Return ${escape(setting.label)} to default: ${escape(formatConfigurationValue(setting,setting.defaultValue))}">Return to default</button>`}
-      ${setting.placeholders?`<small>Placeholders: ${setting.placeholders.map(k=>escape('{'+k+'}')).join(', ')}</small>`:''}
-      ${setting.group==='Receipt messages'?`<label>Example preview (20% bonus)<pre data-config-preview="${escape(setting.key)}">${escape(receiptPreview(draft.value,{body:setting.key.endsWith('BODY_TEMPLATE')}))}</pre></label>`:''}
-     </div>`;}).join('')}
-    </fieldset>`).join('')}
+    ${groups.map((group,groupIndex)=>{
+     const settings=configuration.settings.filter(setting=>setting.group===group);
+     const sections=[...new Set(settings.map(setting=>setting.section || ''))];
+     return `<fieldset class="configuration-group" ${saving?'disabled':''}><legend>${escape(group)}</legend>
+      ${sections.map((section,index)=>`<section class="configuration-subgroup" ${section?`aria-labelledby="config-section-${groupIndex}-${index}"`:''}>
+       ${section?`<h4 id="config-section-${groupIndex}-${index}">${escape(section)}</h4>`:''}
+       ${settings.filter(setting=>(setting.section || '')===section).map(setting=>{
+        const draft=draftSetting(setting,changes);
+        return `<div class="configuration-setting" role="group" aria-labelledby="config-label-${escape(setting.key)}">
+         <div class="configuration-setting-header"><label id="config-label-${escape(setting.key)}" for="config-${escape(setting.key)}">${escape(setting.label)}</label><span class="configuration-source" data-config-source="${escape(setting.key)}">${escape(draft.source)}</span></div>
+         <small class="configuration-env-key">.env: <code>${escape(setting.key)}</code></small>
+         <p class="configuration-help" id="config-help-${escape(setting.key)}">${escape(setting.help || 'Changes this setting after you save the configuration.')}</p>
+         <div class="configuration-values${hasTwoOptions(setting)?' configuration-two-options':''}">
+          <div class="configuration-selected-value"><span>Current selection</span>${input(setting,draft)}</div>
+          ${hasTwoOptions(setting)?'':`<div class="configuration-default-value"><span>Default value</span><output>${escape(formatConfigurationValue(setting,setting.defaultValue))}</output><button type="button" class="configuration-default" data-config-default="${escape(setting.key)}" aria-label="Return ${escape(setting.label)} to default: ${escape(formatConfigurationValue(setting,setting.defaultValue))}">Return to default</button></div>`}
+         </div>
+         ${setting.placeholders?`<small>Placeholders: ${setting.placeholders.map(k=>escape('{'+k+'}')).join(', ')}</small>`:''}
+         ${setting.group==='Receipt messages'?`<label>Example preview (20% bonus)<pre data-config-preview="${escape(setting.key)}">${escape(receiptPreview(draft.value,{body:setting.key.endsWith('BODY_TEMPLATE')}))}</pre></label>`:''}
+        </div>`;
+       }).join('')}
+      </section>`).join('')}
+     </fieldset>`;
+    }).join('')}
     <div class="configuration-actions"><button type="submit" ${saving?'disabled':''}>${saving?'Saving...':'Save Configuration'}</button><button type="button" id="reloadAdminConfiguration" ${saving?'disabled':''}>Discard edits and reload</button></div>
    </form>`}
    </div></div></div></article>`;
