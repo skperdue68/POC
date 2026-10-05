@@ -1976,9 +1976,9 @@ function renderRaffleBonusSettings() {
           </select>
         </label>
         <p>Source: ${escapeHtml(selected ? (selected.overridden ? 'Raffle override' : 'Saved raffle policy') : (raffleBonusSettings.source === '.env' ? 'Default' : (raffleBonusSettings.source || 'Default')))}</p>
-        ${bonusResetToDefaults ? '<p role="status">Default restoration is pending. Click Save Bonus Settings to apply it, or change the selected raffle to cancel.</p><button type="button" id="cancelBonusDefaults">Cancel default restoration</button>' : ''}
+        ${bonusResetToDefaults ? '<p role="status">Default Hours, Bonus %, and enabled settings are shown below. Click Save Bonus Settings to apply them, or Cancel default restoration to keep your previous settings.</p><button type="button" id="cancelBonusDefaults">Cancel default restoration</button>' : ''}
         <form id="raffleBonusSettingsForm">
-          ${canEdit ? `<button type="button" id="resetBonusDefaults">${selected ? 'Return to raffle default (on Save)' : 'Return to default (on Save)'}</button>` : ''}
+          ${canEdit ? `<button type="button" id="resetBonusDefaults">Return to defaults</button><p>Restores Hours, Bonus %, and the enabled switch ${selected ? 'from this raffle’s inherited policy' : 'for both raffle types from their default rules'}. Changes apply only after Save Bonus Settings.</p>` : ''}
           ${selected ? fields(selected.type, selected.label) : fields('biweekly', 'Bi-Weekly Raffle') + fields('monthly', '50/50 Raffle')}
           ${canEdit ? '<button class="refresh-discord-button report-run-button" type="submit">Save Bonus Settings</button>' : '<p>Admin access is required to change these settings.</p>'}
         </form>

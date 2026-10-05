@@ -643,9 +643,9 @@ Total Tickets: 24`,note:"",note_block:"",ticket_type:"Bi-Weekly",ticket_type_raw
           </select>
         </label>
         <p>Source: ${c(e?e.overridden?"Raffle override":"Saved raffle policy":q.source===".env"?"Default":q.source||"Default")}</p>
-        ${le?'<p role="status">Default restoration is pending. Click Save Bonus Settings to apply it, or change the selected raffle to cancel.</p><button type="button" id="cancelBonusDefaults">Cancel default restoration</button>':""}
+        ${le?'<p role="status">Default Hours, Bonus %, and enabled settings are shown below. Click Save Bonus Settings to apply them, or Cancel default restoration to keep your previous settings.</p><button type="button" id="cancelBonusDefaults">Cancel default restoration</button>':""}
         <form id="raffleBonusSettingsForm">
-          ${i?`<button type="button" id="resetBonusDefaults">${e?"Return to raffle default (on Save)":"Return to default (on Save)"}</button>`:""}
+          ${i?`<button type="button" id="resetBonusDefaults">Return to defaults</button><p>Restores Hours, Bonus %, and the enabled switch ${e?"from this raffle\u2019s inherited policy":"for both raffle types from their default rules"}. Changes apply only after Save Bonus Settings.</p>`:""}
           ${e?o(e.type,e.label):o("biweekly","Bi-Weekly Raffle")+o("monthly","50/50 Raffle")}
           ${i?'<button class="refresh-discord-button report-run-button" type="submit">Save Bonus Settings</button>':"<p>Admin access is required to change these settings.</p>"}
         </form>

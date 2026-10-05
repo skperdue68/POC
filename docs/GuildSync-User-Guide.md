@@ -162,3 +162,5 @@ See [configuration details](GuildSync-Admin-Configuration.md) for the full setti
 Screen refreshes preserve your position in Reports & Admin and other tab content. Returning an edited setting to its default value automatically marks it **Default** and removes the override when saved. Unsaved edits remain drafts until **Save Configuration** succeeds.
 
 Two-choice configuration dropdowns mark the inherited choice with **(Default)**, for example **Enabled (Default)**. Select that option to return to the default; these fields have no reset button or override checkbox. Other fields retain **Return to default**. All edits still require **Save Configuration**, and changing choices preserves scrolling.
+
+In **Raffle Bonus Tickets**, **Return to defaults** restores the full bonus configuration: Hours, Bonus %, and the enabled switch. Default rules restore both raffle types from their environment defaults; a selected raffle restores only that raffle’s inherited policy. The restored values are previewed and apply only after **Save Bonus Settings**. **Cancel default restoration** restores your previous draft. Scrolling is preserved during the preview.

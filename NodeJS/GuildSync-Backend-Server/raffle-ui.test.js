@@ -98,4 +98,21 @@ for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', '
     assert.equal(sent[1].payload.enabled, false);
     assert.equal(sent[1].payload.enabledByType, undefined);
   });
+  test(`${path}: Return to defaults previews all bonus settings and Save resets the selected scope`,async()=>{
+    const ctx=context(),sent=[],listeners={};
+    ctx.raffleBonusSettings.envDefaults={enabledByType:{biweekly:false,monthly:true},biweekly:[{hours:120,percent:20},{hours:24,percent:0}],monthly:[{hours:168,percent:40},{hours:24,percent:0}]};
+    Object.assign(ctx,{activeGuildSyncTab:'settings',document:{querySelector:selector=>selector==='#resetBonusDefaults'?{addEventListener:(_,fn)=>listeners.reset=fn}:null},FormData:class{constructor(form){return form}},emitSocketWithAck:async(event,payload)=>{sent.push(payload);return {ok:true,bonusSettings:ctx.raffleBonusSettings}},refreshBankingDataFromBackend:async()=>{},addSystemMessage(){},TRANSIENT_MESSAGE_TTL_MS:100,formatError:String});
+    vm.runInContext(functions+'\n'+source.match(/async function saveRaffleBonusSettings\([^]*?(?=\n(?:async )?function )/)[0],ctx);
+    assert.match(vm.runInContext('renderRaffleBonusSettings()',ctx),/id="resetBonusDefaults">Return to defaults<\/button>/);
+    vm.runInContext('wireReportsPanel()',ctx);listeners.reset();
+    let html=vm.runInContext('renderRaffleBonusSettings()',ctx);
+    assert.doesNotMatch(html,/name="biweekly-enabled"[^>]*checked/);assert.match(html,/name="monthly-enabled"[^>]*checked/);
+    assert.match(html,/name="biweekly-0-hours"[^>]*value="120"/);assert.match(html,/name="biweekly-0-percent"[^>]*value="20"/);
+    assert.equal(sent.length,0);assert.equal(ctx.raffleBonusSettings.biweekly[0].hours,24);
+    ctx.event={preventDefault(){},currentTarget:new Map()};await vm.runInContext('saveRaffleBonusSettings(event)',ctx);assert.equal(sent[0].resetToDefaults,true);assert.equal(sent[0].raffleType,undefined);
+    ctx.selectedBonusRaffle='biweekly:200';ctx.raffleBonusRaffles[0].tiers=[{hours:48,percent:0}];ctx.raffleBonusRaffles[0].inheritedSettings={enabled:false,tiers:[{hours:72,percent:10},{hours:24,percent:0}]};
+    listeners.reset();html=vm.runInContext('renderRaffleBonusSettings()',ctx);assert.match(html,/name="biweekly-0-hours"[^>]*value="72"/);assert.match(html,/name="biweekly-0-percent"[^>]*value="10"/);assert.doesNotMatch(html,/name="biweekly-enabled"[^>]*checked/);
+    await vm.runInContext('saveRaffleBonusSettings(event)',ctx);assert.equal(sent[1].resetToDefaults,true);assert.equal(sent[1].raffleType,'biweekly');assert.equal(sent[1].salesEnd,200);
+  });
+
 }
