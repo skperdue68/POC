@@ -139,44 +139,20 @@ function handleHistoricalRaffle(request, sourceId, folderId) {
   let archiveId = request.archiveId;
   let created = false;
   let lookupMethod = 'requested-id';
+  let searchMatches = [];
   if (request.action === 'historical-resolve') {
     let pageToken, matches = [];
     do {
-      const page = Drive.Files.list({q:"'" + escape(folderId) + "' in parents and trashed=false and mimeType='application/vnd.google-apps.spreadsheet' and (name='" + escape(name) + "' or appProperties has { key='guildsyncRaffleDate' and value='" + escape(dates.biweekly) + "' })",
-        fields:'nextPageToken,files(id)', pageSize:100, pageToken:pageToken});
+      const page = Drive.Files.list({q:"'" + escape(folderId) + "' in parents and trashed=false and mimeType='application/vnd.google-apps.spreadsheet' and name='" + escape(name) + "'",
+        fields:'nextPageToken,files(id,name)', pageSize:100, pageToken:pageToken});
       matches = matches.concat(page.files || []); pageToken = page.nextPageToken;
     } while (pageToken);
-    // Registry IDs let renamed archives be found. Trashed registry IDs fall back to folder lookup.
-    if (archiveId && !matches.some(item => item.id === archiveId)) {
-      let registered;
-      try { registered = Drive.Files.get(archiveId, {fields:'id,trashed'}); }
-      catch (_) { throw new Error('Unable to verify the registered archive ' + archiveId + '; no replacement was created. Check access and retry.'); }
-      if (registered && !registered.trashed) matches.push({id:archiveId});
-    }
-    lookupMethod = matches.some(item => item.id === archiveId) ? 'registry' : 'name-or-metadata';
-    // Older renamed archives may have only the source marker. Check their actual dates
-    // before deciding the raffle has no archive and creating a copy.
-    if (!matches.length) {
-      pageToken = undefined;
-      do {
-        const page = Drive.Files.list({q:"'" + escape(folderId) + "' in parents and trashed=false and mimeType='application/vnd.google-apps.spreadsheet' and appProperties has { key='guildsyncSource' and value='" + escape(sourceId) + "' }",
-          fields:'nextPageToken,files(id,appProperties)',pageSize:100,pageToken:pageToken});
-        (page.files || []).forEach(candidate => {
-          if(candidate.id===sourceId || candidate.appProperties?.guildsyncHistoryState==='preparing')return;
-          try {
-            const candidateBook=SpreadsheetApp.openById(candidate.id);
-            if(raffleSheetDate(candidateBook,request.biweeklyTab || 'bi-weekly raffle','R7')===dates.biweekly)
-              matches.push({id:candidate.id});
-          } catch(error) { throw new Error('Unable to inspect archive ' + candidate.id + ' while looking for ' + dates.biweekly + '; no new archive was created. ' + String(error.message || error)); }
-        });
-        pageToken=page.nextPageToken;
-      } while(pageToken);
-      if(matches.length)lookupMethod='draw-date';
-    }
-    if (matches.length > 1) throw new Error('Multiple archives match this raffle; resolve duplicates before loading');
+    searchMatches = matches.map(item => ({id:item.id,name:item.name || name}));
+    lookupMethod = 'archive-name';
+    if (matches.length > 1) throw new Error('Multiple archives named ' + name + ' match in the archive folder: ' + matches.map(item => item.id).join(', ') + '; resolve duplicates before loading');
     if (matches.length) archiveId = matches[0].id;
     else {
-      if (request.allowCreate !== true) throw new Error('No archive exists for this raffle. Run /gsr load with the same date first.');
+      if (request.allowCreate !== true) throw new Error('No archive named ' + name + ' was found in the configured archive folder. Run /gsr load with the same date first.');
       const copy = Drive.Files.copy({name:name,parents:[folderId],appProperties:{guildsyncSource:sourceId,
         guildsyncArchive:request.key,guildsyncRaffleDate:dates.biweekly,guildsyncMonthlyDate:dates.monthly,guildsyncHistoryState:'preparing'}},sourceId,{fields:'id'});
       archiveId = copy.id; created = true;
@@ -197,13 +173,13 @@ function handleHistoricalRaffle(request, sourceId, folderId) {
     if(raffleSheetDate(book,biweeklyTab,'R7') !== dates.biweekly || raffleSheetDate(book,monthlyTab,'P7') !== dates.monthly)
       throw new Error('Archive draw dates do not match the selected raffle');
   }
-  if(request.action === 'historical-read' && !ready) throw new Error('Archive load is incomplete; load it before saving');
+  if(request.action === 'historical-read' && !ready) throw new Error('Archive load is incomplete; load it before updating');
   if(request.action === 'historical-resolve') reconcileHistoricalSharing(sourceId,archiveId);
   if(request.action === 'historical-complete') {
     Drive.Files.update({appProperties:Object.assign({},metadata,{guildsyncRaffleDate:dates.biweekly,guildsyncMonthlyDate:dates.monthly,guildsyncHistoryState:'ready'})},archiveId);
     ready=true;
   }
-  return {ok:true,sourceId:sourceId,key:request.key,archiveId:archiveId,name:name,created:created,ready:ready,lookupMethod:lookupMethod,drawDates:dates,
+  return {ok:true,sourceId:sourceId,key:request.key,archiveId:archiveId,name:name,fileName:file.name,matches:searchMatches,created:created,ready:ready,lookupMethod:lookupMethod,archiveFolderId:folderId,drawDates:dates,
     ...(request.action === 'historical-read' ? {diagnosticCells:readArchiveDiagnosticCells(book,biweeklyTab,monthlyTab)} : {})};
 }
 

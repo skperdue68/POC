@@ -34,12 +34,22 @@ test('a reminder that expires during channel lookup is not posted', async () => 
   assert.equal(f.sends(), 0);
 });
 
-test('channel archive notification includes sheet link buttons without changing reconciliation content',async()=>{
+test('channel archive notification includes sheet link buttons with button-only links',async()=>{
  const f=fixture([]);
  const content='Archived [HERE](https://docs.google.com/spreadsheets/d/archive/edit). Working [HERE](https://docs.google.com/spreadsheets/d/working/edit).';
  let sent;f.channel.send=async value=>{sent=value;};
  await sendRaffleAnnouncement(f.client,'channel','guild',null,{...delivery,reconcile:false,content});
- assert.equal(sent.content,content);
+ assert.equal(sent.content,'Archived using the button below. Working using the button below.');
  assert.deepEqual(sent.components[0].toJSON().components.map(button=>button.url),[
   'https://docs.google.com/spreadsheets/d/archive/edit','https://docs.google.com/spreadsheets/d/working/edit']);
+});
+
+test('button-only archive reconciliation checks URLs as well as message text',async()=>{
+ const content='Archived [HERE](https://docs.google.com/spreadsheets/d/archive/edit).';
+ for(const id of ['archive','different']) {
+  const f=fixture([{author:{id:'bot'},content:'Archived using the button below.',createdTimestamp:1000000,
+   components:[{components:[{url:'https://docs.google.com/spreadsheets/d/'+id+'/edit'}]}]}]);
+  await sendRaffleAnnouncement(f.client,'channel','guild',null,{...delivery,content});
+  assert.equal(f.sends(),id==='archive'?0:1);
+ }
 });

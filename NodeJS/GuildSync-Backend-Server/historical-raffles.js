@@ -46,7 +46,7 @@ export function createHistoricalRaffles(db, {settings=config, currentSelection, 
   const result=await request('historical-resolve',{...parameters,allowCreate,archiveId:saved?.archiveId});
   if(result.archiveId===settings().spreadsheetId)throw Error('Historical archive cannot be the working spreadsheet.');
   return {...result,spreadsheetId:result.archiveId,historical:true,sheetUrl:url(result.archiveId),drawDates:parameters.drawDates,periods:selection.raffles,
-   archiveLookup:{archiveId:result.archiveId,registeredArchiveId:saved?.archiveId || null,created:result.created===true,lookupMethod:result.lookupMethod || 'unknown',drawDates:parameters.drawDates}};
+   archiveLookup:{expectedName:result.name,fileName:result.fileName || result.name,matches:result.matches || [],archiveFolderId:result.archiveFolderId,archiveId:result.archiveId,registeredArchiveId:saved?.archiveId || null,created:result.created===true,lookupMethod:result.lookupMethod || 'unknown',drawDates:parameters.drawDates}};
  }
  return {
   async prepare(selection,date) {
@@ -80,7 +80,7 @@ export function createHistoricalRaffles(db, {settings=config, currentSelection, 
   async save(selection) {
    if(settings().enabled===false)throw Error('Enable Google Sheets on the backend first.');
    const target=await resolve(selection,false);
-   if(!target.ready)throw Error('Archive load is incomplete. Run the matching load before saving.');
+   if(!target.ready)throw Error('Archive load is incomplete. Run the matching load before updating.');
    const captured=await request('historical-read',{...args(selection),archiveId:target.spreadsheetId});
    const saved=await captureArchive(captured);
    await request('historical-complete',{...args(selection),archiveId:target.spreadsheetId});

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRaffleAnnouncer, requestActiveRaffles, formatRaffles, parseReminderHours } from './raffle.js';
 import { PermissionFlagsBits } from 'discord.js';
-import { fileLinkButtons } from './file-link-buttons.js';
+import { fileLinkButtons, fileLinkContent } from './file-link-buttons.js';
 
 export async function sendRaffleAnnouncement(client, channelId, guildId, snapshot, delivery) {
   const channel = await client.channels.fetch(channelId);
@@ -15,6 +15,13 @@ export async function sendRaffleAnnouncement(client, channelId, guildId, snapsho
     throw new Error('Raffle announcements require Read Message History to reconcile interrupted deliveries.');
   }
   const content = delivery.content ?? formatRaffles(snapshot);
+  const renderedContent = fileLinkContent(content);
+  const buttons = fileLinkButtons(content);
+  const expectedUrls = buttons.flatMap(row => row.toJSON().components.map(button => button.url));
+  const sameLinks = message => {
+    const urls = (message.components || []).flatMap(row => (row.components || []).map(button => button.url || button.data?.url)).filter(Boolean);
+    return urls.length === expectedUrls.length && urls.every((url,index) => url === expectedUrls[index]);
+  };
   if (delivery.reconcile) {
     // Discord does not retain nonce on fetched messages. Compare the original
     // persisted content and bot author, excluding slash-command responses.
@@ -22,7 +29,7 @@ export async function sendRaffleAnnouncement(client, channelId, guildId, snapsho
     while (true) {
       const messages = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
       if (messages.some(message => message.author.id === client.user.id && !message.interactionMetadata &&
-          message.content === content && message.createdTimestamp >= (delivery.createdAt - 60) * 1000)) return;
+          (message.content === content || (message.content === renderedContent && sameLinks(message))) && message.createdTimestamp >= (delivery.createdAt - 60) * 1000)) return;
       const oldest = messages.last();
       if (!oldest || messages.size < 100 || oldest.createdTimestamp < (delivery.createdAt - 60) * 1000) break;
       if (oldest.id === before) throw new Error('Could not finish raffle delivery reconciliation.');
@@ -31,7 +38,7 @@ export async function sendRaffleAnnouncement(client, channelId, guildId, snapsho
   }
   // Channel/history lookups can outlive the warning window.
   if (delivery.expiresAt !== undefined && Date.now() >= delivery.expiresAt * 1000) return;
-  await channel.send({ content, components:fileLinkButtons(content), allowedMentions: { parse: [] }, nonce: delivery.id, enforceNonce: true });
+  await channel.send({ content:renderedContent, components:buttons, allowedMentions: { parse: [] }, nonce: delivery.id, enforceNonce: true });
 }
 
 export function startRaffleAnnouncements(client, socket, log, env = process.env) {
