@@ -18,7 +18,7 @@ A new rollover delay applies only to future holds. Existing holds retain their r
 
 The connected bot drains its active workers before replacing them with the new configuration snapshot. It retains pending raffle delivery content and the original channel for reconciliation; archive delivery records retain their content and destination. Onboarding jobs retain the configuration captured at their first claim, while eligibility checks use current enabled/link/member state. Disabling a notification system pauses new delivery attempts after active work finishes; durable pending records remain available when it is re-enabled. A removed archive destination with a pending delivery is still reconciled when archive notifications are enabled with at least one destination.
 
-An offline bot applies saved overrides on reconnect. Bot logs report successful operational configuration application or rejection. Saving does not certify Discord permissions or channel membership; failures appear in bot logs and retained delivery state.
+An offline bot stops its workers on disconnect and resumes only after loading the saved configuration on reconnect. Pending promotion messages pause while the notification switch is disabled, and resume with their original destination/content after it is re-enabled. Queued ordinary uploads recheck the write switch at execution before any rollover or write work. Bot logs report successful operational configuration application or rejection. Saving does not certify Discord permissions or channel membership; failures appear in bot logs and retained delivery state.
 
 ## Supported settings
 

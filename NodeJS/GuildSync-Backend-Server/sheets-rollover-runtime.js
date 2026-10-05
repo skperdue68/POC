@@ -80,8 +80,9 @@ export function startSheetsRollover(db, getWindows, { now, schedule = true, load
 
   // One local queue plus a MariaDB advisory lock coordinates all backend instances.
   let tail = Promise.resolve();
-  const run = (operation, { processRollover = true, archiveNow = false, requestedBy } = {}) => {
+  const run = (operation, { processRollover = true, archiveNow = false, requestedBy, ordinaryWrite = false } = {}) => {
     const job = tail.then(async () => {
+      if(ordinaryWrite && !config().enabled)return {enabled:false,synced:0};
       const conn = await db.getConnection();
       let locked = false;
       try {

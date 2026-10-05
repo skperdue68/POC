@@ -111,14 +111,17 @@ const liveConfiguration=createLiveConfiguration({start:async env=>{
   return stops;
 }});
 async function refreshOperationalConfiguration(force=false){
+  const connectionId=guildSyncSocket.id;
   try {
     const configuration=await new Promise((resolve,reject)=>guildSyncSocket.timeout(30000).emit('guildsync:request-bot-configuration',{},(error,response)=>error?reject(error):response?.ok?resolve(response.configuration):reject(Error(response?.message || 'Configuration request failed.'))));
     const reported=await new Promise((resolve,reject)=>guildSyncSocket.timeout(30000).emit('guildsync:register-configuration-defaults',{defaults:liveConfiguration.defaults(configuration.keys)},(error,response)=>error?reject(error):response?.ok?resolve(response.configuration):reject(Error(response?.message || 'Configuration defaults report failed.'))));
-    await liveConfiguration.apply(reported,{force});
+    if(!guildSyncSocket.connected || guildSyncSocket.id!==connectionId)return;
+    await liveConfiguration.apply(reported,{force,resume:true});
   }catch(error){Log('Operational configuration refresh failed: '+error.message);}
 }
 guildSyncSocket.on('guildsync:configuration-updated',configuration=>void liveConfiguration.apply(configuration).catch(error=>Log('Operational configuration update failed: '+error.message)));
 guildSyncSocket.on('connect',()=>void refreshOperationalConfiguration());
+guildSyncSocket.on('disconnect',()=>void liveConfiguration.pause().catch(error=>Log('Configuration workers could not pause: '+error.message)));
 
 let guildSyncApplicationDiscordPostingEnabled = true;
 

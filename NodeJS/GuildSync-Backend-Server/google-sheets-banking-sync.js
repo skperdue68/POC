@@ -106,13 +106,14 @@ export async function syncBankingEntriesToGoogleSheets(entries, { log = exportLo
   entries = (entries || []).filter(entry => tabFor(entry.type, settings));
   if (!settings.enabled || !entries.length) return { enabled: settings.enabled, synced: 0 };
   return coordinate(async state => {
+    if(!config().enabled)return {enabled:false,synced:0};
     try {
       return await writeEntries(entries, uploadedBy, state, log);
     } catch (error) {
       await log('Export stopped: ' + error.message);
       throw error;
     }
-  });
+  }, { ordinaryWrite:true });
 }
 
 export function entryLayout(entry) {

@@ -13,3 +13,11 @@ Tasks:
 Review focus: unauthorized configuration access, secret exposure, resets accidentally saving defaults, stale saves, workers overlapping on refresh, pending notification reconciliation, disabling automation, historical bonus policy preservation, frontend parity and unsaved drafts.
 
 Validation: node --test in backend and bot; frontend builds; git diff --check; syntax checks. Database/Discord integration is verified with isolated doubles; no production messages or sheet mutations during tests.
+
+## Completion evidence
+
+All four tasks are complete. Full suite: 252/252 tests pass. Desktop and web Vite builds pass; served web assets match web/dist. Headless Edge verified exclusive accordion opening, unsaved draft retention, Save override, deferred reset, and Save deletion. Backend/bot syntax and diff whitespace checks pass.
+
+Independent review identified three P2 issues. Each was reproduced with a failing regression test and fixed in one pass: stale workers on reconnect (including updates arriving during refresh), paused promotion notification retries, and uploads queued after disabling ordinary sheet writes. The full suite passes after these fixes.
+
+Operational decisions retained after review: active deliveries finish with their recorded snapshot rather than being interrupted (changes may wait for them); explicit admin sheet commands remain available when ordinary writes are disabled (operators can still modify sheets); an empty archive channel list pauses pending reconciliation (delivery waits until a destination is configured). These behaviors are documented in the operator guide. No deferred minor findings.

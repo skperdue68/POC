@@ -130,6 +130,9 @@ export async function processOnboardingDelivery(context,job) {
    }
    await progress({roleChanged:true});job.roleChanged=true;
    if(!config.promotionNotifyEnabled){await finish({done:true});return;}
+   validity=await request(socket,'validate',payload);
+   if(!validity.valid){await finish({cancelled:true});return;}
+   if(validity.notificationEnabled===false){await finish({error:'Promotion notifications are disabled; saved delivery is paused.'});return;}
   }
   const destination=await notificationDestination(context,job,member,progress);
   if(job.destinationId && job.destinationId!==destination.id)throw Error('Onboarding notification destination changed; restore its original destination before retrying.');
@@ -145,6 +148,7 @@ export async function processOnboardingDelivery(context,job) {
   }
   validity=await request(socket,'validate',payload);
   if(!validity.valid){await finish({cancelled:true});return;}
+  if(job.kind==='promotion' && validity.notificationEnabled===false){await finish({error:'Promotion notifications are disabled; saved delivery is paused.'});return;}
   // Re-fetch membership immediately before a reminder is sent.
   await guild.members.fetch({user:job.userId,force:true});
   job.attemptAt=job.attemptAt || now();await progress({attemptAt:job.attemptAt});

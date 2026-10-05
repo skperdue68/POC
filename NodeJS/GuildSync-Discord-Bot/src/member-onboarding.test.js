@@ -18,16 +18,16 @@ function fixture(kind='promotion') {
   threads:{fetchActive:async()=>({threads:new Collection()}),fetchArchived:async()=>({threads:new Collection(),hasMore:false}),create:async options=>{assert.equal(options.type,ChannelType.PrivateThread);assert.equal(options.invitable,false);actions.push('create');return thread;}}};
  const guild={id:'guild',roles:{fetch:async()=>roles},members:{fetch:async()=>member}};
  const client={user:{id:'bot'},guilds:{fetch:async()=>guild},channels:{fetch:async id=>id==='123'?parent:thread}};
- let valid=true;
+ let valid=true,notificationEnabled=true;
  const socket={connected:true,timeout(){return this;},emit(event,payload,cb){
   const action=event.split('-').at(-1);
   if(action==='progress')progress.push(payload.patch);
   if(action==='finish')finishes.push(payload.result);
-  cb(null,{ok:true,result:action==='validate'?{valid,esoName:'ESO'}:{}});
+  cb(null,{ok:true,result:action==='validate'?{valid,notificationEnabled,esoName:'ESO'}:{}});
  }};
  const job={id:'job',userId:'user',guildId:'guild',kind,claimToken:'claim',esoName:'ESO'};
  const context={client,socket,guildId:'guild',config,log:()=>{},now:()=>2000};
- return {config,actions,progress,finishes,messages,roles,member,parent,thread,guild,client,socket,job,context,setValid:v=>valid=v};
+ return {config,actions,progress,finishes,messages,roles,member,parent,thread,guild,client,socket,job,context,setValid:v=>valid=v,setNotificationEnabled:v=>notificationEnabled=v};
 }
 test('promotion adds Associate before removing Gangster, preserving other roles, then privately notifies',async()=>{
  const f=fixture();await processOnboardingDelivery(f.context,f.job);
@@ -150,3 +150,5 @@ test('public fallback works without Manage Threads and privately enumerates only
  f.thread.type=ChannelType.PublicThread;f.parent.threads.create=async options=>{assert.equal(options.type,ChannelType.PublicThread);return f.thread;};
  await processOnboardingDelivery(f.context,f.job);assert.equal(f.finishes.at(-1).done,true);
 });
+
+test('notification disable preserves role promotion but pauses the saved delivery before thread/send',async()=>{const f=fixture();f.setNotificationEnabled(false);await processOnboardingDelivery(f.context,f.job);assert.deepEqual(f.actions,['add:a','remove:g']);assert.match(f.finishes.at(-1).error,/notifications.*disabled/i);assert.equal(f.finishes.at(-1).done,undefined);});
