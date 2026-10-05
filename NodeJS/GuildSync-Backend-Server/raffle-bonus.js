@@ -60,5 +60,6 @@ export function calculateRaffleBonus({ purchasedTickets, purchaseTimestamp, sale
     }
   }
   const bonusTickets = enabled ? Math.floor(paid * percent / 100) : 0;
-  return { purchasedTickets: paid, bonusPercent: enabled ? percent : 0, bonusTickets, totalTickets: paid + bonusTickets };
+  return { purchasedTickets: paid, bonusPercent: enabled ? percent : 0, bonusTickets, totalTickets: paid + bonusTickets,
+    ...(enabled && percent > 0 ? { bonusExpiresAt: Math.min(salesEnd, salesEnd - totalHours * 3600 + cutoff * 3600) } : {}) };
 }

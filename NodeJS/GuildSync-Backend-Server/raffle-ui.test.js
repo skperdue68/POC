@@ -40,6 +40,16 @@ for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', '
     assert.doesNotMatch(html, /name="monthly-enabled"[^>]*checked/);
     assert.match(html, /Save Bonus Settings/);
   });
+  test(`${path}: dropdown marks enabled bonuses and removes the marker when disabled`, () => {
+    const ctx = context();
+    ctx.raffleBonusRaffles[0].label = 'Bi-Weekly | Raffle 09/26/26';
+    ctx.raffleBonusRaffles[0].overridden = true;
+    vm.runInContext(functions, ctx);
+    assert.match(vm.runInContext('renderRaffleBonusSettings()', ctx), /Bi-Weekly \| Raffle 09\/26\/26 \(Bonuses\)/);
+    ctx.raffleBonusRaffles[0].enabled = false;
+    const html = vm.runInContext('renderRaffleBonusSettings()', ctx);
+    assert.doesNotMatch(html, /\((?:custom|bonuses|completed)\)/i);
+  });
   test(`${path}: unsaved switches and tier values survive a background rerender`, () => {
     const ctx = context();
     const listeners = {};

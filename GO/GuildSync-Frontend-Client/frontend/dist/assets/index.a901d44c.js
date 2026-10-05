@@ -560,7 +560,7 @@
         <label>Bonus rules for
           <select id="bonusRafflePicker" ${r?"":"disabled"}>
             <option value="">Default rules for upcoming raffles</option>
-            ${Dt.map(s=>`<option value="${f(`${s.type}:${s.salesEnd}`)}" ${kt===`${s.type}:${s.salesEnd}`?"selected":""}>${a(s.label)}${s.overridden?" (custom)":""}</option>`).join("")}
+            ${Dt.map(s=>`<option value="${f(`${s.type}:${s.salesEnd}`)}" ${kt===`${s.type}:${s.salesEnd}`?"selected":""}>${a(s.label)}${s.enabled?" (Bonuses)":""}</option>`).join("")}
           </select>
         </label>
         <form id="raffleBonusSettingsForm">
