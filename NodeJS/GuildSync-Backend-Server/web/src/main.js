@@ -1,3 +1,4 @@
+import {reconcileDataRows,syncDataHTML,syncDataText} from './live-data-view.js';
 import {createConfigurationPanel,createAccordionState,wireReportAccordions} from './admin-configuration.js';
 import './style.css';
 import splashImage from './assets/splash.png';
@@ -1921,18 +1922,7 @@ function wireReportsPanel() {
 
   wireReportAccordions(reportsAccordion, { refresh: true });
   if(guildSyncSession?.user?.role === 'admin')adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
-  document.querySelector('#cancelBonusDefaults')?.addEventListener('click',()=>{bonusResetToDefaults=false;renderGuildSyncTabLayout();});
-  document.querySelector('#resetBonusDefaults')?.addEventListener('click',()=>{bonusResetToDefaults=true;renderGuildSyncTabLayout();});
-  document.querySelector('#raffleBonusSettingsForm')?.addEventListener('submit', saveRaffleBonusSettings);
-  document.querySelector('#raffleBonusSettingsForm')?.addEventListener('input', (event) => {
-    raffleBonusDraft = { raffle: selectedBonusRaffle, values: new Map(new FormData(event.currentTarget)) };
-  });
-  document.querySelector('#bonusRafflePicker')?.addEventListener('change', (event) => {
-    selectedBonusRaffle = event.currentTarget.value;
-    bonusResetToDefaults = false;
-    raffleBonusDraft = null;
-    renderGuildSyncTabLayout();
-  });
+  wireRaffleBonusSettings();
 
   document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => openAssociatePromotionReportDialog());
   document.querySelector('#runDiscordRankAuditReportButton')?.addEventListener('click', () => openDiscordRankAuditReportDialog());
@@ -1940,8 +1930,24 @@ function wireReportsPanel() {
   document.querySelector('#runMemberLinksReportButton')?.addEventListener('click', () => openMemberLinksReportDialog());
 }
 
+function wireRaffleBonusSettings(root = document) {
+  root.querySelector('#cancelBonusDefaults')?.addEventListener('click',()=>{bonusResetToDefaults=false;renderGuildSyncTabLayout();});
+  root.querySelector('#resetBonusDefaults')?.addEventListener('click',()=>{bonusResetToDefaults=true;renderGuildSyncTabLayout();});
+  root.querySelector('#raffleBonusSettingsForm')?.addEventListener('submit', saveRaffleBonusSettings);
+  root.querySelector('#raffleBonusSettingsForm')?.addEventListener('input', (event) => {
+    raffleBonusDraft = { raffle: selectedBonusRaffle, values: new Map(new FormData(event.currentTarget)) };
+  });
+  root.querySelector('#bonusRafflePicker')?.addEventListener('change', (event) => {
+    selectedBonusRaffle = event.currentTarget.value;
+    bonusResetToDefaults = false;
+    raffleBonusDraft = null;
+    renderGuildSyncTabLayout();
+  });
+
+}
+
 function renderRaffleBonusSettings() {
-  if (!raffleBonusSettings) return '<p>Loading raffle bonus settings...</p>';
+  if (!raffleBonusSettings) return '<article class="report-option-card raffle-bonus-card"><div class="report-option-copy"><h3><button type="button" class="report-section-toggle" data-report-toggle="bonus" aria-expanded="false" aria-controls="raffleBonusContent">Raffle Bonus Tickets <span aria-hidden="true">▾</span></button></h3><div id="raffleBonusContent" class="report-section-content" inert><div class="report-section-inner"><p>Loading raffle bonus settings...</p></div></div></div></article>';
   const draft = !bonusResetToDefaults && raffleBonusDraft?.raffle === selectedBonusRaffle ? raffleBonusDraft.values : null;
   const selected = raffleBonusRaffles.find((raffle) => `${raffle.type}:${raffle.salesEnd}` === selectedBonusRaffle);
   const selectedRules = bonusResetToDefaults && selected?.inheritedSettings ? selected.inheritedSettings : selected;
@@ -1975,7 +1981,7 @@ function renderRaffleBonusSettings() {
             ${raffleBonusRaffles.map((raffle) => `<option value="${escapeAttribute(`${raffle.type}:${raffle.salesEnd}`)}" ${selectedBonusRaffle === `${raffle.type}:${raffle.salesEnd}` ? 'selected' : ''}>${escapeHtml(raffle.label)}${raffle.enabled ? ' (Bonuses)' : ''}</option>`).join('')}
           </select>
         </label>
-        <p>Source: ${escapeHtml(selected ? (selected.overridden ? 'Raffle override' : 'Saved raffle policy') : (raffleBonusSettings.source === '.env' ? 'Default' : (raffleBonusSettings.source || 'Default')))}</p>
+        <p data-bonus-settings-source>Source: ${escapeHtml(selected ? (selected.overridden ? 'Raffle override' : 'Saved raffle policy') : (raffleBonusSettings.source === '.env' ? 'Default' : (raffleBonusSettings.source || 'Default')))}</p>
         ${bonusResetToDefaults ? '<p role="status">Default Hours, Bonus %, and enabled settings are shown below. Click Save Bonus Settings to apply them, or Cancel default restoration to keep your previous settings.</p><button type="button" id="cancelBonusDefaults">Cancel default restoration</button>' : ''}
         <form id="raffleBonusSettingsForm">
           ${canEdit ? `<button type="button" id="resetBonusDefaults">Return to defaults</button><p>Restores Hours, Bonus %, and the enabled switch ${selected ? 'from this raffle’s inherited policy' : 'for both raffle types from their default rules'}. Changes apply only after Save Bonus Settings.</p>` : ''}
@@ -3316,7 +3322,10 @@ function handleMemberLinksUpdated(payload = {}) {
   const changed = JSON.stringify(memberLinks) !== JSON.stringify(payload.links);
   memberLinks = payload.links;
   // Reports & Admin has no live member rows unless a member-link dialog is open.
-  if (changed && shouldRefreshMemberLinksView()) renderGuildSyncTabLayout();
+  if (changed && shouldRefreshMemberLinksView()) {
+    if (activeGuildSyncTab === 'discord-members' && !memberLinkDialogOpen && !memberLinksReportDialogOpen && !discordLastSeenReportDialogOpen) updateDiscordDataView();
+    else renderGuildSyncTabLayout();
+  }
 }
 
 function updateMemberLinksReportButton() {
@@ -6100,7 +6109,7 @@ function renderBankingExportGrid(rows) {
 function renderBankingExportGridRow(entry) {
   const showBonusColumns = isBankingRaffleBonusEnabled(bankingExportSection);
   return `
-    <tr>
+    <tr data-bank-event-id="${escapeAttribute(entry.eventId || '')}">
       <td>${escapeHtml(entry.displayName || '')}</td>
       <td>${escapeHtml(String(getBankingTotalDepositAmount(entry, bankingExportSection)))}</td>
       <td>${escapeHtml(String(entry.purchasedTickets))}</td>
@@ -7145,7 +7154,7 @@ function isBankingRaffleBonusEnabled(section) {
 
 function renderBankDepositRow(entry, showTicketColumn = true, showBonusColumns = isBankingRaffleBonusEnabled(bankingActiveSection)) {
   return `
-    <tr>
+    <tr data-bank-event-id="${escapeAttribute(entry.eventId || '')}">
       <td>${escapeHtml(entry.note || entry.eventId || '')}</td>
       <td>${escapeHtml(formatBankingTimestamp(entry.time))}</td>
       <td>${escapeHtml(entry.displayName || '')}</td>
@@ -7261,6 +7270,129 @@ function mergeBankingEntries(entries) {
   bankingEntries = Array.from(byEventId.values()).sort((left, right) => (Number(right.time) || 0) - (Number(left.time) || 0));
 }
 
+function bindLiveDataActions(root) {
+  root.querySelectorAll('[data-open-member-link-dialog]').forEach(button => {
+    button.addEventListener('click', () => openMemberLinkDialog(button.dataset.openMemberLinkDialog || '', button.dataset.memberLinkValue || ''));
+  });
+  root.querySelectorAll('[data-bank-entry-move]').forEach(button => {
+    button.addEventListener('click', () => openBankingMoveDialog(button.dataset.bankEntryMove || ''));
+  });
+}
+
+function updateLiveDataView(selector, markup, banking = false) {
+  const panel = document.querySelector(selector);
+  if (!panel) return;
+  const restoreScroll = captureGuildSyncScrollPosition(panel);
+  const focused = document.activeElement;
+  const selection = focused && 'selectionStart' in focused ? [focused.selectionStart, focused.selectionEnd] : null;
+  const template = document.createElement('template');
+  template.innerHTML = markup;
+  const next = template.content.firstElementChild;
+  const table = banking ? '.bank-deposit-table' : '.discord-member-table';
+  reconcileDataRows(panel.querySelector(`${table} tbody`), next.querySelector(`${table} tbody`), banking ? 'data-bank-event-id' : 'data-discord-user-id', bindLiveDataActions);
+  syncDataHTML(panel.querySelector(`${table} thead`), next.querySelector(`${table} thead`));
+  syncDataText(panel.querySelector('.discord-data-actions .discord-last-refresh'), next.querySelector('.discord-data-actions .discord-last-refresh'));
+  const buttonSelector = banking ? '#refreshBankingDataButton' : '#refreshDiscordDataButton';
+  const button = panel.querySelector(buttonSelector), wantedButton = next.querySelector(buttonSelector);
+  if (button && wantedButton) {
+    button.disabled = wantedButton.disabled;
+    syncDataText(button.lastElementChild, wantedButton.lastElementChild);
+  }
+  if (!banking) {
+    syncDataText(panel.querySelector('.discord-results-count'), next.querySelector('.discord-results-count'));
+    const select = panel.querySelector('#discordRoleFilter'), wanted = next.querySelector('#discordRoleFilter');
+    if (select && wanted && select.innerHTML !== wanted.innerHTML) {
+      const value = select.value; select.innerHTML = wanted.innerHTML; select.value = value;
+    }
+  } else {
+    syncDataHTML(panel.querySelector('.bank-deposits-summary-row'), next.querySelector('.bank-deposits-summary-row'));
+    syncDataHTML(panel.querySelector('.bank-raffle-period-content'), next.querySelector('.bank-raffle-period-content'));
+    const currentMail = panel.querySelector('#checkoutDepositMailButton'), nextMail = next.querySelector('#checkoutDepositMailButton');
+    if (!nextMail) currentMail?.remove();
+    else if (!currentMail || !currentMail.isEqualNode(nextMail)) {
+      const replacement = nextMail.cloneNode(true);
+      replacement.addEventListener('click', () => {
+        if (replacement.dataset.depositMailAction === 'checkout' && replacement.getAttribute('aria-disabled') !== 'true') checkoutDepositMailFromBackend();
+      });
+      if (currentMail) currentMail.replaceWith(replacement);
+      else panel.querySelector('.discord-data-actions').insertBefore(replacement, panel.querySelector('[data-bank-export-section]'));
+    }
+    reconcileDataRows(panel.querySelector('#bankingExportGrid tbody'), next.querySelector('#bankingExportGrid tbody'), 'data-bank-event-id');
+    syncDataHTML(panel.querySelector('#bankingExportGrid thead'), next.querySelector('#bankingExportGrid thead'));
+    syncDataText(panel.querySelector('.bank-export-count'), next.querySelector('.bank-export-count'));
+    const copy = panel.querySelector('#copyBankingExportGridButton'), wantedCopy = next.querySelector('#copyBankingExportGridButton');
+    if (copy && wantedCopy) copy.disabled = wantedCopy.disabled;
+    const tsv = panel.querySelector('#bankingExportTsv'), wantedTsv = next.querySelector('#bankingExportTsv');
+    if (tsv && wantedTsv && tsv.value !== wantedTsv.value) tsv.value = wantedTsv.value;
+  }
+  // Moving a keyed row can blur its surviving focused control in some webviews.
+  if (focused?.isConnected && document.activeElement !== focused) {
+    focused.focus({ preventScroll: true });
+    if (selection && selection[0] !== null) focused.setSelectionRange(...selection);
+  }
+  restoreScroll();
+}
+
+function updateDiscordDataView() {
+  if (activeGuildSyncTab === 'discord-members' && document.querySelector('.discord-member-panel')) {
+    updateLiveDataView('.discord-member-panel', renderDiscordMemberDataPanel());
+  }
+}
+
+function applyBankingBonusData(payload) {
+  const selected = raffleBonusRaffles.find(raffle => `${raffle.type}:${raffle.salesEnd}` === selectedBonusRaffle);
+  if (payload.bonusSettings) raffleBonusSettings = payload.bonusSettings;
+  if (Array.isArray(payload.bonusRaffles)) {
+    const choices = [...payload.bonusRaffles];
+    // Keep the open editor tied to its raffle even if its last purchase disappears.
+    if (selected && !choices.some(raffle => `${raffle.type}:${raffle.salesEnd}` === selectedBonusRaffle)) choices.push(selected);
+    raffleBonusRaffles = choices;
+  }
+}
+
+function updateBonusSettingsView() {
+  if (activeGuildSyncTab !== 'settings' || !raffleBonusSettings) return;
+  const card = document.querySelector('.raffle-bonus-card');
+  if (!card) return;
+  const restoreScroll = captureGuildSyncScrollPosition(card.parentElement);
+  const template = document.createElement('template'); template.innerHTML = renderRaffleBonusSettings();
+  const next = template.content.firstElementChild;
+  if (!card.querySelector('#raffleBonusSettingsForm')) {
+    const replacement = next.cloneNode(true); card.replaceWith(replacement);
+    wireRaffleBonusSettings(replacement);
+    // The page-level delegated accordion handlers are bound per button.
+    wireReportAccordions(reportsAccordion, { refresh: true, root: replacement });
+  } else {
+    const picker = card.querySelector('#bonusRafflePicker'), wantedPicker = next.querySelector('#bonusRafflePicker');
+    if (picker && wantedPicker && picker.innerHTML !== wantedPicker.innerHTML) {
+      const value = picker.value; picker.innerHTML = wantedPicker.innerHTML; picker.value = value;
+    }
+    // A banking poll must never overwrite unsaved bonus edits or a reset preview.
+    if (!bonusResetToDefaults && !(raffleBonusDraft?.raffle === selectedBonusRaffle)) {
+      syncDataText(card.querySelector('[data-bonus-settings-source]'), next.querySelector('[data-bonus-settings-source]'));
+      const fields = card.querySelectorAll('.raffle-bonus-tiers'), wanted = next.querySelectorAll('.raffle-bonus-tiers');
+      fields.forEach((fieldset, index) => {
+        const target = wanted[index]; if (!target) return;
+        if (fieldset.querySelectorAll('input').length !== target.querySelectorAll('input').length) syncDataHTML(fieldset, target);
+        else target.querySelectorAll('input').forEach(input => {
+          const current = Array.from(fieldset.querySelectorAll('input')).find(item => item.name === input.name);
+          if (!current) return;
+          if (current.type === 'checkbox') { if (current.checked !== input.checked) current.checked = input.checked; }
+          else if (current.value !== input.value) current.value = input.value;
+        });
+      });
+    }
+  }
+  restoreScroll();
+}
+
+function updateBankingDataView() {
+  updateBonusSettingsView();
+  if (activeGuildSyncTab === 'more' && document.querySelector('.bank-deposits-panel')) {
+    updateLiveDataView('.bank-deposits-panel', renderBankDepositsPanel(), true);
+  }
+}
+
 function markBankingLastRefreshNow() {
   bankingLastRefreshValue = new Date().toISOString();
 }
@@ -7271,12 +7403,11 @@ async function handleBankingDataUpdated(payload = {}) {
   }
 
   bankingEntries = normalizeBankingEntries(payload.entries);
-  if (payload.bonusSettings) raffleBonusSettings = payload.bonusSettings;
-  if (Array.isArray(payload.bonusRaffles)) raffleBonusRaffles = payload.bonusRaffles;
+  applyBankingBonusData(payload);
   markBankingLastRefreshNow();
 
   if (activeGuildSyncTab === 'more') {
-    renderGuildSyncTabLayout();
+    updateBankingDataView();
   }
 
   addSystemMessage('banking-data-updated', `Banking data updated. Loaded ${bankingEntries.length} deposit record${bankingEntries.length === 1 ? '' : 's'}.`, {
@@ -7299,7 +7430,7 @@ async function refreshBankingDataFromBackend(options = {}) {
 
   if (!background) {
     bankingDataLoading = true;
-    renderGuildSyncTabLayout();
+    updateBankingDataView();
   }
 
   try {
@@ -7310,8 +7441,7 @@ async function refreshBankingDataFromBackend(options = {}) {
     }
 
     bankingEntries = normalizeBankingEntries(response.entries);
-    if (response.bonusSettings) raffleBonusSettings = response.bonusSettings;
-    if (Array.isArray(response.bonusRaffles)) raffleBonusRaffles = response.bonusRaffles;
+    applyBankingBonusData(response);
     markBankingLastRefreshNow();
 
     if (!silent) {
@@ -7329,7 +7459,7 @@ async function refreshBankingDataFromBackend(options = {}) {
     if (!background) {
       bankingDataLoading = false;
     }
-    renderGuildSyncTabLayout();
+    updateBankingDataView();
   }
 }
 
@@ -7342,7 +7472,7 @@ async function refreshDepositMailAvailabilityFromBackend() {
 
   if (getUnsentDepositMailCount() <= 0 && getPendingDepositMailWriteCount() > 0) {
     if (esoRunningStatus.running) {
-      renderGuildSyncTabLayout();
+      updateBankingDataView();
     } else {
       schedulePendingDepositMailAutoWrite('availability-refresh');
     }
@@ -7465,7 +7595,7 @@ async function collectAndSendGuildSyncBankingData(payload = {}) {
   }
 
   bankingDataLoading = true;
-  renderGuildSyncTabLayout();
+  updateBankingDataView();
 
   try {
     const result = await CollectGuildSyncBankingData(payload);
@@ -7506,7 +7636,7 @@ async function collectAndSendGuildSyncBankingData(payload = {}) {
     });
   } finally {
     bankingDataLoading = false;
-    renderGuildSyncTabLayout();
+    updateBankingDataView();
   }
 }
 
@@ -7568,7 +7698,7 @@ async function checkoutDepositMailFromBackend() {
   }
 
   depositMailCheckoutRunning = true;
-  renderGuildSyncTabLayout();
+  updateBankingDataView();
 
   try {
     const response = await emitSocketWithAck('guildsync:checkout-deposit-mail', {
@@ -7601,7 +7731,7 @@ async function checkoutDepositMailFromBackend() {
     addSystemMessage('deposit-mail-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } finally {
     depositMailCheckoutRunning = false;
-    renderGuildSyncTabLayout();
+    updateBankingDataView();
   }
 }
 
@@ -7639,12 +7769,12 @@ async function processPendingDepositMailBatches() {
   await refreshESORunningStatus({ silent: true });
   if (esoRunningStatus.running) {
     addSystemMessage('deposit-mail-waiting-eso', `${queue.length} deposit mail batch${queue.length === 1 ? '' : 'es'} checked out. Close ESO to write them to SavedVariables.`, { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
-    renderGuildSyncTabLayout();
+    updateBankingDataView();
     return;
   }
 
   depositMailPendingWriteRunning = true;
-  renderGuildSyncTabLayout();
+  updateBankingDataView();
 
   try {
     for (const batch of queue) {
@@ -7683,7 +7813,7 @@ async function processPendingDepositMailBatches() {
     addSystemMessage('deposit-mail-write-error', formatError(error), { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
   } finally {
     depositMailPendingWriteRunning = false;
-    renderGuildSyncTabLayout();
+    updateBankingDataView();
   }
 }
 
@@ -7706,7 +7836,7 @@ async function refreshESORunningStatus(options = {}) {
     }
 
     if (previousRunning !== esoRunningStatus.running) {
-      renderGuildSyncTabLayout();
+      updateBankingDataView();
     }
   } catch (error) {
     if (!options.silent) {
@@ -7930,7 +8060,7 @@ async function requestDiscordDataRefresh() {
   }
 
   discordRefreshRequestRunning = true;
-  renderGuildSyncTabLayout();
+  updateDiscordDataView();
 
   addSystemMessage('discord-refresh-requested', 'Refresh request sent to GuildSync backend. Waiting for the Discord bot to sync roles and members...', {
     ttlMs: 180000
@@ -7963,7 +8093,7 @@ async function requestDiscordDataRefresh() {
     });
   } finally {
     discordRefreshRequestRunning = false;
-    renderGuildSyncTabLayout();
+    updateDiscordDataView();
   }
 }
 
@@ -7998,7 +8128,7 @@ async function handleDiscordMemberDataUpdated(payload = {}) {
   }
 
   if (activeGuildSyncTab === 'discord-members') {
-    renderGuildSyncTabLayout();
+    updateDiscordDataView();
   }
 
   addSystemMessage('discord-data-updated', `Discord data updated. Loaded ${discordMembers.length} member record${discordMembers.length === 1 ? '' : 's'}.`, {
@@ -8017,7 +8147,7 @@ async function refreshDiscordData(options = {}) {
   }
 
   discordDataLoading = true;
-  renderGuildSyncTabLayout();
+  updateDiscordDataView();
 
   try {
     const [dateResponse, memberResponse] = await Promise.all([
@@ -8048,7 +8178,7 @@ async function refreshDiscordData(options = {}) {
     });
   } finally {
     discordDataLoading = false;
-    renderGuildSyncTabLayout();
+    updateDiscordDataView();
   }
 }
 

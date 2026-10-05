@@ -23,7 +23,7 @@ Total Tickets: 24`,note:'',note_block:'',ticket_type:'Bi-Weekly',ticket_type_raw
  const rendered=String(template).replace(/{([a-zA-Z0-9_]+)}/g,(match,key)=>values[key] ?? match);
  return body&&!String(template).includes('{bonus_block}')?rendered+'\n\n'+values.bonus_block:rendered;
 }
-export function wireReportAccordions(accordion,{refresh=false}={}){
+export function wireReportAccordions(accordion,{refresh=false,root=document}={}){
  const update=()=>{
   for(const button of document.querySelectorAll('[data-report-toggle]')){
    const open=button.dataset.reportToggle===accordion.open;
@@ -32,8 +32,8 @@ export function wireReportAccordions(accordion,{refresh=false}={}){
    if(content){content.classList.toggle('is-open',open);content.inert=!open;}
   }
  };
- for(const button of document.querySelectorAll('[data-report-toggle]'))button.addEventListener('click',()=>{accordion.toggle(button.dataset.reportToggle);update();});
- for(const button of document.querySelectorAll('.reports-panel .report-run-button:not([type="submit"])'))button.addEventListener('click',()=>{accordion.close();update();});
+ for(const button of root.querySelectorAll('[data-report-toggle]'))button.addEventListener('click',()=>{accordion.toggle(button.dataset.reportToggle);update();});
+ for(const button of root.querySelectorAll('.reports-panel .report-run-button:not([type="submit"])'))button.addEventListener('click',()=>{accordion.close();update();});
  const sections=refresh?Array.from(document.querySelectorAll('.report-section-content')):[];
  const transitions=sections.map(section=>section.style.transition);
  for(const section of sections)section.style.transition='none';
