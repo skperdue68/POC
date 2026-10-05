@@ -214,7 +214,7 @@ let raffleBonusSettings = null;
 let raffleBonusDraft = null;
 let bonusResetToDefaults = false;
 const reportsAccordion=createAccordionState();
-const adminConfigurationPanel=createConfigurationPanel();
+const adminConfigurationPanel=createConfigurationPanel({canEdit:()=>guildSyncSession?.user?.role === 'admin'});
 let raffleBonusRaffles = [];
 let selectedBonusRaffle = '';
 let raffleBonusSettingsRequested = false;
@@ -1886,7 +1886,7 @@ function renderReportsPanel() {
 
       <div class="reports-scroll-area">
         ${renderRaffleBonusSettings()}
-        ${guildSyncSession?.user?.role === 'admin' ? adminConfigurationPanel.render() : ''}
+        ${adminConfigurationPanel.render()}
         <section class="reports-list" aria-label="Available reports">
           <article class="report-option-card">
             <div class="report-option-copy">
@@ -1939,7 +1939,7 @@ function wireReportsPanel() {
   }
 
   wireReportAccordions(reportsAccordion, { refresh: true });
-  if(guildSyncSession?.user?.role === 'admin')adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
+  adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
   wireRaffleBonusSettings();
 
   document.querySelector('#runAssociateTicketReportButton')?.addEventListener('click', () => openAssociatePromotionReportDialog());
@@ -1994,7 +1994,7 @@ function renderRaffleBonusSettings() {
         <div id="raffleBonusContent" class="report-section-content" inert><div class="report-section-inner">
         <p>Default settings carry forward. Select a raffle to edit only that raffle, including past raffles. Purchase time determines its hour period. Bonuses round down; the final tier must be 0%. Manual entries never receive additional bonuses. Changes apply only when you save.</p>
         <label>Bonus rules for
-          <select id="bonusRafflePicker" ${canEdit ? '' : 'disabled'}>
+          <select id="bonusRafflePicker">
             <option value="">Default rules for upcoming raffles</option>
             ${raffleBonusRaffles.map((raffle) => `<option value="${escapeAttribute(`${raffle.type}:${raffle.salesEnd}`)}" ${selectedBonusRaffle === `${raffle.type}:${raffle.salesEnd}` ? 'selected' : ''}>${escapeHtml(raffle.label)}${raffle.enabled ? ' (Bonuses)' : ''}</option>`).join('')}
           </select>

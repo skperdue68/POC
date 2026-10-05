@@ -14,7 +14,7 @@ test('boolean and mode defaults use the same display labels as selections',()=>{
 });
 test('configuration renders Return to default with an aligned human-readable default value',async t=>{
  const original=globalThis.document;globalThis.document={getElementById:()=>null,querySelectorAll:()=>[]};t.after(()=>globalThis.document=original);
- const panel=createConfigurationPanel();let rendered;const ready=new Promise(resolve=>rendered=resolve);
+ const panel=createConfigurationPanel({canEdit:()=>true});let rendered;const ready=new Promise(resolve=>rendered=resolve);
  panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings:[{key:'enabled',group:'Example',label:'Feature enabled',type:'boolean',value:false,defaultValue:true,source:'GuildSync override'},{key:'mode',group:'Example',label:'Delivery',type:'select',options:['private_thread','channel'],value:'channel',defaultValue:'private_thread',source:'.env'},{key:'hours',group:'Example',label:'Hours',type:'number',value:25,defaultValue:24,source:'GuildSync override'}]}}),rerender:()=>rendered()});
  await ready;const html=panel.render();assert.match(html,/Return to default/);assert.match(html,/class="configuration-values"/);assert.match(html,/<output[^>]*>24<\/output>/);
  assert.match(html,/<option value="false" selected>Disabled<\/option>/);assert.match(html,/<option value="channel" selected>Channel or thread<\/option>/);
@@ -28,7 +28,7 @@ test('configuration inputs are editable and editing derives override/default sta
  const handlers={};const input={dataset:{configValue:'enabled'},value:'false',addEventListener:(event,fn)=>handlers[event]=fn};
  const source={textContent:''};const form={addEventListener:(event,fn)=>handlers['form-'+event]=fn,querySelectorAll:()=>[]};
  globalThis.document={getElementById:id=>id==='adminConfigurationForm'?form:null,querySelector:selector=>selector.includes("data-config-source")?source:null,querySelectorAll:selector=>selector==='[data-config-value]'?[input]:[]};
- const panel=createConfigurationPanel();let resolve;const ready=new Promise(r=>resolve=r);const requests=[];
+ const panel=createConfigurationPanel({canEdit:()=>true});let resolve;const ready=new Promise(r=>resolve=r);const requests=[];
  const request=async(event,payload)=>{requests.push({event,payload});return {ok:true,configuration:{revision:1,botDefaultsReported:true,settings:[setting]}};};
  const wire=()=>panel.wire({request,rerender:()=>resolve()});wire();await ready;wire();
  assert.doesNotMatch(panel.render(),/Use a GuildSync override|data-config-override|id="config-enabled" disabled/);
@@ -49,7 +49,7 @@ test('two-choice settings identify only their default option and omit reset cont
   {key:'mode',label:'Delivery',type:'select',options:['channel','private_thread'],value:'channel',defaultValue:'private_thread'},
   {key:'count',label:'Count',type:'number',value:25,defaultValue:24}
  ].map(s=>({...s,group:'Example',source:'.env'}));
- const panel=createConfigurationPanel();let ready;const loaded=new Promise(r=>ready=r);panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings}}),rerender:ready});await loaded;
+ const panel=createConfigurationPanel({canEdit:()=>true});let ready;const loaded=new Promise(r=>ready=r);panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings}}),rerender:ready});await loaded;
  const html=panel.render();
  assert.match(html,/<option value="true" >Enabled \(Default\)<\/option>/);
  assert.match(html,/<option value="false" >Disabled \(Default\)<\/option>/);
@@ -64,7 +64,14 @@ test('two-choice settings identify only their default option and omit reset cont
   for(const setting of configurationCatalog) assert.ok(setting.help?.length>20,setting.key+' needs help');
   const original=globalThis.document;t.after(()=>globalThis.document=original);globalThis.document={getElementById:()=>null,querySelectorAll:()=>[]};
   const settings=configurationCatalog.map(s=>({...s,value:s.defaultValue}));
-  const panel=createConfigurationPanel();let ready;const loaded=new Promise(r=>ready=r);panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings}}),rerender:ready});await loaded;
+  const panel=createConfigurationPanel({canEdit:()=>true});let ready;const loaded=new Promise(r=>ready=r);panel.wire({request:async()=>({ok:true,configuration:{revision:1,botDefaultsReported:true,settings}}),rerender:ready});await loaded;
   const html=panel.render();assert.match(html,/Access and promotion/);assert.match(html,/Schedule and destination/);assert.match(html,/configuration-setting-header/);assert.match(html,/\.env:/);
   for(const setting of settings){assert.match(html,new RegExp('id="config-help-'+setting.key+'"'));assert.match(html,new RegExp('aria-describedby="config-help-'+setting.key+'"'));}
  });
+
+test('read-only configuration shows effective values and defaults without editing or save controls',async t=>{
+ const original=globalThis.document;t.after(()=>globalThis.document=original);globalThis.document={getElementById:()=>null,querySelectorAll:()=>[]};
+ const panel=createConfigurationPanel({canEdit:()=>false});let ready;const loaded=new Promise(r=>ready=r);
+ panel.wire({request:async()=>({ok:true,configuration:{botDefaultsReported:true,settings:[{key:'count',group:'Example',label:'Count',type:'number',value:36,defaultValue:24,help:'A test setting.'}]}}),rerender:ready});await loaded;
+ const html=panel.render();assert.match(html,/Read-only/);assert.match(html,/configuration-readonly-value[^>]*>36<\/output>/);assert.match(html,/<output>24<\/output>/);assert.match(html,/Refresh configuration/);assert.doesNotMatch(html,/data-config-default=|data-config-value=|type="submit"/);
+});
