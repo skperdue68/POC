@@ -151,7 +151,7 @@ If something seems missing, check upload status, save ESO data with `/reloadui`,
 
 **Raffle Bonus Tickets** and **Administrator Configuration** now open by clicking their headings. Opening another section or report closes the previous section. Closing a section keeps your unsaved edits.
 
-GuildSync administrators can configure onboarding, raffle announcements, archive notifications, spreadsheet automation, and receipt templates under **Administrator Configuration**. Each field identifies its effective value and whether it is **Default** or **Overridden**. Edit a field directly; no checkbox is required. **Return to default** schedules removal of the override. The selection and default appear side by side and use the same wording: **Enabled** or **Disabled** for switches. Click **Save Configuration** to apply either choice; closing the section does not save.
+GuildSync administrators can configure onboarding, raffle announcements, archive notifications, spreadsheet automation, and receipt templates under **Administrator Configuration**. Each field identifies its effective value and whether it is **Default** or **Overridden**. Edit a field directly; no checkbox is required. **Return to default** schedules removal of the override. Other fields show the selection and default side by side. All controls use consistent wording: **Enabled** or **Disabled** for switches. Click **Save Configuration** to apply either choice; closing the section does not save.
 
 Settings apply without restarting the backend or connected bot. Active operations finish safely before switching settings; an offline bot uses saved settings when it reconnects. A rollover already on hold keeps its original deadline.
 
@@ -160,3 +160,7 @@ Bonus settings have their own **Save Bonus Settings** button. **Return to defaul
 See [configuration details](GuildSync-Admin-Configuration.md) for the full setting list and setup requirements.
 
 Screen refreshes preserve your position in Reports & Admin and other tab content. Returning an edited setting to its default value automatically marks it **Default** and removes the override when saved. Unsaved edits remain drafts until **Save Configuration** succeeds.
+
+Two-choice configuration dropdowns mark the inherited choice with **(Default)**, for example **Enabled (Default)**. Select that option to return to the default; these fields have no reset button or override checkbox. Other fields retain **Return to default**. All edits still require **Save Configuration**, and changing choices preserves scrolling.
+
+In **Raffle Bonus Tickets**, **Return to defaults** restores the full bonus configuration: Hours, Bonus %, and the enabled switch. Default rules restore both raffle types from their environment defaults; a selected raffle restores only that raffle’s inherited policy. The restored values are previewed and apply only after **Save Bonus Settings**. **Cancel default restoration** restores your previous draft. Scrolling is preserved during the preview.
