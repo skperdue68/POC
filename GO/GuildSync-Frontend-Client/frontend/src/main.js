@@ -2814,16 +2814,38 @@ function handleMemberLinksReportSearchKeydown(event) {
   setActiveMemberLinksReportRowIndex(previousIndex < 0 ? 0 : previousIndex);
 }
 
+function shouldRefreshMemberLinksView() {
+  return activeGuildSyncTab === 'discord-members' || activeGuildSyncTab === 'eso-members'
+    || memberLinkDialogOpen || memberLinksReportDialogOpen || discordLastSeenReportDialogOpen;
+}
+
+function handleMemberLinksUpdated(payload = {}) {
+  if (!Array.isArray(payload.links)) return;
+  const changed = JSON.stringify(memberLinks) !== JSON.stringify(payload.links);
+  memberLinks = payload.links;
+  // Reports & Admin has no live member rows unless a member-link dialog is open.
+  if (changed && shouldRefreshMemberLinksView()) renderGuildSyncTabLayout();
+}
+
+function updateMemberLinksReportButton() {
+  const button = document.querySelector('#runMemberLinksReportButton');
+  if (button) {
+    button.disabled = memberLinksLoading;
+    button.textContent = memberLinksLoading ? 'Loading...' : 'Run';
+  }
+}
+
 async function refreshMemberLinks(options = {}) {
   if (!socket?.connected) {
     memberLinksError = 'You must be connected to load member links.';
-    renderGuildSyncTabLayout();
+    if (shouldRefreshMemberLinksView()) renderGuildSyncTabLayout();
     return;
   }
 
   memberLinksLoading = true;
   memberLinksError = '';
-  if (!options.silent) renderGuildSyncTabLayout();
+  updateMemberLinksReportButton();
+  if (!options.silent && shouldRefreshMemberLinksView()) renderGuildSyncTabLayout();
 
   try {
     const response = await emitSocketWithAck('guildsync:request-member-links', {}, 30000);
@@ -2833,7 +2855,8 @@ async function refreshMemberLinks(options = {}) {
     memberLinksError = formatError(error);
   } finally {
     memberLinksLoading = false;
-    renderGuildSyncTabLayout();
+    updateMemberLinksReportButton();
+    if (shouldRefreshMemberLinksView()) renderGuildSyncTabLayout();
   }
 }
 
@@ -4934,11 +4957,16 @@ function formatRosterHistoryTimestamp(value) {
 }
 
 async function handleRosterDataUpdated(payload = {}) {
-  rosterMembers = normalizeRosterMembers(payload.members);
+  const members = normalizeRosterMembers(payload.members);
+  const changed = JSON.stringify(rosterMembers) !== JSON.stringify(members);
+  rosterMembers = members;
   rosterLastRefreshValue = payload.last_refresh || new Date().toISOString();
 
-  if (activeGuildSyncTab === 'eso-members') {
+  if (changed && (activeGuildSyncTab === 'eso-members' || memberLinkDialogOpen)) {
     renderGuildSyncTabLayout();
+  } else if (activeGuildSyncTab === 'eso-members') {
+    const refreshText = document.querySelector('.eso-roster-panel .discord-last-refresh');
+    if (refreshText) refreshText.textContent = `Last Refresh: ${formatRosterRefreshDate(rosterLastRefreshValue)}`;
   }
 
   addSystemMessage('roster-data-updated', `Roster data updated. Loaded ${rosterMembers.length} member record${rosterMembers.length === 1 ? '' : 's'}.`, {
@@ -4952,7 +4980,7 @@ async function refreshRosterDataFromBackend(options = {}) {
   }
 
   rosterDataLoading = true;
-  renderGuildSyncTabLayout();
+  if (activeGuildSyncTab === 'eso-members' || memberLinkDialogOpen) renderGuildSyncTabLayout();
 
   try {
     const response = await emitSocketWithAck('guildsync:request-roster-data', {}, 30000);
@@ -4975,7 +5003,7 @@ async function refreshRosterDataFromBackend(options = {}) {
     });
   } finally {
     rosterDataLoading = false;
-    renderGuildSyncTabLayout();
+    if (activeGuildSyncTab === 'eso-members' || memberLinkDialogOpen) renderGuildSyncTabLayout();
   }
 }
 
@@ -8465,14 +8493,7 @@ function connectSocket() {
     handleRosterDataUpdated(payload);
   });
 
-  socket.on('guildsync:member-links-updated', (payload = {}) => {
-    if (Array.isArray(payload.links)) {
-      memberLinks = payload.links;
-      if (activeGuildSyncTab === 'discord-members' || activeGuildSyncTab === 'eso-members' || activeGuildSyncTab === 'settings' || memberLinkDialogOpen) {
-        renderGuildSyncTabLayout();
-      }
-    }
-  });
+  socket.on('guildsync:member-links-updated', handleMemberLinksUpdated);
 
   socket.on('guildsync:discord-refresh-status', (payload = {}) => {
     const message = String(payload.message || '').trim();
