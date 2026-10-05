@@ -1,4 +1,6 @@
 import { SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
+import { Log } from '../helper.js';
+import { fileLinkButtons } from '../file-link-buttons.js';
 
 export function createGsaCommandData(env = process.env) {
   return new SlashCommandBuilder().setName('gsa').setDescription('GuildSync administration').setDMPermission(false)
@@ -41,7 +43,7 @@ function selectionMessage(selection) {
     selection.raffles.map(raffle => `**${raffle.label} raffle:**\n${date(raffle.start)} – ${date(raffle.end)}`).join('\n\n');
 }
 
-export async function execute(interaction, socket) {
+export async function execute(interaction, socket, log = Log) {
   const reply = content => interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   if (!interaction.guildId || (process.env.DISCORD_GUILD_ID && interaction.guildId !== process.env.DISCORD_GUILD_ID)) return reply('Use this command in the configured GuildSync server.');
   if (!interaction.member?.roles?.cache?.some(role => role.name === 'Consigliere')) return reply('Only users with the exact Consigliere role can use these raffle commands.');
@@ -75,7 +77,10 @@ export async function execute(interaction, socket) {
         plan = await request(socket,'guildsync:raffle-refresh',{...payload,action:'plan'});
       }
       await interaction.editReply({ components: [], content: selectionMessage(plan.selection) + (action === 'save' ? '\n\nSaving editable result fields from the selected archive...' : '\n\nExporting the selected raffle data to its matching spreadsheet...'), allowedMentions: { parse: [] } });
+      log('Raffle file lookup request: ' + JSON.stringify({action,date:payload.date || 'current',boundaryChoices:payload.boundaryChoices || {},discordUserId:payload.discordUserId}));
       const result = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: action === 'save' ? 'save' : 'export' });
+      log('Raffle file lookup result: ' + JSON.stringify({action,date:payload.date || 'current',historical:result.historical===true,
+        archiveLookup:result.archiveLookup || null,sheetUrl:result.sheetUrl || result.workingSheetUrl}));
       if (action === 'save') {
         content = selectionMessage(result.selection) + '\n\nSaved ' + result.saved + ' result fields to the database from the archived raffle sheet [HERE](' + result.sheetUrl + '). No spreadsheet data was cleared.';
       } else {
@@ -89,6 +94,6 @@ export async function execute(interaction, socket) {
       const result = await request(socket, 'guildsync:raffle-manage', { ...payload, action: action === 'reset' ? 'clear' : action });
       content = result.message;
     }
-    await interaction.editReply({ content, allowedMentions: { parse: [] } });
-  } catch (error) { await interaction.editReply({ content: error.message, components: [], allowedMentions: { parse: [] } }); }
+    await interaction.editReply({ content, components:fileLinkButtons(content), allowedMentions: { parse: [] } });
+  } catch (error) { log('Raffle ' + action + ' failed: ' + error.message); await interaction.editReply({ content: error.message, components: [], allowedMentions: { parse: [] } }); }
 }

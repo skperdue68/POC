@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRaffleAnnouncer, requestActiveRaffles, formatRaffles, parseReminderHours } from './raffle.js';
 import { PermissionFlagsBits } from 'discord.js';
+import { fileLinkButtons } from './file-link-buttons.js';
 
 export async function sendRaffleAnnouncement(client, channelId, guildId, snapshot, delivery) {
   const channel = await client.channels.fetch(channelId);
@@ -30,7 +31,7 @@ export async function sendRaffleAnnouncement(client, channelId, guildId, snapsho
   }
   // Channel/history lookups can outlive the warning window.
   if (delivery.expiresAt !== undefined && Date.now() >= delivery.expiresAt * 1000) return;
-  await channel.send({ content, allowedMentions: { parse: [] }, nonce: delivery.id, enforceNonce: true });
+  await channel.send({ content, components:fileLinkButtons(content), allowedMentions: { parse: [] }, nonce: delivery.id, enforceNonce: true });
 }
 
 export function startRaffleAnnouncements(client, socket, log, env = process.env) {

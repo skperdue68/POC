@@ -42,7 +42,7 @@ export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelect
           await log('SAVE requested by ' + JSON.stringify(requestedBy) + ': ' + JSON.stringify(selection));
           return historical.save(selection);
         });
-        callback({ok:true,selection,saved:result.saved,sheetUrl:result.sheetUrl,historical:true});
+        callback({ok:true,selection,saved:result.saved,sheetUrl:result.sheetUrl,historical:true,archiveLookup:result.archiveLookup});
         return;
       }
       let target;
@@ -56,7 +56,7 @@ export function registerRaffleRefreshSocket(socket, db, { getRaffleRefreshSelect
         saveTemplates: formulas => target?.historical ? Promise.resolve() : saveFormulaTemplates(db, formulas, googleSheetsBankingConfig().spreadsheetId),
         onComplete:()=>historical?.complete(selection,target) });
       callback({ ok: true, selection, synced: result.synced,
-        historical:target?.historical || false, sheetUrl:target?.sheetUrl,
+        historical:target?.historical || false, sheetUrl:target?.sheetUrl, archiveLookup:target?.archiveLookup,
         workingSheetUrl: target?.historical ? undefined : 'https://docs.google.com/spreadsheets/d/' + encodeURIComponent(googleSheetsBankingConfig().spreadsheetId) + '/edit' });
     } catch (error) {
       await log('REFRESH failed: ' + error.message).catch(console.error);
