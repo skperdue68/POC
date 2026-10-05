@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 for (const path of ['../../GO/GuildSync-Frontend-Client/frontend/src/main.js', './web/src/main.js']) {
   const source = fs.readFileSync(new URL(path, import.meta.url), 'utf8');
-  const names = ['normalizeBankingEntries', 'renderBankDepositRow', 'getBankingExportTsv', 'formatTsvCell', 'isBankingRaffleBonusEnabled', 'renderRaffleBonusSettings', 'wireReportsPanel'];
+  const names = ['normalizeBankingEntries', 'renderBankDepositRow', 'getBankingExportTsv', 'formatTsvCell', 'isBankingRaffleBonusEnabled', 'renderRaffleBonusSettings', 'wireReportsPanel', 'wireRaffleBonusSettings'];
   const functions = names.map(name => source.match(new RegExp(`function ${name}\\([^]*?(?=\\n(?:async )?function |$)`))?.[0] || '').join('\n');
   function context() {
     return vm.createContext({
