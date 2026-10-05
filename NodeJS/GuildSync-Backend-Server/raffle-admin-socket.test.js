@@ -22,15 +22,15 @@ test('historical endpoint routes target and save under the lock without running 
  });
  const request=payload=>new Promise(resolve=>handler({date:'092626',discordUserId:'officer',requestedBy:'Officer',...payload},resolve));
  assert.equal((await request({action:'export'})).ok,false);
- assert.equal((await request({action:'save'})).ok,false);assert.deepEqual(calls,[]);
+ assert.equal((await request({action:'update'})).ok,false);assert.deepEqual(calls,[]);
  const loaded=await request({action:'export',boundaryChoices:{biweekly:'ends'}});
  assert.equal(loaded.historical,true);assert.equal(loaded.sheetUrl,'archive-url');assert.equal(loaded.workingSheetUrl,undefined);
  assert.deepEqual(calls,['refresh','prepare','complete']);calls.length=0;
- const saved=await request({action:'save',boundaryChoices:{biweekly:'ends'}});
+ const saved=await request({action:'update',boundaryChoices:{biweekly:'ends'}});
  assert.equal(saved.saved,5);assert.deepEqual(calls,['lock','save']);
  calls.length=0;
- assert.equal((await request({action:'save',date:undefined})).ok,false);
- assert.equal((await request({action:'save',discordUserId:'member'})).ok,false);
+ assert.equal((await request({action:'update',date:undefined})).ok,false);
+ assert.equal((await request({action:'update',discordUserId:'member'})).ok,false);
  assert.deepEqual(calls,[]);
 });
 

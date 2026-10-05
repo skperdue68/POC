@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import { Log } from '../helper.js';
-import { fileLinkButtons } from '../file-link-buttons.js';
+import { fileLinkButtons, fileLinkContent } from '../file-link-buttons.js';
 
 export function createGsaCommandData(env = process.env) {
   return new SlashCommandBuilder().setName('gsa').setDescription('GuildSync administration').setDMPermission(false)
@@ -16,8 +16,8 @@ export function createGsrCommandData() {
         .addStringOption(option => option.setName('date').setDescription('MMDDYY; omitted uses current periods. Boundary dates ask which raffle to load.')))
       .addSubcommand(sub => sub.setName('reset').setDescription('Clear both raffle sheets and draw dates; database records remain intact.'))
       .addSubcommand(sub => sub.setName('archive').setDescription('Archive now, reset both raffle sheets and reload current data.'))
-      .addSubcommand(sub => sub.setName('save').setDescription('Save edited archive winners and other result fields to the database.')
-        .addStringOption(option => option.setName('date').setDescription('MMDDYY within the raffle; boundary dates ask which raffle to save.').setRequired(true)));
+      .addSubcommand(sub => sub.setName('update').setDescription('Update database winners and other result fields from the archived sheet.')
+        .addStringOption(option => option.setName('date').setDescription('MMDDYY within the raffle; boundary dates ask which raffle to update.').setRequired(true)));
 }
 
 export function createGsrAliasCommandData() { return createGsrCommandData().setName('gsr'); }
@@ -48,16 +48,16 @@ export async function execute(interaction, socket, log = Log) {
   if (!interaction.guildId || (process.env.DISCORD_GUILD_ID && interaction.guildId !== process.env.DISCORD_GUILD_ID)) return reply('Use this command in the configured GuildSync server.');
   if (!interaction.member?.roles?.cache?.some(role => role.name === 'Consigliere')) return reply('Only users with the exact Consigliere role can use these raffle commands.');
   const action = interaction.options.getSubcommand();
-  if (!['load', 'reset', 'archive', 'save'].includes(action)) return reply('That command has been retired. Use /gsraffle load, reset, archive, or save.');
+  if (!['load', 'reset', 'archive', 'update'].includes(action)) return reply('That command has been retired. Use /gsraffle load, reset, archive, or update.');
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     const requestedBy = String(interaction.member?.displayName || '').trim();
     if (!requestedBy) throw new Error('Discord display name is unavailable; operation was not started.');
     const payload = { discordUserId: interaction.user.id, requestedBy };
     let content;
-    if (action === 'load' || action === 'save') {
+    if (action === 'load' || action === 'update') {
       payload.date = interaction.options.getString('date') ?? undefined;
-      if (action === 'save' && !payload.date) throw Error('Save requires a raffle date in MMDDYY format.');
+      if (action === 'update' && !payload.date) throw Error('Update requires a raffle date in MMDDYY format.');
       let plan = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: 'plan' });
       if (plan.selection.boundaryTypes?.length) {
         payload.boundaryChoices = {};
@@ -70,7 +70,7 @@ export async function execute(interaction, socket, log = Log) {
           const message = await interaction.editReply({content:`For the ${label} raffle on ${dateLabel}, ${action} the raffle that starts or ends on this date?`,components:[row],allowedMentions:{parse:[]}});
           let answer;
           try { answer = await message.awaitMessageComponent({componentType:ComponentType.Button,time:60000,filter:choice=>choice.user.id===interaction.user.id}); }
-          catch { await interaction.editReply({content:`${action === 'save' ? 'Save' : 'Load'} cancelled: no boundary selection was received. No raffle data was changed.`,components:[],allowedMentions:{parse:[]}}); return; }
+          catch { await interaction.editReply({content:`${action === 'update' ? 'Update' : 'Load'} cancelled: no boundary selection was received. No raffle data was changed.`,components:[],allowedMentions:{parse:[]}}); return; }
           payload.boundaryChoices[type] = answer.customId;
           await answer.deferUpdate();
         }
@@ -81,16 +81,21 @@ export async function execute(interaction, socket, log = Log) {
       const datePart = type => parts?.find(part => part.type === type)?.value;
       const expectedName = parts ? datePart('year') + datePart('month') + datePart('day') + ' Raffle' : undefined;
       const lookupMessage = payload.date && expectedName ? "\n\nChecking for archive '" + expectedName + "' in the archive folder if this is a historical raffle..." : '';
-      await interaction.editReply({ components: [], content: selectionMessage(plan.selection) + lookupMessage + (action === 'save' ? '\n\nSaving editable result fields from the selected archive...' : '\n\nExporting the selected raffle data to its matching spreadsheet...'), allowedMentions: { parse: [] } });
+      await interaction.editReply({ components: [], content: selectionMessage(plan.selection) + lookupMessage + (action === 'update' ? '\n\nUpdating the database with editable result fields from the selected archive...' : '\n\nExporting the selected raffle data to its matching spreadsheet...'), allowedMentions: { parse: [] } });
       log('Raffle file lookup request: ' + JSON.stringify({action,expectedName,date:payload.date || 'current',boundaryChoices:payload.boundaryChoices || {},discordUserId:payload.discordUserId}));
-      const result = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: action === 'save' ? 'save' : 'export' });
+      const result = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: action === 'update' ? 'update' : 'export' });
       log('Raffle file lookup result: ' + JSON.stringify({action,date:payload.date || 'current',historical:result.historical===true,
         archiveLookup:result.archiveLookup || null,sheetUrl:result.sheetUrl || result.workingSheetUrl}));
-      if (action === 'save') {
-        content = selectionMessage(result.selection) + '\n\nSaved ' + result.saved + ' result fields to the database from the archived raffle sheet [HERE](' + result.sheetUrl + '). No spreadsheet data was cleared.';
+      const lookup = result.archiveLookup;
+      if (lookup) log('Raffle archive search results: ' + JSON.stringify({expectedName:lookup.expectedName,archiveFolderId:lookup.archiveFolderId,matches:lookup.matches || [],created:lookup.created,selectedFileId:lookup.archiveId}));
+      const selectedUrl = result.sheetUrl || result.workingSheetUrl;
+      const selectedId = lookup?.archiveId || /\/spreadsheets\/d\/([^/]+)/.exec(selectedUrl || '')?.[1];
+      log((action === 'update' ? 'Raffle database update completed from sheet: ' : 'Raffle data loaded to sheet: ') + JSON.stringify({fileName:lookup?.fileName || lookup?.expectedName || 'Working Raffle Sheet',fileId:selectedId,date:payload.date || 'current'}));
+      if (action === 'update') {
+        content = selectionMessage(result.selection) + '\n\nUpdated ' + result.saved + ' result fields in the database from the archived raffle sheet [HERE](' + result.sheetUrl + '). No spreadsheet data was cleared.';
       } else {
         content = selectionMessage(result.selection) + '\n\nLoad complete: ' + result.synced + ' entries written. Both worksheets were cleared and reloaded.';
-        if (result.historical) content += '\n\nRaffle data has been loaded to the archived raffle sheet [HERE](' + result.sheetUrl + ').\nAfter updating winners, attendance, bonus tickets, or other result fields, use `/gsr save date:' + payload.date + '` to save those changes to the database.';
+        if (result.historical) content += '\n\nRaffle data has been loaded to the archived raffle sheet [HERE](' + result.sheetUrl + ').\nAfter updating winners, attendance, bonus tickets, or other result fields, use `/gsr update date:' + payload.date + '` to save those changes to the database.';
         else if (result.workingSheetUrl) content += '\n\nRaffle data has been loaded to the working sheet [HERE](' + result.workingSheetUrl + ').';
       }
       if(result.archiveLookup?.expectedName) content += '\n\n' + (result.archiveLookup.created ? 'Created' : 'Found') + " archive '" + result.archiveLookup.expectedName + "' in the archive folder.";
@@ -100,6 +105,6 @@ export async function execute(interaction, socket, log = Log) {
       const result = await request(socket, 'guildsync:raffle-manage', { ...payload, action: action === 'reset' ? 'clear' : action });
       content = result.message;
     }
-    await interaction.editReply({ content, components:fileLinkButtons(content), allowedMentions: { parse: [] } });
+    await interaction.editReply({ content:fileLinkContent(content), components:fileLinkButtons(content), allowedMentions: { parse: [] } });
   } catch (error) { log('Raffle ' + action + ' failed: ' + error.message); await interaction.editReply({ content: error.message, components: [], allowedMentions: { parse: [] } }); }
 }

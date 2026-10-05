@@ -19,7 +19,7 @@ function fixture() {
    assert.match(options.q,/name='260926 Raffle'/);
    assert.doesNotMatch(options.q,/guildsyncRaffleDate| or /);
    return {files:[...files.values()].filter(file=>!file.trashed && file.parents?.includes('folder') &&
-    file.name==='260926 Raffle').map(file=>({id:file.id}))};
+    file.name==='260926 Raffle').map(file=>({id:file.id,name:file.name}))};
   },
    copy:(body,id)=>{calls.push(['copy',id]);const file={id:'copy',mimeType:'application/vnd.google-apps.spreadsheet',...body};files.set(file.id,file);return file;},
    get:id=>files.get(id),update:(body,id)=>{assert.equal(body.trashed,undefined);Object.assign(files.get(id),body);calls.push(['update',id]);}},
@@ -52,7 +52,7 @@ test('exactly named archive is found in the archive folder and repeated loads/sa
  const f=fixture();Object.assign(f.dates,{biweekly:'2026-09-26',monthly:'2026-09-26'});
  f.files.set('existing',{id:'existing',name:'260926 Raffle',mimeType:'application/vnd.google-apps.spreadsheet',parents:['folder'],appProperties:{guildsyncSource:'live'}});
  for(const allowCreate of [true,false,true]) {
-  const result=f.call('historical-resolve',{allowCreate});assert.equal(result.ok,true);assert.equal(result.archiveId,'existing');assert.equal(result.created,false);assert.equal(result.lookupMethod,'archive-name');
+  const result=f.call('historical-resolve',{allowCreate});assert.equal(result.ok,true);assert.equal(result.archiveId,'existing');assert.equal(result.created,false);assert.equal(result.lookupMethod,'archive-name');assert.equal(result.fileName,'260926 Raffle');assert.equal(result.matches[0].id,'existing');
  }
  assert.equal(f.call('historical-resolve',{allowCreate:false,archiveId:'existing'}).lookupMethod,'archive-name');
  f.dates.monthly='2026-10-24';assert.equal(f.call('historical-resolve',{allowCreate:true,archiveId:'existing'}).ok,false);
@@ -88,5 +88,5 @@ test('renamed or outside-folder files are not substituted for the expected archi
  const created=f.call('historical-resolve',{allowCreate:true,archiveId:'renamed'});
  assert.equal(created.ok,true);assert.equal(created.created,true);assert.equal(created.name,'260926 Raffle');
  assert.deepEqual(Array.from(f.files.get('copy').parents),['folder']);
- assert.equal(created.archiveFolderId,'folder');
+ assert.equal(created.archiveFolderId,'folder');assert.equal(created.matches.length,0);
 });

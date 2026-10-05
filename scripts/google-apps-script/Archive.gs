@@ -139,15 +139,17 @@ function handleHistoricalRaffle(request, sourceId, folderId) {
   let archiveId = request.archiveId;
   let created = false;
   let lookupMethod = 'requested-id';
+  let searchMatches = [];
   if (request.action === 'historical-resolve') {
     let pageToken, matches = [];
     do {
       const page = Drive.Files.list({q:"'" + escape(folderId) + "' in parents and trashed=false and mimeType='application/vnd.google-apps.spreadsheet' and name='" + escape(name) + "'",
-        fields:'nextPageToken,files(id)', pageSize:100, pageToken:pageToken});
+        fields:'nextPageToken,files(id,name)', pageSize:100, pageToken:pageToken});
       matches = matches.concat(page.files || []); pageToken = page.nextPageToken;
     } while (pageToken);
+    searchMatches = matches.map(item => ({id:item.id,name:item.name || name}));
     lookupMethod = 'archive-name';
-    if (matches.length > 1) throw new Error('Multiple archives match this raffle; resolve duplicates before loading');
+    if (matches.length > 1) throw new Error('Multiple archives named ' + name + ' match in the archive folder: ' + matches.map(item => item.id).join(', ') + '; resolve duplicates before loading');
     if (matches.length) archiveId = matches[0].id;
     else {
       if (request.allowCreate !== true) throw new Error('No archive named ' + name + ' was found in the configured archive folder. Run /gsr load with the same date first.');
@@ -171,13 +173,13 @@ function handleHistoricalRaffle(request, sourceId, folderId) {
     if(raffleSheetDate(book,biweeklyTab,'R7') !== dates.biweekly || raffleSheetDate(book,monthlyTab,'P7') !== dates.monthly)
       throw new Error('Archive draw dates do not match the selected raffle');
   }
-  if(request.action === 'historical-read' && !ready) throw new Error('Archive load is incomplete; load it before saving');
+  if(request.action === 'historical-read' && !ready) throw new Error('Archive load is incomplete; load it before updating');
   if(request.action === 'historical-resolve') reconcileHistoricalSharing(sourceId,archiveId);
   if(request.action === 'historical-complete') {
     Drive.Files.update({appProperties:Object.assign({},metadata,{guildsyncRaffleDate:dates.biweekly,guildsyncMonthlyDate:dates.monthly,guildsyncHistoryState:'ready'})},archiveId);
     ready=true;
   }
-  return {ok:true,sourceId:sourceId,key:request.key,archiveId:archiveId,name:name,created:created,ready:ready,lookupMethod:lookupMethod,archiveFolderId:folderId,drawDates:dates,
+  return {ok:true,sourceId:sourceId,key:request.key,archiveId:archiveId,name:name,fileName:file.name,matches:searchMatches,created:created,ready:ready,lookupMethod:lookupMethod,archiveFolderId:folderId,drawDates:dates,
     ...(request.action === 'historical-read' ? {diagnosticCells:readArchiveDiagnosticCells(book,biweeklyTab,monthlyTab)} : {})};
 }
 

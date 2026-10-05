@@ -26,7 +26,7 @@ test('registration only exposes production commands regardless of obsolete test 
     const data = command.createGsrCommandData({ GUILDSYNC_RAFFLE_TEST_COMMANDS_ENABLED: String(enabled) }).toJSON();
     assert.equal(data.name, 'gsraffle');
     const group = data;
-    assert.deepEqual(group.options.map(o => o.name), ['load', 'reset', 'archive', 'save']);
+    assert.deepEqual(group.options.map(o => o.name), ['load', 'reset', 'archive', 'update']);
     assert.deepEqual(group.options[0].options.map(o => o.name), ['date']);
     assert.ok(!group.options[0].options[0].required);
   }
@@ -44,11 +44,11 @@ test('production refresh is private, independent of test flag, and identifies bo
   for (const expected of ['September 15, 2026', 'Bi-Weekly', '50/50', 'September 12, 2026', 'August 29, 2026', 'September 26, 2026']) assert.ok(text.includes(expected), text);
   assert.match(f.replies[1].content, /Exporting/);
   assert.match(text, /Both worksheets were cleared/);
-  assert.match(text, /Raffle data has been loaded to the working sheet \[HERE\]\(https:\/\/docs.google.com\/spreadsheets\/d\/working\/edit\)/);
+  assert.match(text, /Raffle data has been loaded to the working sheet using the button below/);
   assert.doesNotMatch(text, /R7|P7/);
 });
 test('all gsa raffle actions require the exact Consigliere role', async () => {
-  for (const role of ['Capo', 'caporegieme', 'consigliere', 'Member']) for (const action of ['load', 'reset', 'archive', 'save']) {
+  for (const role of ['Capo', 'caporegieme', 'consigliere', 'Member']) for (const action of ['load', 'reset', 'archive', 'update']) {
     const f = fixture({ role, action }); await command.execute(f.interaction, f.socket);
     assert.deepEqual(f.calls, []);
     assert.equal(f.replies[0].flags, MessageFlags.Ephemeral);
@@ -56,55 +56,58 @@ test('all gsa raffle actions require the exact Consigliere role', async () => {
   }
 });
 
-test('historical load returns archive link and save reminder with the original date', async () => {
+test('historical load returns archive button and update reminder with the original date', async () => {
  const f=fixture({date:'091526'});
  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:snapshot,synced:2,historical:true,sheetUrl:'https://docs.google.com/spreadsheets/d/archive/edit'});};
  await command.execute(f.interaction,f.socket);
  const text=f.replies.at(-1).content;
- assert.match(text,/archived raffle sheet \[HERE\]\(https:\/\/docs.google.com\/spreadsheets\/d\/archive\/edit\)/);
- assert.match(text,/\/gsr save date:091526/);
+ assert.match(text,/archived raffle sheet using the button below/);
+ assert.match(text,/\/gsr update date:091526/);
  assert.doesNotMatch(text,/working sheet/);
  assert.equal(f.replies.at(-1).components[0].toJSON().components[0].url,'https://docs.google.com/spreadsheets/d/archive/edit');
 });
 
-test('load and save log archive identity and creation status and provide link buttons',async()=>{
- for(const action of ['load','save']) {
+test('load and update log archive identity and creation status and provide link buttons',async()=>{
+ for(const action of ['load','update']) {
   const f=fixture({action,date:'091526'}), logs=[];
   f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:snapshot,synced:2,saved:3,historical:true,
-   sheetUrl:'https://docs.google.com/spreadsheets/d/existing/edit',archiveLookup:{expectedName:'260926 Raffle',archiveFolderId:'folder',archiveId:'existing',created:false,lookupMethod:'archive-name'}});};
+   sheetUrl:'https://docs.google.com/spreadsheets/d/existing/edit',archiveLookup:{expectedName:'260926 Raffle',fileName:'260926 Raffle',matches:[{id:'existing',name:'260926 Raffle'}],archiveFolderId:'folder',archiveId:'existing',created:false,lookupMethod:'archive-name'}});};
   await command.execute(f.interaction,f.socket,line=>logs.push(line));
   assert.ok(logs.some(line=>line.includes('lookup request')&&line.includes('091526')));
   assert.ok(logs.some(line=>line.includes('lookup result')&&line.includes('existing')&&line.includes('"created":false')&&line.includes('archive-name')));
   assert.ok(logs.some(line=>line.includes('lookup request')&&line.includes('260926 Raffle')));
   assert.ok(f.replies.some(reply=>reply.content?.includes("archive '260926 Raffle' in the archive folder")));
   assert.match(f.replies.at(-1).content,/Found archive '260926 Raffle'/);
+  assert.ok(logs.some(line=>line.includes('search results')&&line.includes('matches')&&line.includes('existing')));
+  assert.ok(logs.some(line=>line.includes(action==='update'?'update completed from sheet':'loaded to sheet')&&line.includes('260926 Raffle')&&line.includes('existing')));
+  assert.doesNotMatch(f.replies.at(-1).content,/https:\/\/docs\.google/);
   const button=f.replies.at(-1).components[0].toJSON().components[0];
   assert.equal(button.style,5);assert.equal(button.url,'https://docs.google.com/spreadsheets/d/existing/edit');
  }
 });
 
-test('save uses boundary clarification and only sends save after the choice', async () => {
- const f=fixture({action:'save',date:'092626'});
+test('update uses boundary clarification and only sends update after the choice', async () => {
+ const f=fixture({action:'update',date:'092626'});
  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:{...snapshot,boundaryTypes:['biweekly']},saved:3,sheetUrl:'https://docs.google.com/spreadsheets/d/archive/edit'});};
  f.interaction.editReply=async value=>{f.replies.push(value);return {awaitMessageComponent:async()=>({customId:'ends',deferUpdate:async()=>{}})};};
  await command.execute(f.interaction,f.socket);
- assert.deepEqual(f.calls.map(call=>call.payload.action),['plan','plan','save']);
+ assert.deepEqual(f.calls.map(call=>call.payload.action),['plan','plan','update']);
  assert.deepEqual(f.calls.at(-1).payload.boundaryChoices,{biweekly:'ends'});
- assert.match(f.replies.at(-1).content,/Saved 3/);
+ assert.match(f.replies.at(-1).content,/Updated 3/);
  assert.ok(!f.calls.some(call=>call.payload.action==='export'));
 });
 
-test('save boundary timeout cancels without saving and save date is required',async()=>{
- const f=fixture({action:'save',date:'092626'});
+test('update boundary timeout cancels without updating and update date is required',async()=>{
+ const f=fixture({action:'update',date:'092626'});
  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:{...snapshot,boundaryTypes:['biweekly']}});};
  f.interaction.editReply=async value=>{f.replies.push(value);return {awaitMessageComponent:async()=>{throw Error('timeout');}};};
  await command.execute(f.interaction,f.socket);
  assert.deepEqual(f.calls.map(call=>call.payload.action),['plan']);
- assert.match(f.replies.at(-1).content,/Save cancelled/);
- const missing=fixture({action:'save',date:null});await command.execute(missing.interaction,missing.socket);
+ assert.match(f.replies.at(-1).content,/Update cancelled/);
+ const missing=fixture({action:'update',date:null});await command.execute(missing.interaction,missing.socket);
  assert.equal(missing.calls.length,0);
  const builder=command.createGsrCommandData().toJSON();
- assert.equal(builder.options.find(option=>option.name==='save').options[0].required,true);
+ assert.equal(builder.options.find(option=>option.name==='update').options[0].required,true);
 });
 test('invalid date from backend is reported privately without starting an export', async () => {
   const f = fixture({ date: '023126' });
