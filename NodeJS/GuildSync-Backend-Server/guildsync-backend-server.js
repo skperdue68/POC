@@ -1,3 +1,5 @@
+import { createDiscordOnboarding } from './discord-onboarding.js';
+import { registerDiscordOnboardingSocket } from './discord-onboarding-socket.js';
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -413,6 +415,7 @@ io.use(async (socket, next) => {
     socket.guildSyncAuthType = 'discord-bot';
     socket.guildSyncBot = {
       source: 'discord-bot',
+      guild_id: String(auth.guildId || '').trim(),
       connected_at: new Date().toISOString()
     };
 
@@ -446,7 +449,10 @@ io.use(async (socket, next) => {
   }
 });
 
+const onboardingService = createDiscordOnboarding(applicationDB, {log:Log,wake:()=>io.to('GuildSyncDiscordBot').emit('guildsync:onboarding-wake')});
+
 io.on('connection', (socket) => {
+  registerDiscordOnboardingSocket(socket, onboardingService);
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerArchiveSocket(socket, applicationDB);
   registerRaffleManagementSocket(socket, applicationDB, { sheets: sheetsRuntime });
