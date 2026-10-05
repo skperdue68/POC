@@ -151,10 +151,12 @@ If something seems missing, check upload status, save ESO data with `/reloadui`,
 
 **Raffle Bonus Tickets** and **Administrator Configuration** now open by clicking their headings. Opening another section or report closes the previous section. Closing a section keeps your unsaved edits.
 
-GuildSync administrators can configure onboarding, raffle announcements, archive notifications, spreadsheet automation, and receipt templates under **Administrator Configuration**. Each field identifies its effective value and whether it comes from the server's **Default** or a saved GuildSync override. Check **Use a GuildSync override** to edit a field. **Return to default** schedules removal of the override. The selection and default appear side by side and use the same wording: **Enabled** or **Disabled** for switches. Click **Save Configuration** to apply either choice; closing the section does not save.
+GuildSync administrators can configure onboarding, raffle announcements, archive notifications, spreadsheet automation, and receipt templates under **Administrator Configuration**. Each field identifies its effective value and whether it is **Default** or **Overridden**. Edit a field directly; no checkbox is required. **Return to default** schedules removal of the override. The selection and default appear side by side and use the same wording: **Enabled** or **Disabled** for switches. Click **Save Configuration** to apply either choice; closing the section does not save.
 
 Settings apply without restarting the backend or connected bot. Active operations finish safely before switching settings; an offline bot uses saved settings when it reconnects. A rollover already on hold keeps its original deadline.
 
 Bonus settings have their own **Save Bonus Settings** button. **Return to default** restores upcoming/default policies; **Return to raffle default** restores the saved policy for that particular raffle. Both require Save. Completed raffle policy history is retained.
 
 See [configuration details](GuildSync-Admin-Configuration.md) for the full setting list and setup requirements.
+
+Screen refreshes preserve your position in Reports & Admin and other tab content. Returning an edited setting to its default value automatically marks it **Default** and removes the override when saved. Unsaved edits remain drafts until **Save Configuration** succeeds.

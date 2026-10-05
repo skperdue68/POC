@@ -888,6 +888,30 @@ function restoreMemberLinksReportScrollPosition() {
   });
 }
 
+function captureGuildSyncScrollPosition(content) {
+  const view = { x: window.scrollX, y: window.scrollY };
+  const ancestors = [];
+  for (let element = content; element; element = element.parentElement) {
+    ancestors.push({ element, top: element.scrollTop, left: element.scrollLeft });
+  }
+  const elements = content ? Array.from(content.querySelectorAll('*')) : [];
+  const sameContainer = (a, b) => a.id ? a.id === b.id : a.tagName === b.tagName && a.className === b.className;
+  const positions = elements.filter(element => element.scrollTop || element.scrollLeft).map(element => ({
+    identity: { id: element.id, tagName: element.tagName, className: element.className },
+    occurrence: elements.filter(other => sameContainer(element, other)).indexOf(element),
+    top: element.scrollTop, left: element.scrollLeft
+  }));
+  return () => {
+    const current = content ? Array.from(content.querySelectorAll('*')) : [];
+    for (const { identity, occurrence, top, left } of positions) {
+      const element = current.filter(other => sameContainer(identity, other))[occurrence];
+      if (element) { element.scrollTop = top; element.scrollLeft = left; }
+    }
+    for (const { element, top, left } of ancestors) { element.scrollTop = top; element.scrollLeft = left; }
+    window.scrollTo({ left: view.x, top: view.y, behavior: 'instant' });
+  };
+}
+
 function renderGuildSyncTabLayout(options = {}) {
   if (memberLinksReportDialogOpen) {
     captureMemberLinksReportScrollPosition();
@@ -895,10 +919,7 @@ function renderGuildSyncTabLayout(options = {}) {
 
   const tabBar = document.querySelector('.guildsync-tabs');
   const content = document.querySelector('#guildSyncTabContent');
-  const scrollPositions = content ? Array.from(content.querySelectorAll('*'))
-    .map((element, index) => ({ index, top: element.scrollTop, left: element.scrollLeft }))
-    .filter(({ top, left }) => top || left) : [];
-  const windowScroll = { x: window.scrollX, y: window.scrollY };
+  const restoreScrollPosition = captureGuildSyncScrollPosition(content);
 
   if (tabBar) {
     tabBar.innerHTML = renderGuildSyncTabs();
@@ -906,14 +927,6 @@ function renderGuildSyncTabLayout(options = {}) {
 
   if (content) {
     content.innerHTML = renderGuildSyncTabContent();
-    const elements = content.querySelectorAll('*');
-    for (const { index, top, left } of scrollPositions) {
-      if (elements[index]) {
-        elements[index].scrollTop = top;
-        elements[index].scrollLeft = left;
-      }
-    }
-    window.scrollTo(windowScroll.x, windowScroll.y);
   }
 
   wireGuildSyncTabs();
@@ -928,6 +941,8 @@ function renderGuildSyncTabLayout(options = {}) {
   wireDiscordLastSeenReportDialog();
   wireMemberLinksReportDialog();
   wireDiscordHistoryDialog();
+
+  restoreScrollPosition();
 
   if (options.restoreDiscordSearchFocus) {
     restoreDiscordSearchFocus();
@@ -1904,7 +1919,7 @@ function wireReportsPanel() {
     return;
   }
 
-  wireReportAccordions(reportsAccordion);
+  wireReportAccordions(reportsAccordion, { refresh: true });
   if(guildSyncSession?.user?.role === 'admin')adminConfigurationPanel.wire({request:(event,payload)=>emitSocketWithAck(event,payload,120000),rerender:renderGuildSyncTabLayout});
   document.querySelector('#cancelBonusDefaults')?.addEventListener('click',()=>{bonusResetToDefaults=false;renderGuildSyncTabLayout();});
   document.querySelector('#resetBonusDefaults')?.addEventListener('click',()=>{bonusResetToDefaults=true;renderGuildSyncTabLayout();});

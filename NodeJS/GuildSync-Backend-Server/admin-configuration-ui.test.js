@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {draftSetting,createAccordionState,receiptPreview,formatConfigurationValue,createConfigurationPanel} from './web/src/admin-configuration.js';
 import fs from 'node:fs';
 test('accordion toggles one section without changing a draft',()=>{const a=createAccordionState();const draft={key:'edited'};a.toggle('bonus');assert.equal(a.open,'bonus');a.toggle('configuration');assert.equal(a.open,'configuration');a.toggle('configuration');assert.equal(a.open,'');assert.deepEqual(draft,{key:'edited'});});
-test('default reset displays environment value and remains a deletion in the draft',()=>{const setting={key:'key',value:20,defaultValue:10,source:'GuildSync override'};const changes={key:null};assert.deepEqual(draftSetting(setting,changes),{value:10,override:false,source:'Default (pending Save)'});assert.equal(changes.key,null);assert.equal(draftSetting(setting,{}).value,20);});
+test('default reset displays environment value and remains a deletion in the draft',()=>{const setting={key:'key',value:20,defaultValue:10,source:'GuildSync override'};const changes={key:null};assert.deepEqual(draftSetting(setting,changes),{value:10,override:false,source:'Default'});assert.equal(changes.key,null);assert.equal(draftSetting(setting,{}).value,20);});
 test('preview substitutes bonus and common receipt placeholders',()=>{assert.match(receiptPreview('Tickets {ticket_quantity}\n{bonus_block}'),/Tickets 20/);assert.match(receiptPreview('{bonus_block}'),/20%/);assert.doesNotMatch(receiptPreview('{bonus_block}'),/\{/);});
 test('desktop and web use the same configuration component',()=>{assert.equal(fs.readFileSync(new URL('./web/src/admin-configuration.js',import.meta.url),'utf8'),fs.readFileSync(new URL('../../GO/GuildSync-Frontend-Client/frontend/src/admin-configuration.js',import.meta.url),'utf8'));});
 
@@ -19,4 +19,24 @@ test('configuration renders Return to default with an aligned human-readable def
  await ready;const html=panel.render();assert.match(html,/Return to default/);assert.match(html,/class="configuration-values"/);assert.match(html,/<output[^>]*>Enabled<\/output>/);assert.match(html,/<output[^>]*>Private thread \(public fallback\)<\/output>/);
  assert.match(html,/<option value="false" selected>Disabled<\/option>/);assert.match(html,/<option value="channel" selected>Channel or thread<\/option>/);
  assert.doesNotMatch(html,/Default: (?:true|false)|Use \.env default|original \.env default/);
+});
+
+// Editing a default must be possible without opting into an override first.
+test('configuration inputs are editable and editing derives override/default status before Save',async t=>{
+ const original=globalThis.document;t.after(()=>globalThis.document=original);
+ const setting={key:'enabled',group:'Example',label:'Feature enabled',type:'boolean',value:true,defaultValue:true,source:'.env'};
+ const handlers={};const input={dataset:{configValue:'enabled'},value:'false',addEventListener:(event,fn)=>handlers[event]=fn};
+ const source={textContent:''};const form={addEventListener:(event,fn)=>handlers['form-'+event]=fn,querySelectorAll:()=>[]};let reset;
+ globalThis.document={getElementById:id=>id==='adminConfigurationForm'?form:null,querySelector:selector=>selector.includes("data-config-source")?source:null,querySelectorAll:selector=>selector==='[data-config-value]'?[input]:selector==='[data-config-default]'?[{dataset:{configDefault:'enabled'},addEventListener:(_,fn)=>reset=fn}]:[]};
+ const panel=createConfigurationPanel();let resolve;const ready=new Promise(r=>resolve=r);const requests=[];
+ const request=async(event,payload)=>{requests.push({event,payload});return {ok:true,configuration:{revision:1,botDefaultsReported:true,settings:[setting]}};};
+ const wire=()=>panel.wire({request,rerender:()=>resolve()});wire();await ready;wire();
+ assert.doesNotMatch(panel.render(),/Use a GuildSync override|data-config-override|id="config-enabled" disabled/);
+ handlers.input();assert.equal(source.textContent,'Overridden');assert.match(panel.render(),/<option value="false" selected>Disabled/);assert.equal(requests.length,1);
+ input.value='true';handlers.input();assert.equal(source.textContent,'Default');await handlers['form-submit']({preventDefault(){}});assert.deepEqual(requests[1].payload.changes,{enabled:null});
+ input.value='false';handlers.input();reset();assert.match(panel.render(),/<option value="true" selected>Enabled/);assert.match(panel.render(),/data-config-source="enabled">Default/);
+});
+test('typed values equal to defaults derive Default instead of an override',()=>{
+ for(const [type,value,defaultValue] of [['boolean','false',false],['number','24',24],['select','channel','channel'],['template','hello','hello']])assert.equal(draftSetting({key:'key',type,defaultValue,value:defaultValue,source:'.env'},{key:value}).source,'Default');
+ assert.equal(draftSetting({key:'key',type:'number',defaultValue:24,value:24,source:'.env'},{key:'25'}).source,'Overridden');
 });
