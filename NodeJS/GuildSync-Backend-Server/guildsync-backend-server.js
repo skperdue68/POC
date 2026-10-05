@@ -1,6 +1,7 @@
 import {createUserAdministration,registerUserAdministrationSocket} from './user-administration.js';
-import {canEditGuildSyncRole} from './role-permissions.js';
+import {canIngestGuildSyncRole} from './role-permissions.js';
 import {registerRolePermissions} from './role-permissions-socket.js';
+import {createRoleViews,registerRoleViewSocket,roleViewSessionKey} from './role-view.js';
 import {createConfigurationService} from './admin-configuration.js';
 import {registerConfigurationSocket} from './admin-configuration-socket.js';
 import { createDiscordOnboarding } from './discord-onboarding.js';
@@ -125,6 +126,7 @@ try {
 }
 
 const app = express();
+const roleViews = createRoleViews(loginDB);
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -308,7 +310,8 @@ app.get('/api/auth/session', async (req, res) => {
         global_name: claims.global_name || '',
         display_name: claims.display_name || claims.global_name || claims.username || '',
         avatar_url: claims.avatar_url || '',
-        role: claims.role || 'user'
+        role: claims.role || 'user',
+        actual_role: claims.actual_role || claims.role
       }
     });
   } catch (error) {
@@ -320,6 +323,7 @@ app.get('/api/auth/session', async (req, res) => {
 app.post('/api/auth/logout', async (req, res) => {
   try {
     const claims = await verifyGuildSyncSession(getBearerToken(req));
+    roleViews.clear(roleViewSessionKey(claims));
     if (claims.jti) {
       await loginDB.execute('DELETE FROM guildsync_login_sessions WHERE session_id = ? AND discord_user_id = ?', [claims.jti, claims.sub]);
       for (const socket of io.sockets.sockets.values()) {
@@ -445,12 +449,14 @@ io.use(async (socket, next) => {
     socket.guildSyncAuthenticated = true;
     socket.guildSyncAuthType = 'GuildSync user';
     socket.guildSyncSessionId = claims.jti || null;
+    socket.guildSyncRoleViewId = roleViewSessionKey(claims);
     socket.guildSyncUser = {
       discord_user_id: claims.sub,
       username: claims.username,
       display_name: claims.display_name,
       avatar_url: claims.avatar_url || '',
-      role: claims.role
+      role: claims.role,
+      actual_role: claims.actual_role
     };
 
     return next();
@@ -463,6 +469,7 @@ const onboardingService = createDiscordOnboarding(applicationDB, {log:Log,wake:(
 
 const userAdministration = createUserAdministration(loginDB, {log:Log,onChange:async change=>{
   Log(`GuildSync user ${change.action} by ${change.actor_id}: ${change.discord_user_id}`);
+  if(change.removed || change.user?.role !== 'admin') roleViews.clearUser(change.discord_user_id);
   for(const client of io.sockets.sockets.values()) {
     if(client.guildSyncUser?.discord_user_id!==change.discord_user_id)continue;
     if(change.removed){client.emit('guildsync:account-removed');client.disconnect(true);}
@@ -485,12 +492,26 @@ async function sendCurrentAccountProfile(socket) {
   if(!socket.guildSyncAuthenticated||socket.guildSyncAuthType==='discord-bot'||!socket.guildSyncUser?.discord_user_id)return;
   try {
     const [rows]=await loginDB.execute('SELECT discord_user_id, username, global_name, guild_member_name, email, avatar, role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[socket.guildSyncUser.discord_user_id]);
-    if(rows[0])socket.emit('guildsync:account-profile',buildGuildSyncUserFromDBUser(rows[0]));
+    if(rows[0]) {
+      const profile=buildGuildSyncUserFromDBUser(rows[0]);
+      profile.actual_role=profile.role;
+      profile.role=roleViews.effective(socket.guildSyncRoleViewId,profile.actual_role);
+      socket.guildSyncUser={...socket.guildSyncUser,...profile};
+      socket.emit('guildsync:account-profile',profile);
+      return profile;
+    }
   }catch(error){Log('Could not load current GuildSync account profile: '+error.message);}
 }
 
 io.on('connection', (socket) => {
-  registerRolePermissions(socket,loginDB);
+  registerRolePermissions(socket,loginDB,roleViews);
+  registerRoleViewSocket(socket,roleViews,async()=>{
+    let profile;
+    for(const client of io.sockets.sockets.values()) if(client.guildSyncRoleViewId === socket.guildSyncRoleViewId) {
+      const updated=await sendCurrentAccountProfile(client);if(client === socket)profile=updated;
+    }
+    return profile;
+  });
   registerUserAdministrationSocket(socket,userAdministration);
   void sendCurrentAccountProfile(socket);
   registerConfigurationSocket(socket,configurationService,{
@@ -2870,7 +2891,8 @@ async function verifyGuildSyncSession(token) {
     }
     throw new Error('Session was logged out.');
   }
-  claims.role = rows[0].role || 'user';
+  claims.actual_role = rows[0].role || 'viewer';
+  claims.role = roleViews.effective(roleViewSessionKey(claims),claims.actual_role);
   return claims;
 }
 
@@ -2892,8 +2914,8 @@ async function requireGuildSyncWebUser(req, res, next) {
     const claims = await verifyGuildSyncSession(token);
 
     req.guildSyncUser = claims;
-    if (!canEditGuildSyncRole(claims.role)) {
-      return res.status(403).json({ok:false,message:'This account has read-only access. A User or Admin role is required to upload SavedVariables files.'});
+    if (!canIngestGuildSyncRole(claims.role)) {
+      return res.status(403).json({ok:false,message:'Approved GuildSync access is required to upload SavedVariables files.'});
     }
     return next();
   } catch {

@@ -10,7 +10,7 @@ Search by name, email, role, or Discord ID, or select **Pending approval** to re
 
 You can edit your own email and guild member name, but cannot change your own role or remove your own account. These restrictions are enforced on the server as well as in the interface. Another admin can change your role or remove your account.
 
-GuildSync admins can change both administrator configuration and raffle bonus configuration. Approved Viewers and Users can view these sections but cannot save or reset them. Viewer accounts can browse data and run reports but cannot edit links, banking entries, notes, or other shared data. Account management itself is restricted to admins.
+GuildSync admins can change both administrator configuration and raffle bonus configuration. Approved Viewers and Users can view these sections but cannot save or reset them. Viewers can browse data, run reports, upload ESO history, and use automatic linking, but cannot manually edit links, banking entries, or notes or process receipts. Account management itself is restricted to admins. The same avatar menu offers Admin-only preview modes; see [role permissions and preview modes](GuildSync-Roles.md).
 
 ## Updates and unsaved edits
 

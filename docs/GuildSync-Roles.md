@@ -7,14 +7,22 @@ GuildSync account roles control the desktop and web application. They are separa
 | Browse Discord members, roster, banking data, notes, and history | Yes | Yes | Yes |
 | Run reports, filter data, and export banking data locally | Yes | Yes | Yes |
 | Inspect raffle bonus policies and administrator configuration | Yes | Yes | Yes |
-| Create, approve, remove, or unblock ESO/Discord links; run auto-linking | No | Yes | Yes |
+| Create, approve, remove, or unblock ESO/Discord links manually | No | Yes | Yes |
+| Run automatic ESO/Discord linking or Discord synchronization | Yes | Yes | Yes |
 | Add manual banking entries or move entries | No | Yes | Yes |
-| Add roster notes or upload ESO SavedVariables | No | Yes | Yes |
+| Add roster notes | No | Yes | Yes |
+| Upload ESO banking, roster, and application history | Yes | Yes | Yes |
 | Check out or process deposit receipt mail | No | Yes | Yes |
 | Save/reset raffle bonus policies or administrator configuration | No | No | Yes |
 | Review, approve, edit, or remove GuildSync login records | No | No | Yes |
 
-Viewers can refresh tabs to load current database data. Their Discord refresh does not start a bot synchronization or automatic linking, and their banking refresh does not upload a local banking file. Upload prompts and editing controls are unavailable; the server also rejects direct write requests. Automatic background uploads and receipt processing are paused for Viewer accounts.
+Viewers can refresh tabs, upload ESO history through GuildSyncBanking, GuildSyncRoster, and GuildSyncApplications, and run automatic linking. On ESO, `/gsbanking`, `/gsroster`, and `/gsapplications` still gather information for their corresponding add-ons; the approved GuildSync account then uploads it to the database. This can add ticket purchases and roster join/leave events. Viewer access does not permit manual links, unlinking, manual banking entries, moving entries, notes, or receipt checkout/processing. Viewers do not see the pending-receipt counter or highlighting. The interface and backend enforce these restrictions.
+
+## Admin preview modes
+
+In the top-right avatar menu, an Admin can select **View as User** or **View as Viewer**. GuildSync applies that role's interface and backend permissions to the current login while preserving the stored Admin role. The menu displays the preview mode and replaces the two choices with **Return to Admin View**. User and Viewer accounts cannot use this control to gain Admin access.
+
+Preview mode survives socket reconnection and page reload for that login, and applies to tabs sharing the same token. Separate logins remain independent. Logging out clears the mode; a fresh login returns an Admin account to Admin view. Preview choices are held in backend memory, so a backend restart also resets them. They do not change database roles or require new tables or environment settings.
 
 ## New accounts and approval
 

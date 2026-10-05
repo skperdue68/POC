@@ -1,4 +1,5 @@
-import {canEditGuildSyncRole,isReadOnlyGuildSyncEvent} from './role-permissions.js';
+import {canEditGuildSyncRole,canIngestGuildSyncRole,canManageGuildSyncLinksRole,canPerformGuildSyncEvent} from './role-permissions.js';
+import {renderRoleViewControls} from './role-view-controls.js';
 import {createUserAdministrationPanel,pendingBadge} from './user-administration.js';
 import './user-administration.css';
 import {reconcileDataRows,syncDataHTML,syncDataText} from './live-data-view.js';
@@ -568,7 +569,7 @@ function renderDesktopClientDownloadButton() {
 
 
 function getBankingMailAttentionCount() {
-  if (!isAuthenticatedSession()) {
+  if (!canEditGuildSyncData()) {
     return 0;
   }
 
@@ -1836,7 +1837,7 @@ function isWebSavedVariablesUploadBannerDismissed() {
 }
 
 function renderWebSavedVariablesUploadBanner() {
-  if (!canEditGuildSyncData() || !isGuildSyncWebRuntime() || isWebSavedVariablesUploadBannerDismissed()) {
+  if (!canIngestGuildSyncData() || !isGuildSyncWebRuntime() || isWebSavedVariablesUploadBannerDismissed()) {
     return '';
   }
 
@@ -2043,7 +2044,7 @@ async function saveRaffleBonusSettings(event) {
 }
 
 async function handleWebSavedVariablesUpload(event, type) {
-  if (!canEditGuildSyncData()) return;
+  if (!canIngestGuildSyncData()) return;
   const input = event.currentTarget;
   const file = input?.files?.[0] || null;
   if (!file) {
@@ -2092,7 +2093,7 @@ async function handleWebSavedVariablesUpload(event, type) {
 
 
 function isWebSavedVarsDropAvailable() {
-  return isGuildSyncWebRuntime() && canEditGuildSyncData() && socket?.connected === true;
+  return isGuildSyncWebRuntime() && canIngestGuildSyncData() && socket?.connected === true;
 }
 
 function ensureWebSavedVarsDropOverlay() {
@@ -2277,7 +2278,7 @@ async function handleWebSavedVarsDroppedFiles(files = []) {
 }
 
 async function uploadWebSavedVarsRawFile(file) {
-  if (!canEditGuildSyncData()) throw new Error('A User or Admin role is required to upload files.');
+  if (!canIngestGuildSyncData()) throw new Error('Approved GuildSync access is required to upload files.');
   const kind = getAllowedWebSavedVarsKind(file.name);
   if (!kind) {
     throw new Error(`Unsupported file: ${file.name}`);
@@ -3029,14 +3030,14 @@ function renderMemberLinksReportDialog() {
         <div class="roster-history-header report-results-header">
           <div>
             <h3 id="memberLinksReportTitle">ESO / Discord Member Links</h3>
-            <p>${canEditGuildSyncData() ? 'Review automatic links, accept fuzzy candidates, unblock/relink members, or run the matcher again.' : 'View ESO/Discord account links and suggested matches.'}</p>
+            <p>${canManageGuildSyncLinks() ? 'Review automatic links, accept fuzzy candidates, unblock/relink members, or run the matcher again.' : 'View ESO/Discord account links and suggested matches.'}</p>
           </div>
           <button id="closeMemberLinksReportButton" class="roster-history-close modal-close-button" type="button" aria-label="Close">×</button>
         </div>
 
         <div class="report-results-toolbar">
           <button id="refreshMemberLinksButton" class="clear-discord-filters-button" type="button" ${memberLinksLoading ? 'disabled' : ''}>Refresh Links</button>
-          <button ${canEditGuildSyncData() ? '' : 'hidden disabled'} id="runMemberAutoLinkButton" class="refresh-discord-button" type="button" ${memberLinksLoading ? 'disabled' : ''}>${memberLinksLoading ? 'Running...' : 'Run Auto-Linking'}</button>
+          <button ${canIngestGuildSyncData() ? '' : 'hidden disabled'} id="runMemberAutoLinkButton" class="refresh-discord-button" type="button" ${memberLinksLoading ? 'disabled' : ''}>${memberLinksLoading ? 'Running...' : 'Run Auto-Linking'}</button>
           <span class="roster-history-muted">${escapeHtml(String(memberLinks.length))} link/candidate row${memberLinks.length === 1 ? '' : 's'}</span>
         </div>
 
@@ -3225,9 +3226,9 @@ function renderMemberLinksRows() {
                 <td class="member-links-method-col">${escapeHtml(method || '')}${Number(link.locked || 0) === 1 ? ' 🔒' : ''}</td>
                 <td class="member-links-action-col">
                   <div class="member-link-actions">
-                    ${canEditGuildSyncData() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
-                    ${canEditGuildSyncData() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Unlink this ESO/Discord pair" title="Unlink this ESO/Discord pair">🗑</button>` : ''}
-                    ${canEditGuildSyncData() && (Number(link.locked || 0) === 1 || status === 'blocked') ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
+                    ${canManageGuildSyncLinks() && status === 'candidate' ? `<button class="member-link-report-action member-link-report-accept" type="button" data-accept-member-candidate="${escapeAttribute(link.eso_account_name || '')}" data-accept-member-candidate-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Accept candidate link" title="Accept candidate link">✓</button>` : ''}
+                    ${canManageGuildSyncLinks() && status === 'linked' ? `<button class="member-link-report-action member-link-report-trash" type="button" data-unlink-member-link="${escapeAttribute(link.eso_account_name || '')}" data-unlink-member-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Unlink this ESO/Discord pair" title="Unlink this ESO/Discord pair">🗑</button>` : ''}
+                    ${canManageGuildSyncLinks() && (Number(link.locked || 0) === 1 || status === 'blocked') ? `<button class="member-link-report-action member-link-report-unblock" type="button" data-unblock-member-auto-link="${escapeAttribute(link.eso_account_name || '')}" data-unblock-member-auto-link-discord-id="${escapeAttribute(link.discord_user_id || '')}" aria-label="Remove auto-link block" title="Remove auto-link block">↺</button>` : ''}
                   </div>
                 </td>
                 <td class="member-links-confidence-col">${escapeHtml(String(link.match_confidence ?? ''))}</td>
@@ -3830,7 +3831,7 @@ function renderMemberLinkCurrentCard(link) {
         <div><span>Status:</span> ${renderMemberLinkCurrentStatus(link)} · ${escapeHtml(formatMemberLinkMethodForDisplay(link.link_method))} · ${escapeHtml(String(link.match_confidence ?? ''))}% · ${escapeHtml(lockedText)}</div>
         ${getMemberLinkMatchedField(link) ? `<div><span>Matched:</span> Matched on ${escapeHtml(getMemberLinkMatchedField(link))}</div>` : ''}
       </div>
-      ${canEditGuildSyncData() ? actionButton : ''}
+      ${canManageGuildSyncLinks() ? actionButton : ''}
     </div>
   `;
 }
@@ -3854,7 +3855,7 @@ function renderMemberLinkDialogCurrentLink() {
 }
 
 function renderMemberLinkDialogOptions() {
-  if (!canEditGuildSyncData()) return '';
+  if (!canManageGuildSyncLinks()) return '';
   if (memberLinkDialogLoading) {
     return '<div class="member-link-options-muted">Loading suggested matches...</div>';
   }
@@ -3940,7 +3941,7 @@ function renderMemberLinkDialog() {
         <div class="roster-history-header">
           <div>
             <h3 id="memberLinkDialogTitle">Member Link</h3>
-            <p>${escapeHtml(sourceLabel)}${canEditGuildSyncData() ? ` → choose ${escapeHtml(targetLabel)}.` : ' · View current account links.'}</p>
+            <p>${escapeHtml(sourceLabel)}${canManageGuildSyncLinks() ? ` → choose ${escapeHtml(targetLabel)}.` : ' · View current account links.'}</p>
           </div>
           <button id="closeMemberLinkDialogButton" class="roster-history-close modal-close-button" type="button" aria-label="Close member link window" title="Close">×</button>
         </div>
@@ -3950,7 +3951,7 @@ function renderMemberLinkDialog() {
             ${renderMemberLinkDialogCurrentLink()}
           </section>
 
-          <section class="member-link-dialog-section" ${canEditGuildSyncData() ? '' : 'hidden inert'}>
+          <section class="member-link-dialog-section" ${canManageGuildSyncLinks() ? '' : 'hidden inert'}>
             <h4>Suggested Matches</h4>
             <input
               id="memberLinkSuggestionSearchInput"
@@ -5530,7 +5531,7 @@ async function refreshRosterDataFromBackend(options = {}) {
 }
 
 async function collectAndSendGuildSyncRosterData(payload = {}) {
-  if (!canEditGuildSyncData()) {
+  if (!canIngestGuildSyncData()) {
     return;
   }
 
@@ -5625,7 +5626,7 @@ function removePendingGuildSyncRosterUpload(uploadId) {
 }
 
 async function processPendingGuildSyncRosterUploads() {
-  if (rosterUploadQueueProcessing || !socket?.connected || !canEditGuildSyncData()) {
+  if (rosterUploadQueueProcessing || !socket?.connected || !canIngestGuildSyncData()) {
     return;
   }
 
@@ -5638,7 +5639,7 @@ async function processPendingGuildSyncRosterUploads() {
 
   try {
     for (const pendingPayload of queue) {
-      if (!socket?.connected || !canEditGuildSyncData()) {
+      if (!socket?.connected || !canIngestGuildSyncData()) {
         return;
       }
 
@@ -5683,7 +5684,7 @@ async function sendQueuedGuildSyncRosterUpload(rosterPayload) {
 
 
 async function collectAndSendGuildSyncApplicationsData(payload = {}) {
-  if (!canEditGuildSyncData()) {
+  if (!canIngestGuildSyncData()) {
     return;
   }
 
@@ -5780,7 +5781,7 @@ function removePendingGuildSyncApplicationsUpload(uploadId) {
 }
 
 async function processPendingGuildSyncApplicationsUploads() {
-  if (applicationsUploadQueueProcessing || !socket?.connected || !canEditGuildSyncData()) {
+  if (applicationsUploadQueueProcessing || !socket?.connected || !canIngestGuildSyncData()) {
     return;
   }
 
@@ -5793,7 +5794,7 @@ async function processPendingGuildSyncApplicationsUploads() {
 
   try {
     for (const pendingPayload of queue) {
-      if (!socket?.connected || !canEditGuildSyncData()) {
+      if (!socket?.connected || !canIngestGuildSyncData()) {
         return;
       }
 
@@ -6872,7 +6873,7 @@ function wireBankDepositsPanel() {
   const refreshButton = document.querySelector('#refreshBankingDataButton');
   if (refreshButton) {
     refreshButton.addEventListener('click', () => {
-      if (!canEditGuildSyncData()) { void refreshBankingDataFromBackend(); return; }
+      if (!canIngestGuildSyncData()) { void refreshBankingDataFromBackend(); return; }
       if (!isAuthenticatedSession()) {
         addSystemMessage('banking-login-required', 'Login required to send banking file updates. Existing banking data still loads automatically.', { ttlMs: TRANSIENT_MESSAGE_TTL_MS });
         return;
@@ -7625,7 +7626,7 @@ async function flushPendingDepositMailAckCleanup() {
 }
 
 async function collectAndSendGuildSyncBankingData(payload = {}) {
-  if (!canEditGuildSyncData()) {
+  if (!canIngestGuildSyncData()) {
     return;
   }
 
@@ -7949,7 +7950,7 @@ function removePendingGuildSyncBankingUpload(uploadId) {
 }
 
 async function processPendingGuildSyncBankingUploads() {
-  if (bankingUploadQueueProcessing || !socket?.connected || !canEditGuildSyncData()) {
+  if (bankingUploadQueueProcessing || !socket?.connected || !canIngestGuildSyncData()) {
     return;
   }
 
@@ -7962,7 +7963,7 @@ async function processPendingGuildSyncBankingUploads() {
 
   try {
     for (const pendingPayload of queue) {
-      if (!socket?.connected || !canEditGuildSyncData()) {
+      if (!socket?.connected || !canIngestGuildSyncData()) {
         return;
       }
 
@@ -8096,7 +8097,7 @@ function wireDiscordMemberDataPanel() {
 
 
 async function requestDiscordDataRefresh() {
-  if (!canEditGuildSyncData()) { await refreshDiscordData(); return; }
+  if (!canIngestGuildSyncData()) { await refreshDiscordData(); return; }
   if (!socket?.connected) {
     addSystemMessage('discord-refresh-error', 'GuildSync websocket is not connected.', {
       ttlMs: TRANSIENT_MESSAGE_TTL_MS
@@ -8230,8 +8231,8 @@ async function refreshDiscordData(options = {}) {
 
 function emitSocketWithAck(eventName, payload = {}, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
-    if (guildSyncSession.user?.role === 'viewer' && !isReadOnlyGuildSyncEvent(eventName)) {
-      reject(new Error('This account has read-only access. A User or Admin role is required to change data.'));
+    if (!(eventName === 'guildsync:set-role-view' && (guildSyncSession.user?.actual_role || guildSyncSession.user?.role) === 'admin') && !canPerformGuildSyncEvent(guildSyncSession.user?.role,eventName)) {
+      reject(new Error('Your current role or view does not have permission to perform this action.'));
       return;
     }
     if (!socket?.connected) {
@@ -8777,7 +8778,8 @@ function handleCurrentAccountProfile(user) {
     if (!canEditGuildSyncRole(user.role)) { bankingMoveDialogOpen=false;manualBiweeklyTicketDialogOpen=false; }
     renderGuildSyncTabLayout();
     void syncGuildSyncFileWatcherWithAuthState({silent:true});
-    if(canEditGuildSyncRole(user.role)){processPendingGuildSyncBankingUploads();processPendingGuildSyncRosterUploads();processPendingGuildSyncApplicationsUploads();startDepositMailAvailabilityPolling();}
+    if(canIngestGuildSyncRole(user.role)){processPendingGuildSyncBankingUploads();processPendingGuildSyncRosterUploads();processPendingGuildSyncApplicationsUploads();}
+    if(canEditGuildSyncRole(user.role))startDepositMailAvailabilityPolling();
     else stopDepositMailAvailabilityPolling();
   }
   renderDiscordArea();userAdministrationPanel.start();
@@ -8852,7 +8854,7 @@ function toggleProfileMenu() {
 
 
 function renderProfileFileWatcherSection(status = guildSyncFileWatcherStatus) {
-  if (!canEditGuildSyncData()) return '<p class="roster-history-muted">File uploads require a User or Admin role.</p>';
+  if (!canIngestGuildSyncData()) return '<p class="roster-history-muted">Approved GuildSync access is required to upload files.</p>';
   const files = Array.isArray(status?.files) ? status.files : [];
   const directory = String(status?.directory || '').trim();
   const watching = Boolean(status?.watching);
@@ -8926,10 +8928,12 @@ function renderOpenProfileMenuContents() {
         ${renderProfileFileWatcherSection()}
       </div>
       ${guildSyncSession.user?.role==='admin'?`<button id="manageGuildSyncUsersButton" class="discord-secondary-button user-admin-menu-button" type="button">Manage GuildSync Users <span id="userAdminMenuCount"></span></button>`:''}
+      ${renderRoleViewControls(guildSyncSession.user)}
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
   `;
 
+  menu.querySelectorAll('[data-role-view]').forEach(button=>button.addEventListener('click',()=>void changeGuildSyncRoleView(button.dataset.roleView)));
   document.querySelector('#manageGuildSyncUsersButton')?.addEventListener('click',()=>{closeProfileMenu(false);userAdministrationPanel.open();});
   updateUserAdministrationBadge(userAdministrationPanel.count);
   document
@@ -8948,6 +8952,19 @@ function renderOpenProfileMenuContents() {
     .forEach((toggle) => {
       toggle.addEventListener('change', handleProfileFileWatchToggleChange);
     });
+}
+
+async function changeGuildSyncRoleView(role) {
+  const buttons=document.querySelectorAll('[data-role-view]');buttons.forEach(button=>button.disabled=true);
+  try {
+    const response=await emitSocketWithAck('guildsync:set-role-view',{role},30000);
+    if(!response?.ok)throw new Error(response?.message || 'Could not change view.');
+    // Account-profile events are authoritative; an ACK from another tab may describe an older view.
+    closeProfileMenu(false);
+    const currentRole=guildSyncSession.user?.role;
+    addSystemMessage('role-view',currentRole === 'admin' ? 'Returned to Admin View.' : `Viewing GuildSync as ${currentRole === 'viewer' ? 'Viewer' : 'User'}. Use the profile menu to return to Admin View.`,{ttlMs:TRANSIENT_MESSAGE_TTL_MS});
+  } catch(error) { addSystemMessage('role-view-error',formatError(error),{ttlMs:TRANSIENT_MESSAGE_TTL_MS}); }
+  finally { buttons.forEach(button=>button.disabled=false); }
 }
 
 async function refreshProfileFileWatcherStatus() {
@@ -9718,7 +9735,7 @@ function updateStatusDot() {
 
 async function syncGuildSyncFileWatcherWithAuthState(options = {}) {
   try {
-    if (canEditGuildSyncData()) {
+    if (canIngestGuildSyncData()) {
       const status = await StartGuildSyncFileWatcher();
       guildSyncFileWatcherStatus = status;
 
@@ -9752,7 +9769,7 @@ function logGuildSyncFileWatcher(message, payload = null) {
 }
 
 function handleGuildSyncSavedVarsFileModified(payload = {}) {
-  if (!canEditGuildSyncData()) {
+  if (!canIngestGuildSyncData()) {
     logGuildSyncFileWatcher('SavedVariables change ignored because the account cannot edit data.', payload);
     return;
   }
@@ -9866,6 +9883,14 @@ function isAuthenticatedSession() {
 
 function canEditGuildSyncData() {
   return isAuthenticatedSession() && canEditGuildSyncRole(guildSyncSession.user?.role);
+}
+
+function canIngestGuildSyncData() {
+  return isAuthenticatedSession() && canIngestGuildSyncRole(guildSyncSession.user?.role);
+}
+
+function canManageGuildSyncLinks() {
+  return isAuthenticatedSession() && canManageGuildSyncLinksRole(guildSyncSession.user?.role);
 }
 
 function getDisplayName() {

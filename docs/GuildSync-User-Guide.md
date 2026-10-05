@@ -6,7 +6,7 @@ For setup, every environment setting, database details, and troubleshooting, see
 
 GuildSync admins can review pending accounts, approve access, and maintain user profiles through **Manage GuildSync Users** in the top-right avatar menu. A numbered circle shows pending requests. See [managing GuildSync users](GuildSync-User-Administration.md) for instructions and account protections.
 
-New accounts await approval as **Viewer** by default. Viewers can browse data, refresh it from the database, and run reports; **User** adds normal editing actions, while **Admin** also manages settings and accounts. See the [role permissions table](GuildSync-Roles.md).
+New accounts await approval as **Viewer** by default. Viewers can browse data, run reports, upload ESO history, and use automatic linking; **User** adds normal manual editing and receipt actions, while **Admin** also manages settings and accounts. Admins can test either lower role with **View as User / Viewer** in the avatar menu, then select **Return to Admin View**. Logging out resets the preview. See the [role permissions table](GuildSync-Roles.md).
 
 ## What GuildSync does
 
