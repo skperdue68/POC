@@ -82,7 +82,7 @@
 
 - [x] Run the full repository `node --test`, `git diff --check`, and inspect startup schema and common link paths against the approved spec.
 - [x] Request an independent whole-branch code review; fix important findings and rerun relevant checks.
-- [ ] Push `codex/member-onboarding`; create a PR to `master` containing design, plan, implementation, tests, and documentation. Report verified test counts and setup requirements. Do not merge or perform live role/message changes during development.
+- [x] Push `codex/member-onboarding`; create a PR to `master` containing design, plan, implementation, tests, and documentation. Report verified test counts and setup requirements. Do not merge or perform live role/message changes during development.
 
 ## Self-review
 
@@ -93,3 +93,5 @@ The tasks cover every approved spec section, including startup migrations, confi
 Full repository suite: 216 passed, 0 failed. Both application entry points pass syntax checks and the diff passes whitespace checks. Independent final review: 32 focused onboarding tests passed, no remaining blockers. Review fixes cover private-thread pagination, recipient-safe history recovery, repeat promotions with distinct identities, retry fairness, and missed-rejoin enrollment. No live Discord operations were performed.
 
 Implementation decisions: retain the approved existing feature branch/workspace; persist actual join observations separately from legacy member synchronization; record role-start progress before mutations; preserve one-time attempted reminder identity; exclude completed earlier promotion messages during uncertain-send reconciliation.
+
+Submitted as PR #69: https://github.com/skperdue68/POC/pull/69. Branch remains unmerged.
