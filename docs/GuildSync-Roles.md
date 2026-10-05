@@ -28,7 +28,7 @@ Preview mode survives socket reconnection and page reload for that login, and ap
 
 The first Discord login still creates an approved **Admin** when no approved administrator exists. Once an administrator exists, new accounts have **Viewer** selected and remain **pending approval** (`allowed = 0`). An admin uses **Manage GuildSync Users** in the avatar menu to choose **Viewer**, **User**, or **Admin** and approve the request. Merely changing a pending account's role does not approve it.
 
-Existing accounts keep their roles. Legacy pending records show Viewer as their approval default. Admins can change another account's role at any time, but cannot change their own role or remove themselves. Role changes update connected clients; backend write requests recheck the current approved role in the database, so cached permissions cannot authorize an old role's writes.
+Existing accounts keep their roles. Legacy pending records show Viewer as their approval default. Admins can change another account's role at any time, but cannot change their own role or revoke their own access. Role changes update connected clients; backend write requests recheck the current approved role in the database, so cached permissions cannot authorize an old role's writes.
 
 ## Storage and deployment
 

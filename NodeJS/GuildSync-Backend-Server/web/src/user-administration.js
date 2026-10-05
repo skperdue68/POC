@@ -12,7 +12,7 @@ export function renderUserCard(user,actorId,draft={}){
    ${own?`<div class="user-admin-own-role">Role: ${escape(user.role)}<small>Your role cannot be changed here.</small></div>`:`<label>Role<select name="role">${GUILDSYNC_ROLES.map(value=>`<option value="${value}" ${role===value?'selected':''}>${value[0].toUpperCase()+value.slice(1)}</option>`).join('')}</select></label>`}
   </fieldset>
   <p class="user-admin-dates">Requested: ${escape(user.requested_at||'Not recorded')} · Last login: ${escape(user.last_login_at||'Never')}</p>
-  <div class="user-admin-actions"><button type="submit">Save changes</button>${!own&&pending(user)?'<button type="button" data-user-approve>Approve account</button>':''}${!own?'<button type="button" class="user-admin-remove" data-user-remove>Remove account</button>':''}</div>
+  <div class="user-admin-actions"><button type="submit">Save changes</button>${!own&&pending(user)?'<button type="button" data-user-approve>Approve account</button>':''}${!own?'<button type="button" class="user-admin-remove" data-user-remove>Revoke account</button>':''}</div>
  </form>`;
 }
 export function createUserAdministrationPanel({request,getUser,onCount=()=>{}}){
@@ -30,7 +30,7 @@ export function createUserAdministrationPanel({request,getUser,onCount=()=>{}}){
  const change=async(form,action)=>{
   if(busy||!admin())return;
   const user=users.find(row=>row.discord_user_id===form.dataset.userId);if(!user)return;
-  const current=generation,payload={action,discord_user_id:user.discord_user_id,expected:snapshot(user),...(action==='remove'?{}:collect(form))};
+  const current=generation,payload={action,discord_user_id:user.discord_user_id,expected:snapshot(user),...(action==='revoke'?{}:collect(form))};
   setBusy(true);message('Saving account changes...');
   try{
    const result=await request('guildsync:change-user',payload);if(!result?.ok)throw Error(result?.message||'Could not update this account.');
@@ -38,13 +38,13 @@ export function createUserAdministrationPanel({request,getUser,onCount=()=>{}}){
    drafts.delete(user.discord_user_id);
    if(result.removed)users=users.filter(row=>row.discord_user_id!==user.discord_user_id);
    else users=users.map(row=>row.discord_user_id===user.discord_user_id?result.user:row);
-   void refreshCount();drawRows();message(action==='remove'?'Account removed and login sessions cleared.':action==='approve'?'Account approved. The user can sign in now.':'Account changes saved.');
+   void refreshCount();drawRows();message(action==='revoke'?'Account access revoked and login sessions cleared. The account record is retained.':action==='approve'?'Account approved. The user can sign in now.':'Account changes saved.');
   }catch(error){if(current===generation)message(error.message);}finally{if(current===generation)setBusy(false);}
  };
  const confirmRemove=form=>{
   overlay?.querySelector('.user-admin-confirmation')?.remove();
-  const box=document.createElement('div');box.className='user-admin-confirmation';box.innerHTML='<p>Remove this GuildSync login record and sign out the user? Their next Discord login will create a new pending request.</p><button type="button" data-confirm-remove>Remove account</button><button type="button" data-cancel-remove>Cancel</button>';form.append(box);
-  box.querySelector('[data-confirm-remove]').addEventListener('click',()=>void change(form,'remove'));
+  const box=document.createElement('div');box.className='user-admin-confirmation';box.innerHTML='<p>Revoke access and sign out this user? Their account and banking history will be retained. Their next Discord login will request approval again.</p><button type="button" data-confirm-remove>Revoke account</button><button type="button" data-cancel-remove>Cancel</button>';form.append(box);
+  box.querySelector('[data-confirm-remove]').addEventListener('click',()=>void change(form,'revoke'));
   box.querySelector('[data-cancel-remove]').addEventListener('click',()=>box.remove());box.querySelector('button').focus();
  };
  function drawRows(){
@@ -61,7 +61,7 @@ export function createUserAdministrationPanel({request,getUser,onCount=()=>{}}){
  }
  const load=async()=>{
   if(loading||busy||!admin())return;loading=true;setBusy(true);message('Loading GuildSync accounts...');const current=generation,revision=countRevision;
-  try{const result=await request('guildsync:request-users',{});if(!result?.ok)throw Error(result?.message||'Could not load accounts.');if(current!==generation||!admin())return;users=result.users;drafts.clear();if(revision===countRevision)setCount(result.pending_count);drawRows();message('Only admins can manage accounts. Your own role and account removal are protected.');}
+  try{const result=await request('guildsync:request-users',{});if(!result?.ok)throw Error(result?.message||'Could not load accounts.');if(current!==generation||!admin())return;users=result.users;drafts.clear();if(revision===countRevision)setCount(result.pending_count);drawRows();message('Only admins can manage accounts. Your own role and account access are protected.');}
   catch(error){if(current===generation)message(error.message);}finally{if(current===generation){loading=false;setBusy(false);}}
  };
  const close=()=>{if(busy&&!loading)return;overlay?.remove();overlay=null;if(previousFocus?.isConnected)previousFocus.focus({preventScroll:true});};
