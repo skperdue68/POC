@@ -45,7 +45,8 @@ export function createHistoricalRaffles(db, {settings=config, currentSelection, 
   const saved=rows.length ? JSON.parse(rows[0].value) : null;
   const result=await request('historical-resolve',{...parameters,allowCreate,archiveId:saved?.archiveId});
   if(result.archiveId===settings().spreadsheetId)throw Error('Historical archive cannot be the working spreadsheet.');
-  return {...result,spreadsheetId:result.archiveId,historical:true,sheetUrl:url(result.archiveId),drawDates:parameters.drawDates,periods:selection.raffles};
+  return {...result,spreadsheetId:result.archiveId,historical:true,sheetUrl:url(result.archiveId),drawDates:parameters.drawDates,periods:selection.raffles,
+   archiveLookup:{archiveId:result.archiveId,registeredArchiveId:saved?.archiveId || null,created:result.created===true,lookupMethod:result.lookupMethod || 'unknown',drawDates:parameters.drawDates}};
  }
  return {
   async prepare(selection,date) {

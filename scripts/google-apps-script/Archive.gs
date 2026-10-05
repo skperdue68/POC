@@ -138,6 +138,7 @@ function handleHistoricalRaffle(request, sourceId, folderId) {
   const escape = value => String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   let archiveId = request.archiveId;
   let created = false;
+  let lookupMethod = 'requested-id';
   if (request.action === 'historical-resolve') {
     let pageToken, matches = [];
     do {
@@ -148,8 +149,29 @@ function handleHistoricalRaffle(request, sourceId, folderId) {
     // Registry IDs let renamed archives be found. Trashed registry IDs fall back to folder lookup.
     if (archiveId && !matches.some(item => item.id === archiveId)) {
       let registered;
-      try { registered = Drive.Files.get(archiveId, {fields:'id,trashed'}); } catch (_) { registered = null; }
+      try { registered = Drive.Files.get(archiveId, {fields:'id,trashed'}); }
+      catch (_) { throw new Error('Unable to verify the registered archive ' + archiveId + '; no replacement was created. Check access and retry.'); }
       if (registered && !registered.trashed) matches.push({id:archiveId});
+    }
+    lookupMethod = matches.some(item => item.id === archiveId) ? 'registry' : 'name-or-metadata';
+    // Older renamed archives may have only the source marker. Check their actual dates
+    // before deciding the raffle has no archive and creating a copy.
+    if (!matches.length) {
+      pageToken = undefined;
+      do {
+        const page = Drive.Files.list({q:"'" + escape(folderId) + "' in parents and trashed=false and mimeType='application/vnd.google-apps.spreadsheet' and appProperties has { key='guildsyncSource' and value='" + escape(sourceId) + "' }",
+          fields:'nextPageToken,files(id,appProperties)',pageSize:100,pageToken:pageToken});
+        (page.files || []).forEach(candidate => {
+          if(candidate.id===sourceId || candidate.appProperties?.guildsyncHistoryState==='preparing')return;
+          try {
+            const candidateBook=SpreadsheetApp.openById(candidate.id);
+            if(raffleSheetDate(candidateBook,request.biweeklyTab || 'bi-weekly raffle','R7')===dates.biweekly)
+              matches.push({id:candidate.id});
+          } catch(error) { throw new Error('Unable to inspect archive ' + candidate.id + ' while looking for ' + dates.biweekly + '; no new archive was created. ' + String(error.message || error)); }
+        });
+        pageToken=page.nextPageToken;
+      } while(pageToken);
+      if(matches.length)lookupMethod='draw-date';
     }
     if (matches.length > 1) throw new Error('Multiple archives match this raffle; resolve duplicates before loading');
     if (matches.length) archiveId = matches[0].id;
@@ -158,6 +180,7 @@ function handleHistoricalRaffle(request, sourceId, folderId) {
       const copy = Drive.Files.copy({name:name,parents:[folderId],appProperties:{guildsyncSource:sourceId,
         guildsyncArchive:request.key,guildsyncRaffleDate:dates.biweekly,guildsyncMonthlyDate:dates.monthly,guildsyncHistoryState:'preparing'}},sourceId,{fields:'id'});
       archiveId = copy.id; created = true;
+      lookupMethod = 'created';
     }
   }
   if (!archiveId || archiveId === sourceId) throw new Error('Historical archive cannot be the working spreadsheet');
@@ -180,7 +203,7 @@ function handleHistoricalRaffle(request, sourceId, folderId) {
     Drive.Files.update({appProperties:Object.assign({},metadata,{guildsyncRaffleDate:dates.biweekly,guildsyncMonthlyDate:dates.monthly,guildsyncHistoryState:'ready'})},archiveId);
     ready=true;
   }
-  return {ok:true,sourceId:sourceId,key:request.key,archiveId:archiveId,name:name,created:created,ready:ready,drawDates:dates,
+  return {ok:true,sourceId:sourceId,key:request.key,archiveId:archiveId,name:name,created:created,ready:ready,lookupMethod:lookupMethod,drawDates:dates,
     ...(request.action === 'historical-read' ? {diagnosticCells:readArchiveDiagnosticCells(book,biweeklyTab,monthlyTab)} : {})};
 }
 
@@ -290,7 +313,7 @@ function readRaffleArchive(book, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDate
 }
 
 
-// Temporary read-only probe: do not persist these values or restore result capture.
+// Read the managed result fields; the backend saves sparse values for their raffle dates.
 function readArchiveDiagnosticCells(book, biweeklyTab, fiftyFiftyTab) {
   const cells = [];
   [

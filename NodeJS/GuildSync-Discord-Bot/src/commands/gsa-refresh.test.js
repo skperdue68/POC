@@ -64,6 +64,20 @@ test('historical load returns archive link and save reminder with the original d
  assert.match(text,/archived raffle sheet \[HERE\]\(https:\/\/docs.google.com\/spreadsheets\/d\/archive\/edit\)/);
  assert.match(text,/\/gsr save date:091526/);
  assert.doesNotMatch(text,/working sheet/);
+ assert.equal(f.replies.at(-1).components[0].toJSON().components[0].url,'https://docs.google.com/spreadsheets/d/archive/edit');
+});
+
+test('load and save log archive identity and creation status and provide link buttons',async()=>{
+ for(const action of ['load','save']) {
+  const f=fixture({action,date:'091526'}), logs=[];
+  f.socket.emit=(event,payload,cb)=>{f.calls.push({event,payload});cb(null,{ok:true,selection:snapshot,synced:2,saved:3,historical:true,
+   sheetUrl:'https://docs.google.com/spreadsheets/d/existing/edit',archiveLookup:{archiveId:'existing',created:false,lookupMethod:'registry'}});};
+  await command.execute(f.interaction,f.socket,line=>logs.push(line));
+  assert.ok(logs.some(line=>line.includes('lookup request')&&line.includes('091526')));
+  assert.ok(logs.some(line=>line.includes('lookup result')&&line.includes('existing')&&line.includes('"created":false')&&line.includes('registry')));
+  const button=f.replies.at(-1).components[0].toJSON().components[0];
+  assert.equal(button.style,5);assert.equal(button.url,'https://docs.google.com/spreadsheets/d/existing/edit');
+ }
 });
 
 test('save uses boundary clarification and only sends save after the choice', async () => {

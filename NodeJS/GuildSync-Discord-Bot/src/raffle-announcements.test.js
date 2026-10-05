@@ -33,3 +33,13 @@ test('a reminder that expires during channel lookup is not posted', async () => 
   await sendRaffleAnnouncement(f.client, 'channel', 'guild', snapshot, { ...delivery, reconcile: false, expiresAt: 1 });
   assert.equal(f.sends(), 0);
 });
+
+test('channel archive notification includes sheet link buttons without changing reconciliation content',async()=>{
+ const f=fixture([]);
+ const content='Archived [HERE](https://docs.google.com/spreadsheets/d/archive/edit). Working [HERE](https://docs.google.com/spreadsheets/d/working/edit).';
+ let sent;f.channel.send=async value=>{sent=value;};
+ await sendRaffleAnnouncement(f.client,'channel','guild',null,{...delivery,reconcile:false,content});
+ assert.equal(sent.content,content);
+ assert.deepEqual(sent.components[0].toJSON().components.map(button=>button.url),[
+  'https://docs.google.com/spreadsheets/d/archive/edit','https://docs.google.com/spreadsheets/d/working/edit']);
+});

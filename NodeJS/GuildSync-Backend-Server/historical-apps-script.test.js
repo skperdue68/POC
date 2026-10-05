@@ -16,8 +16,11 @@ function fixture() {
   })})})},
   Drive:{Files:{list:options=>{
    assert.match(options.q,/'folder' in parents and trashed=false/);
-   assert.match(options.q,/name='260926 Raffle'/);
-   assert.match(options.q,/guildsyncRaffleDate.*2026-09-26/);
+   if(!options.q.includes("name=")) {
+    assert.match(options.q,/guildsyncSource.*live/);
+    return {files:[...files.values()].filter(file=>!file.trashed && file.parents?.includes('folder') && file.appProperties?.guildsyncSource==='live').map(file=>({id:file.id}))};
+   }
+   assert.match(options.q,/name='260926 Raffle'/);assert.match(options.q,/guildsyncRaffleDate.*2026-09-26/);
    return {files:[...files.values()].filter(file=>!file.trashed && file.parents?.includes('folder') &&
     (file.name==='260926 Raffle'||file.appProperties?.guildsyncRaffleDate==='2026-09-26')).map(file=>({id:file.id}))};
   },
@@ -28,7 +31,7 @@ function fixture() {
  vm.runInContext(fs.readFileSync(new URL('../../scripts/google-apps-script/Archive.gs',import.meta.url),'utf8'),context);
  const payload={secret:'secret',sourceId:'live',key:'a'.repeat(32)+':raffle-history-2026-09-26',drawDates:{biweekly:'2026-09-26',monthly:'2026-09-26'},biweeklyTab:'Bi',fiftyFiftyTab:'50/50'};
  const call=(action,extra={})=>context.doPost({postData:{contents:JSON.stringify({...payload,action,...extra})}});
- return {files,calls,dates,call};
+ return {files,calls,dates,call,context};
 }
 test('historical copy retry reuses preparing file and only becomes ready with correct dates',()=>{
  const f=fixture();const first=f.call('historical-resolve',{allowCreate:true});
@@ -42,6 +45,21 @@ test('historical copy retry reuses preparing file and only becomes ready with co
  const captured=f.call('historical-read',{archiveId:'copy'});
  assert.equal(captured.ok,true);
  assert.ok(captured.diagnosticCells.some(c=>c.cell==='K5'&&c.value==='0'));
+});
+test('failure to inspect a registered archive does not create a replacement',()=>{
+ const f=fixture();f.context.Drive.Files.get=()=>{throw Error('Temporary permission failure');};
+ assert.equal(f.call('historical-resolve',{allowCreate:true,archiveId:'registered'}).ok,false);
+ assert.equal(f.calls.filter(c=>c[0]==='copy').length,0);
+});
+test('renamed legacy archive is found by dates and repeated loads/saves keep its ID',()=>{
+ const f=fixture();Object.assign(f.dates,{biweekly:'2026-09-26',monthly:'2026-09-26'});
+ f.files.set('existing',{id:'existing',name:'Renamed raffle',mimeType:'application/vnd.google-apps.spreadsheet',parents:['folder'],appProperties:{guildsyncSource:'live'}});
+ for(const allowCreate of [true,false,true]) {
+  const result=f.call('historical-resolve',{allowCreate});assert.equal(result.ok,true);assert.equal(result.archiveId,'existing');assert.equal(result.created,false);assert.equal(result.lookupMethod,'draw-date');
+ }
+ assert.equal(f.call('historical-resolve',{allowCreate:false,archiveId:'existing'}).lookupMethod,'registry');
+ f.dates.monthly='2026-10-24';assert.equal(f.call('historical-resolve',{allowCreate:true,archiveId:'existing'}).ok,false);
+ assert.equal(f.calls.filter(c=>c[0]==='copy').length,0);
 });
 test('save lookup does not create and archive identity/date failures reject writes',()=>{
  const f=fixture();assert.equal(f.call('historical-resolve',{allowCreate:false}).ok,false);assert.equal(f.calls.length,0);
