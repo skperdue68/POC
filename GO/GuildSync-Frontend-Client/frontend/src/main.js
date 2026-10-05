@@ -1,3 +1,5 @@
+import {createUserAdministrationPanel,pendingBadge} from './user-administration.js';
+import './user-administration.css';
 import {reconcileDataRows,syncDataHTML,syncDataText} from './live-data-view.js';
 import {createConfigurationPanel,createAccordionState,wireReportAccordions} from './admin-configuration.js';
 import './style.css';
@@ -56,6 +58,7 @@ let saveTimer = null;
 let resizeObserver = null;
 let resizeHandlerAttached = false;
 let profileMenuOpen = false;
+const userAdministrationPanel=createUserAdministrationPanel({request:(event,payload)=>emitSocketWithAck(event,payload,30000),getUser:()=>guildSyncSession.user,onCount:updateUserAdministrationBadge});
 let versionCheckTimer = null;
 let bankingUploadQueueProcessing = false;
 let rosterUploadQueueProcessing = false;
@@ -491,7 +494,7 @@ function renderGuildSyncTabContent() {
 }
 
 function isBlockingModalOpen() {
-  return guildSyncConfirmDialogOpen
+  return userAdministrationPanel.isOpen || guildSyncConfirmDialogOpen
     || rosterHistoryDialogOpen
     || discordHistoryDialogOpen
     || manualBiweeklyTicketDialogOpen
@@ -8282,6 +8285,20 @@ function formatDiscordRefreshDate(value) {
   });
 }
 
+function updateUserAdministrationBadge(count) {
+  const admin=guildSyncSession.user?.role==='admin',value=admin?Number(count)||0:0;
+  const badge=document.querySelector('#userPendingBadge');if(badge)badge.innerHTML=pendingBadge(value);
+  const menuCount=document.querySelector('#userAdminMenuCount');if(menuCount)menuCount.textContent=value?`${value} pending`:'';
+  const button=document.querySelector('#discordAvatarButton');if(button)button.setAttribute('aria-label',value?`GuildSync profile menu, ${value} pending account requests`:'GuildSync profile menu');
+}
+
+function handleCurrentAccountProfile(user) {
+  if(!user||user.discord_user_id!==guildSyncSession.user?.discord_user_id)return;
+  const previousRole=guildSyncSession.user.role;guildSyncSession.user={...guildSyncSession.user,...user};
+  if(previousRole!==user.role){userAdministrationPanel.reset();adminConfigurationPanel.clear();if(activeGuildSyncTab==='settings')renderGuildSyncTabLayout();}
+  renderDiscordArea();userAdministrationPanel.start();
+}
+
 function renderDiscordArea() {
   const area = document.querySelector('#discordArea');
   if (!area) {
@@ -8298,16 +8315,18 @@ function renderDiscordArea() {
 
     area.innerHTML = `
       <div class="discord-profile-wrap">
-        <button id="discordAvatarButton" class="discord-avatar-button" type="button" title="Right-click for profile menu" aria-label="GuildSync profile menu">
+        <button id="discordAvatarButton" class="discord-avatar-button" type="button" title="Open GuildSync user menu" aria-label="GuildSync profile menu">
           ${avatarURL
         ? `<img src="${escapeAttribute(avatarURL)}" alt="${escapeAttribute(displayName)}" class="discord-avatar-image" />`
         : `<span class="discord-avatar-fallback">${escapeHtml(initials)}</span>`
       }
         </button>
+        <span id="userPendingBadge" class="user-pending-badge-wrap"></span>
         <div id="discordProfileMenu" class="discord-profile-menu" aria-hidden="true"></div>
       </div>
     `;
 
+    updateUserAdministrationBadge(userAdministrationPanel.count);
     const avatarButton = document.querySelector('#discordAvatarButton');
 
     avatarButton.addEventListener('contextmenu', (event) => {
@@ -8407,7 +8426,7 @@ function renderOpenProfileMenuContents() {
         <span class="profile-value">${escapeHtml(displayName)}</span>
       </div>
       <div class="profile-row">
-        <span class="profile-label">Rank</span>
+        <span class="profile-label">Role</span>
         <span class="profile-value">${escapeHtml(formatRank(rank))}</span>
       </div>
       <div class="profile-row">
@@ -8421,10 +8440,13 @@ function renderOpenProfileMenuContents() {
         </div>
         ${renderProfileFileWatcherSection()}
       </div>
+      ${guildSyncSession.user?.role==='admin'?`<button id="manageGuildSyncUsersButton" class="discord-secondary-button user-admin-menu-button" type="button">Manage GuildSync Users <span id="userAdminMenuCount"></span></button>`:''}
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
   `;
 
+  document.querySelector('#manageGuildSyncUsersButton')?.addEventListener('click',()=>{closeProfileMenu(false);userAdministrationPanel.open();});
+  updateUserAdministrationBadge(userAdministrationPanel.count);
   document
     .querySelector('#discordLogoutButton')
     ?.addEventListener('click', logoutGuildSync);
@@ -8601,6 +8623,7 @@ function connectSocket() {
   socket = io(socketURL, socketOptions);
 
   socket.on('connect', () => {
+    userAdministrationPanel.start();
     updateStatusDot();
     sendVersionCheck();
 
@@ -8625,12 +8648,18 @@ function connectSocket() {
     startVersionCheckTimer();
   });
 
+  socket.on('guildsync:users-changed',payload=>userAdministrationPanel.changed(payload));
+  socket.on('guildsync:account-profile',handleCurrentAccountProfile);
+  socket.on('guildsync:account-removed',()=>void logoutGuildSync());
+
   socket.on('connect_error', () => {
+    userAdministrationPanel.stop();
     updateStatusDot();
     stopVersionCheckTimer();
   });
 
   socket.on('disconnect', () => {
+    userAdministrationPanel.stop();
     updateStatusDot();
     stopVersionCheckTimer();
     stopESOStatusPolling();
@@ -8667,6 +8696,7 @@ function connectSocket() {
 }
 
 function disconnectSocket(updateDot = true) {
+  userAdministrationPanel.reset();
   stopVersionCheckTimer();
 
   if (socket) {

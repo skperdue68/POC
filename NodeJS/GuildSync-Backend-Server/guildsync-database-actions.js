@@ -931,7 +931,6 @@ export async function upsertLoginUser(loginDB, discordUser) {
       ON DUPLICATE KEY UPDATE
         username = VALUES(username),
         global_name = VALUES(global_name),
-        email = VALUES(email),
         avatar = VALUES(avatar),
         last_login_at = VALUES(last_login_at)
       `,

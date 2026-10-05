@@ -4,6 +4,8 @@ Updated October 5, 2026. This reference follows the current implementation, incl
 
 For everyday use, start with the [user guide](GuildSync-User-Guide.md). This document covers command access, data flows, configuration, persistence, and recovery.
 
+The avatar menu provides admin-only **Manage GuildSync Users**, including approval, profile and role edits, removal, and pending counts. See [user administration](GuildSync-User-Administration.md) for server authorization, session invalidation, existing database tables, and deployment details.
+
 ## Contents
 
 - [System overview](#system-overview)
