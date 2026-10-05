@@ -76,8 +76,13 @@ export async function execute(interaction, socket, log = Log) {
         }
         plan = await request(socket,'guildsync:raffle-refresh',{...payload,action:'plan'});
       }
-      await interaction.editReply({ components: [], content: selectionMessage(plan.selection) + (action === 'save' ? '\n\nSaving editable result fields from the selected archive...' : '\n\nExporting the selected raffle data to its matching spreadsheet...'), allowedMentions: { parse: [] } });
-      log('Raffle file lookup request: ' + JSON.stringify({action,date:payload.date || 'current',boundaryChoices:payload.boundaryChoices || {},discordUserId:payload.discordUserId}));
+      const biweekly = plan.selection.raffles.find(raffle => raffle.type === 'biweekly');
+      const parts = biweekly && new Intl.DateTimeFormat('en-US', {timeZone:plan.selection.timeZone,year:'2-digit',month:'2-digit',day:'2-digit'}).formatToParts(new Date(biweekly.end * 1000));
+      const datePart = type => parts?.find(part => part.type === type)?.value;
+      const expectedName = parts ? datePart('year') + datePart('month') + datePart('day') + ' Raffle' : undefined;
+      const lookupMessage = payload.date && expectedName ? "\n\nChecking for archive '" + expectedName + "' in the archive folder if this is a historical raffle..." : '';
+      await interaction.editReply({ components: [], content: selectionMessage(plan.selection) + lookupMessage + (action === 'save' ? '\n\nSaving editable result fields from the selected archive...' : '\n\nExporting the selected raffle data to its matching spreadsheet...'), allowedMentions: { parse: [] } });
+      log('Raffle file lookup request: ' + JSON.stringify({action,expectedName,date:payload.date || 'current',boundaryChoices:payload.boundaryChoices || {},discordUserId:payload.discordUserId}));
       const result = await request(socket, 'guildsync:raffle-refresh', { ...payload, action: action === 'save' ? 'save' : 'export' });
       log('Raffle file lookup result: ' + JSON.stringify({action,date:payload.date || 'current',historical:result.historical===true,
         archiveLookup:result.archiveLookup || null,sheetUrl:result.sheetUrl || result.workingSheetUrl}));
@@ -88,6 +93,7 @@ export async function execute(interaction, socket, log = Log) {
         if (result.historical) content += '\n\nRaffle data has been loaded to the archived raffle sheet [HERE](' + result.sheetUrl + ').\nAfter updating winners, attendance, bonus tickets, or other result fields, use `/gsr save date:' + payload.date + '` to save those changes to the database.';
         else if (result.workingSheetUrl) content += '\n\nRaffle data has been loaded to the working sheet [HERE](' + result.workingSheetUrl + ').';
       }
+      if(result.archiveLookup?.expectedName) content += '\n\n' + (result.archiveLookup.created ? 'Created' : 'Found') + " archive '" + result.archiveLookup.expectedName + "' in the archive folder.";
       if(result.historical) content += '\n\n50/50 results are shared with other Bi-Weekly archives for the same 50/50 raffle. This archive’s captured results are the latest saved snapshot.';
     } else {
       await interaction.editReply({ content: action === 'archive' ? 'Archiving Current Public Raffle Sheet' : 'Clearing both raffle sheets and draw dates...', allowedMentions: { parse: [] } });
