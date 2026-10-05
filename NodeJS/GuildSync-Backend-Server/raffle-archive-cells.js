@@ -36,6 +36,7 @@ export async function saveArchiveCells(db, result, archiveId, sourceId, settings
     for (const oldId of new Set(replaced)) {
       await db.execute('DELETE FROM guildsync_raffle_archive_cells WHERE source_spreadsheet_id=? AND archive_id=?', [sourceId,oldId]);
       await db.execute('UPDATE guildsync_raffle_results SET archive_id=? WHERE source_spreadsheet_id=? AND archive_id=?', [archiveId,sourceId,oldId]);
+      await db.execute("UPDATE guildsync_settings SET value=JSON_SET(value,'$.archiveId',?) WHERE setting_key LIKE 'raffle_archive_%' AND JSON_UNQUOTE(JSON_EXTRACT(value,'$.sourceId'))=? AND JSON_UNQUOTE(JSON_EXTRACT(value,'$.archiveId'))=?", [archiveId,sourceId,oldId]);
     }
     for (const [type,date] of Object.entries(result.drawDates)) {
       await db.execute('DELETE FROM guildsync_raffle_archive_cells WHERE source_spreadsheet_id=? AND raffle_type=? AND draw_date=?', [sourceId,type,date]);

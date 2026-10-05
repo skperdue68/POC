@@ -35,12 +35,14 @@ function handleArchiveRequest(e, diagnostic) {
   if (!sourceId) problems.push('SOURCE_SPREADSHEET_ID property is missing');
   else if (request.sourceId !== sourceId) problems.push('Backend spreadsheet ID does not match SOURCE_SPREADSHEET_ID');
   if (!folderId) problems.push('ARCHIVE_FOLDER_ID property is missing');
-  if (!['archive', 'verify'].includes(request.action)) problems.push('Unsupported request action');
-  if (!/^[a-f0-9]{32}:(raffle-rollover-\d+|raffle-manual-[a-f0-9-]+)$/.test(request.key || '')) problems.push('Invalid archive request key');
+  const historical = ['historical-resolve', 'historical-read', 'historical-complete'].indexOf(request.action) >= 0;
+  if (!historical && !['archive', 'verify'].includes(request.action)) problems.push('Unsupported request action');
+  if (!(historical ? /^[a-f0-9]{32}:raffle-history-20\d{2}-\d{2}-\d{2}$/ : /^[a-f0-9]{32}:(raffle-rollover-\d+|raffle-manual-[a-f0-9-]+)$/).test(request.key || '')) problems.push('Invalid archive request key');
   if (problems.length) throw new Error('GuildSync archive: ' + problems.join('; '));
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('GuildSync archive: Another archive operation holds the lock; retry later');
   try {
+    if (historical) return json(handleHistoricalRaffle(request, sourceId, folderId));
     const escape = value => String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     let archive;
     if (request.action === 'archive') {
@@ -121,6 +123,92 @@ function handleArchiveRequest(e, diagnostic) {
     superseded.forEach(id => Drive.Files.update({ trashed: true }, id));
     return json({ ok: true, sourceId: sourceId, key: request.key, archiveId: archive.id, name: name, diagnosticCells: diagnosticCells, drawDates: drawDates, replacedArchiveIds: replacedArchiveIds });
   } finally { lock.releaseLock(); }
+}
+
+// Historical operations never enter rollover's replacement/trashing path.
+function handleHistoricalRaffle(request, sourceId, folderId) {
+  const dates = request.drawDates;
+  ['biweekly', 'monthly'].forEach(type => {
+    const value = dates && dates[type];
+    if (!/^20\d{2}-\d{2}-\d{2}$/.test(value || '') || new Date(value + 'T12:00:00Z').toISOString().slice(0, 10) !== value)
+      throw new Error('Invalid requested historical draw date');
+  });
+  if (request.key.slice(-10) !== dates.biweekly) throw new Error('Historical key/date mismatch');
+  const name = raffleArchiveName(dates.biweekly);
+  const escape = value => String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  let archiveId = request.archiveId;
+  let created = false;
+  if (request.action === 'historical-resolve') {
+    let pageToken, matches = [];
+    do {
+      const page = Drive.Files.list({q:"'" + escape(folderId) + "' in parents and trashed=false and mimeType='application/vnd.google-apps.spreadsheet' and (name='" + escape(name) + "' or appProperties has { key='guildsyncRaffleDate' and value='" + escape(dates.biweekly) + "' })",
+        fields:'nextPageToken,files(id)', pageSize:100, pageToken:pageToken});
+      matches = matches.concat(page.files || []); pageToken = page.nextPageToken;
+    } while (pageToken);
+    // Registry IDs let renamed archives be found. Trashed registry IDs fall back to folder lookup.
+    if (archiveId && !matches.some(item => item.id === archiveId)) {
+      let registered;
+      try { registered = Drive.Files.get(archiveId, {fields:'id,trashed'}); } catch (_) { registered = null; }
+      if (registered && !registered.trashed) matches.push({id:archiveId});
+    }
+    if (matches.length > 1) throw new Error('Multiple archives match this raffle; resolve duplicates before loading');
+    if (matches.length) archiveId = matches[0].id;
+    else {
+      if (request.allowCreate !== true) throw new Error('No archive exists for this raffle. Run /gsr load with the same date first.');
+      const copy = Drive.Files.copy({name:name,parents:[folderId],appProperties:{guildsyncSource:sourceId,
+        guildsyncArchive:request.key,guildsyncRaffleDate:dates.biweekly,guildsyncMonthlyDate:dates.monthly,guildsyncHistoryState:'preparing'}},sourceId,{fields:'id'});
+      archiveId = copy.id; created = true;
+    }
+  }
+  if (!archiveId || archiveId === sourceId) throw new Error('Historical archive cannot be the working spreadsheet');
+  const file = Drive.Files.get(archiveId,{fields:'id,name,trashed,mimeType,parents,appProperties'});
+  if(file.trashed || file.mimeType !== 'application/vnd.google-apps.spreadsheet' || !file.parents || file.parents.indexOf(folderId)<0 || file.appProperties?.guildsyncSource !== sourceId)
+    throw new Error('Historical archive source/folder verification failed');
+  const metadata = file.appProperties || {};
+  if ((metadata.guildsyncRaffleDate && metadata.guildsyncRaffleDate !== dates.biweekly) ||
+      (metadata.guildsyncMonthlyDate && metadata.guildsyncMonthlyDate !== dates.monthly)) throw new Error('Archive belongs to a different raffle');
+  const book = SpreadsheetApp.openById(archiveId);
+  let ready = metadata.guildsyncHistoryState !== 'preparing';
+  const biweeklyTab=request.biweeklyTab || 'bi-weekly raffle', monthlyTab=request.fiftyFiftyTab || '50/50';
+  if (ready || request.action === 'historical-complete') {
+    if(raffleSheetDate(book,biweeklyTab,'R7') !== dates.biweekly || raffleSheetDate(book,monthlyTab,'P7') !== dates.monthly)
+      throw new Error('Archive draw dates do not match the selected raffle');
+  }
+  if(request.action === 'historical-read' && !ready) throw new Error('Archive load is incomplete; load it before saving');
+  if(request.action === 'historical-resolve') reconcileHistoricalSharing(sourceId,archiveId);
+  if(request.action === 'historical-complete') {
+    Drive.Files.update({appProperties:Object.assign({},metadata,{guildsyncRaffleDate:dates.biweekly,guildsyncMonthlyDate:dates.monthly,guildsyncHistoryState:'ready'})},archiveId);
+    ready=true;
+  }
+  return {ok:true,sourceId:sourceId,key:request.key,archiveId:archiveId,name:name,created:created,ready:ready,drawDates:dates,
+    ...(request.action === 'historical-read' ? {diagnosticCells:readArchiveDiagnosticCells(book,biweeklyTab,monthlyTab)} : {})};
+}
+
+function reconcileHistoricalSharing(sourceId,archiveId) {
+  const list = id => {
+    let result=[],pageToken;
+    do { const page=Drive.Permissions.list(id,{fields:'nextPageToken,permissions(id,type,role,emailAddress,domain,allowFileDiscovery,deleted)',pageToken:pageToken});
+      result=result.concat(page.permissions || []);pageToken=page.nextPageToken;
+    } while(pageToken);
+    return result;
+  };
+  const desired=list(sourceId).filter(p=>!p.deleted && p.role !== 'owner');
+  const same=(p,q)=>q.type===p.type && (p.type==='anyone' || (p.type==='domain'?q.domain===p.domain:q.emailAddress===p.emailAddress));
+  const existing=list(archiveId);
+  desired.forEach(p=>{
+    const match=existing.find(q=>same(p,q));
+    const permission={type:p.type,role:p.role};
+    if(p.emailAddress)permission.emailAddress=p.emailAddress;
+    if(p.domain)permission.domain=p.domain;
+    if(p.allowFileDiscovery !== undefined)permission.allowFileDiscovery=p.allowFileDiscovery;
+    if(!match)Drive.Permissions.create(permission,archiveId,{sendNotificationEmail:false});
+    else if(match.role !== p.role || match.allowFileDiscovery !== p.allowFileDiscovery) {
+      const update={role:p.role};if(p.allowFileDiscovery !== undefined)update.allowFileDiscovery=p.allowFileDiscovery;
+      Drive.Permissions.update(update,archiveId,match.id);
+    }
+  });
+  const actual=list(archiveId);
+  if(!desired.every(p=>actual.some(q=>same(p,q) && q.role===p.role && q.allowFileDiscovery===p.allowFileDiscovery)))throw new Error('Historical archive sharing verification failed');
 }
 
 

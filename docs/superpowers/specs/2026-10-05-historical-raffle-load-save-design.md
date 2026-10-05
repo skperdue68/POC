@@ -2,14 +2,14 @@
 
 ## Approved intent
 
-Historical raffle loads operate on archive spreadsheets, preserving the working spreadsheet for the current raffle. `/save <date>` captures editable result fields from an archive without resetting it. All implementation changes belong on `feat/historical-raffle-load-save` and go through a pull request; never merge directly to master.
+Historical raffle loads operate on archive spreadsheets, preserving the working spreadsheet for the current raffle. `/gsraffle save <date>` and `/gsr save <date>` capture editable result fields from an archive without resetting it. All implementation changes belong on `feat/historical-raffle-load-save` and go through a pull request; never merge directly to master.
 
 ## Commands and date selection
 
 - `/gsr load` and `/gsraffle load` without a date retain current-raffle behavior.
 - An explicit date uses the existing MMDDYY resolver. Dates inside a period require no question. On a Bi-Weekly boundary, ask whether the user means the raffle starting or ending on that date. Derive the containing 50/50 raffle from that choice.
-- `/save date:<MMDDYY>` requires a date, the configured Discord guild, and the exact Consigliere role. Enforce authorization in both bot and backend. Use the same resolver and boundary buttons as load. Cancel without writes on timeout.
-- Preserve the original date argument in responses. A historical load for `091526` instructs the user to use `/save date:091526`, regardless of the selected ending draw date.
+- `/gsraffle save date:<MMDDYY>` and its alias `/gsr save date:<MMDDYY>` require a date, the configured Discord guild, and the exact Consigliere role. Add the save subcommand to both existing command builders; do not register a standalone `/save` command. Enforce authorization in both bot and backend. Use the same resolver and boundary buttons as load. Cancel without writes on timeout.
+- Preserve the original date argument in responses. A historical load for `091526` instructs the user to use `/gsr save date:091526`, regardless of the selected ending draw date.
 - Boundary choices apply to the individual invocation. Saving on a boundary asks again rather than depending on another user's or an earlier command's state.
 
 ## Spreadsheet targeting
@@ -18,7 +18,7 @@ Resolve the selected periods before any mutation. An explicit date routes to the
 
 Each archive contains the selected Bi-Weekly raffle and its containing 50/50 raffle. Locate the archive by selected Bi-Weekly draw date, configured source identity, and archive folder. Verify both tab draw dates against the selected periods before changing an existing archive. Archive names remain `YYMMDD Raffle`, based on the selected Bi-Weekly draw date.
 
-Use a database registry with one canonical archive per configured source and selected Bi-Weekly draw date. Store the archive spreadsheet ID, both raffle periods/draw dates, and preparation/completion status. Bootstrap older archives by a folder lookup and verification of spreadsheet dates, not filename alone. Reject ambiguous duplicates instead of choosing an arbitrary file.
+Use a database registry with one canonical archive per configured source and selected Bi-Weekly draw date. Store the archive spreadsheet ID, both raffle periods/draw dates, and preparation/completion status in the existing startup-created `guildsync_settings` table under `raffle_archive_<source-and-date hash>` keys; no new schema is necessary. Bootstrap older archives by a folder lookup and verification of spreadsheet dates, not filename alone. Reject ambiguous duplicates instead of choosing an arbitrary file.
 
 The Apps Script must verify that targets are Google spreadsheets in the configured archive folder, belong to the configured source, and are never the working spreadsheet. Requests may not supply an arbitrary spreadsheet to clear or save.
 
@@ -28,7 +28,7 @@ The Apps Script must verify that targets are Google spreadsheets in the configur
 2. Capture its editable result fields and persist a complete snapshot before clearing. Saving must succeed before any destructive sheet write.
 3. Read selected banking entries and saved result values from the database, with existing bonus calculation and period selection.
 4. Preflight both tabs and row capacity. Clear/repopulate the target archive in one sheet batch, restore saved result fields and formulas, and write the correct R7/P7 dates.
-5. Verify the completed target and return its link, period information, entry count, and `/save` instruction with the original requested date.
+5. Verify the completed target and return its link, period information, entry count, and `/gsr save` instruction with the original requested date.
 
 Do not append ticket purchases to existing rows. Rebuild from the selected database snapshot, preventing duplicates and removing outdated entries. Preserve formatting and borders using the existing reset implementation.
 
@@ -42,7 +42,7 @@ Persist the newly created file ID and preparation state before replay so retries
 
 ## Save behavior and persistence
 
-`/save` locates and verifies an existing archive for the selected periods; it does not create an archive, clear cells, reload purchases, or reset the working spreadsheet. If no matching archive exists, return a useful error recommending the matching historical load first.
+`/gsraffle save` and `/gsr save` locate and verify an existing archive for the selected periods; they do not create an archive, clear cells, reload purchases, or reset the working spreadsheet. If no matching archive exists, return a useful error recommending the matching historical load first.
 
 Capture the existing managed fields:
 
@@ -68,7 +68,7 @@ Persist complete captures before clearing; on capture/database failures leave sh
 Keep administrative responses ephemeral. Current loads link to the working sheet. Historical loads link to the archive and say:
 
 > Raffle data has been loaded to the archived raffle sheet [HERE](archive-link).
-> After updating winners, attendance, bonus tickets, or other result fields, use `/save date:<original MMDDYY>` to save those changes to the database.
+> After updating winners, attendance, bonus tickets, or other result fields, use `/gsr save date:<original MMDDYY>` to save those changes to the database.
 
 Save completion identifies the selected raffle dates, archive link, and number of captured fields. Do not broadcast an ordinary archive-rollover announcement for historical load/save. Existing `/gsr archive` continues archiving the current working raffle and advancing it as before.
 
@@ -78,4 +78,4 @@ Regression tests must prove current loads still target the working sheet, histor
 
 Test ambiguous/missing archives, mismatched tab dates, insufficient capacity, capture/database/Google failures, and monthly periods spanning multiple Bi-Weekly raffles. Run the full Node test suite and Apps Script mocked tests. Request code review before commit/PR completion.
 
-Deployment requires backend and Discord bot updates, slash-command registration for `/save`, and redeployment of the Apps Script web app for historical archive lookup/copy/read support. Do not perform live Sheets operations or deployment during development without explicit authorization.
+Deployment requires backend and Discord bot updates, re-registration of `/gsraffle` and `/gsr` with their new save subcommand, and redeployment of the Apps Script web app for historical archive lookup/copy/read support. Do not perform live Sheets operations or deployment during development without explicit authorization.

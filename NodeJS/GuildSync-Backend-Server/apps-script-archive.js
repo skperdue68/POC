@@ -1,4 +1,4 @@
-export async function requestArchive(action, { sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDates, details = false }) {
+export async function requestArchive(action, { sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDates, drawDates, allowCreate, details = false }) {
   const url = String(process.env.GUILDSYNC_GOOGLE_ARCHIVE_WEB_APP_URL || '').trim();
   const secret = String(process.env.GUILDSYNC_GOOGLE_ARCHIVE_SECRET || '');
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url) || !secret) {
@@ -8,7 +8,7 @@ export async function requestArchive(action, { sourceId, key, name, archiveId, b
   try {
     response = await fetch(url, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDates, secret }), signal: AbortSignal.timeout(120000)
+      body: JSON.stringify({ action, sourceId, key, name, archiveId, biweeklyTab, fiftyFiftyTab, eligibleMonthlyDates, drawDates, allowCreate, secret }), signal: AbortSignal.timeout(120000)
     });
   } catch { throw new Error('Archive web app request failed or timed out; original remains intact.'); }
   if (!response.ok) throw new Error(`Archive web app request failed (${response.status}).`);
@@ -22,7 +22,7 @@ export async function requestArchive(action, { sourceId, key, name, archiveId, b
     throw new Error('Archive web app failed: ' + message);
   }
   if (!result || result.ok !== true || result.sourceId !== sourceId || result.key !== key || typeof result.archiveId !== 'string' ||
-    !result.archiveId || result.archiveId === sourceId || (archiveId && result.archiveId !== archiveId)) {
+    !result.archiveId || result.archiveId === sourceId || (action !== 'historical-resolve' && archiveId && result.archiveId !== archiveId)) {
     throw new Error('Archive web app could not verify the requested copy; check Apps Script execution logs.');
   }
   if (details && !/^\d{6} Raffle$/.test(result.name || '')) {

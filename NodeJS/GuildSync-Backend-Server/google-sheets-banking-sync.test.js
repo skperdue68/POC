@@ -72,6 +72,16 @@ const refreshPeriods = [
   { type: 'biweekly', end: Date.parse('2026-09-26T23:00:00Z') / 1000 },
   { type: 'monthly', end: Date.parse('2026-10-24T23:00:00Z') / 1000 }
 ];
+test('explicit archive refresh writes dates and entries only to that target under a no-rollover lock', async t => {
+ const f=fixture(t);
+ configureSheetsCoordinator(async (operation,options)=>{assert.equal(options.processRollover,false);return operation({});});
+ await sheets.refreshBankingEntriesToGoogleSheets(async()=>({entries:[ticket()],periods:refreshPeriods,targetId:'archive-copy'}),
+  {processRollover:false,log:async value=>f.logs.push(value)});
+ assert.ok(f.calls.filter(url=>url.includes('sheets.googleapis.com')).every(url=>url.includes('/archive-copy')));
+ assert.equal(sheets.config().spreadsheetId,'fixture');
+ assert.equal(f.writes.length,1);
+ assert.equal(f.writes[0].filter(r=>r.updateCells?.range?.startRowIndex===6 && r.updateCells.rows).length,2);
+});
 test('refresh clears both closure ranges then replaces entries and dates atomically on every run', async t => {
   const f = fixture(t, { rows: [['123', 'Old name', 100]] });
   const refresh = entries => sheets.refreshBankingEntriesToGoogleSheets(async () => ({ entries, periods: refreshPeriods }),

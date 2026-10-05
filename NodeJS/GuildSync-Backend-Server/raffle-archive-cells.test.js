@@ -38,4 +38,5 @@ test('replacement reconciles old archive IDs and removes their cell rows',async(
  await saveArchiveCells(db,{diagnosticCells:[],drawDates:{biweekly:'2026-10-10'},replacedArchiveIds:['old']},'new','source',{});
  assert.ok(calls.some(([sql,args])=>sql.includes('DELETE') && sql.includes('archive_id=?') && args.includes('old')));
  assert.ok(calls.some(([sql,args])=>sql.includes('UPDATE guildsync_raffle_results') && args[0]==='new' && args.includes('old')));
+ assert.ok(calls.some(([sql,args])=>sql.includes('UPDATE guildsync_settings') && args[0]==='new' && args[1]==='source' && args[2]==='old'));
 });
