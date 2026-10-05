@@ -11,7 +11,13 @@ export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=
  const reminderOn=config=>config?.enabled && config.reminderEnabled;
  async function enqueue(s,g,u,kind,esoName) {
   const jobId=id(g,u,kind),existing=await s.job(jobId);
-  if(existing)return;
+  if(existing) {
+   if(existing.status==='cancelled' && (kind==='promotion' || !existing.attemptAt)) {
+    existing.status='pending';existing.claimToken=null;existing.leaseUntil=0;existing.retryAt=0;
+    await s.putJob(existing);
+   }
+   return;
+  }
   await s.putJob({id:jobId,guildId:g,userId:u,kind,esoName,status:'pending',leaseUntil:0,retryAt:0});
   log('Onboarding queued '+kind+' for '+u);
  }

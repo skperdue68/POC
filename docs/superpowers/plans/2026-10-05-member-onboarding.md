@@ -34,11 +34,11 @@
 
 **Interfaces:** `readOnboardingConfig(env) -> {enabled,promotionEnabled,promotionNotifyEnabled,reminderEnabled,reminderHours,mode,channelId,gangsterRoleId,associateRoleId,promotionMessage,reminderMessage}`; `initializeDiscordOnboardingSchema(db) -> Promise<void>`.
 
-- [ ] Write configuration tests: defaults disabled/private/24h; explicit booleans; reject invalid hours/mode, missing destination when notifications enabled, and unknown template placeholders. Disabled defaults do not require a destination.
-- [ ] Write schema tests: three tables are created idempotently with guild/user and delivery uniqueness; verify the existing initializer invokes the new schema setup.
-- [ ] Run `node --test` on those files and observe failure before creating production modules.
-- [ ] Implement `.env` names from the spec; create state, member, and delivery tables with epoch timestamps, lease/retry fields, rendered-message storage, thread/message IDs, and completed timestamps. Use `CREATE TABLE IF NOT EXISTS` plus additive column migrations when necessary.
-- [ ] Run focused tests; commit configuration and schema.
+- [x] Write configuration tests: defaults disabled/private/24h; explicit booleans; reject invalid hours/mode, missing destination when notifications enabled, and unknown template placeholders. Disabled defaults do not require a destination.
+- [x] Write schema tests: three tables are created idempotently with guild/user and delivery uniqueness; verify the existing initializer invokes the new schema setup.
+- [x] Run `node --test` on those files and observe failure before creating production modules.
+- [x] Implement `.env` names from the spec; create state, member, and delivery tables with epoch timestamps, lease/retry fields, rendered-message storage, thread/message IDs, and completed timestamps. Use `CREATE TABLE IF NOT EXISTS` plus additive column migrations when necessary.
+- [x] Run focused tests; commit configuration and schema.
 
 ### Task 2: Backend enrollment, confirmed links, and durable work
 
@@ -46,12 +46,12 @@
 
 **Interfaces:** `createDiscordOnboarding(db,{now,log})` returns `configure(guildId,config)`, `observeMember(guildId,member)`, `observeConfirmedLink(discordUserId)`, `claim(guildId)`, `validate(guildId,deliveryId,claimToken)`, `progress(guildId,deliveryId,claimToken,patch)`, and `finish(guildId,deliveryId,claimToken,result)`. `registerDiscordOnboardingSocket(socket,service)` registers `guildsync:onboarding-configure`, `-claim`, `-validate`, `-progress`, and `-finish` with acknowledgement responses.
 
-- [ ] Write tests for first activation, restart cutoff preservation, new join enrollment, no existing-member enrollment, disable/re-enable cutoff, join recovery by actual `joined_at`, leave/rejoin one-time behavior, and confirmed/candidate/blocked links.
-- [ ] Write tests for unique jobs, lease claims, stale-token rejection, cross-guild rejection, authenticated bot-only endpoints, and canceling reminders after linking/leaving. Reconciliation must recover enqueue failures without rejecting valid existing link writes.
-- [ ] Run focused tests to observe failure.
-- [ ] Implement persistent service and endpoints. Hook common confirmed-link upsert, including manual/exact/accepted candidates, and member synchronization. Retain join timestamps needed for reconciliation. Existing linked Gangster members may qualify for promotion even though they are not enrolled for reminders. Resolve a deterministic confirmed ESO name for notification when multiple accounts are linked.
-- [ ] Persist rendered messages and deterministic delivery identifiers before first send. Progress and completion updates require the current claim token; retries preserve delivery identity. Perform serialized claims using database transactions/row locks.
-- [ ] Run focused tests; commit backend onboarding.
+- [x] Write tests for first activation, restart cutoff preservation, new join enrollment, no existing-member enrollment, disable/re-enable cutoff, join recovery by actual `joined_at`, leave/rejoin one-time behavior, and confirmed/candidate/blocked links.
+- [x] Write tests for unique jobs, lease claims, stale-token rejection, cross-guild rejection, authenticated bot-only endpoints, and canceling reminders after linking/leaving. Reconciliation must recover enqueue failures without rejecting valid existing link writes.
+- [x] Run focused tests to observe failure.
+- [x] Implement persistent service and endpoints. Hook common confirmed-link upsert, including manual/exact/accepted candidates, and member synchronization. Retain join timestamps needed for reconciliation. Existing linked Gangster members may qualify for promotion even though they are not enrolled for reminders. Resolve a deterministic confirmed ESO name for notification when multiple accounts are linked.
+- [x] Persist rendered messages and deterministic delivery identifiers before first send. Progress and completion updates require the current claim token; retries preserve delivery identity. Perform serialized claims using database transactions/row locks.
+- [x] Run focused tests; commit backend onboarding.
 
 ### Task 3: Discord role changes and private delivery
 
@@ -59,13 +59,13 @@
 
 **Interfaces:** `createOnboardingWorker({client,socket,config,log,now}) -> {tick(),stop()}`. Tick is serialized and reconnect-safe. Role lookup prefers configured IDs, otherwise unambiguous case-insensitive default names.
 
-- [ ] Write tests for add-before-remove, Associate already added on retry, no promotion announcement after removal failure, absent Gangster/no demotion, unrelated role preservation, ambiguous/missing/unmanageable roles, and confirmed-link revalidation.
-- [ ] Write private-thread tests for creating a non-invitable thread, adding the intended member, persisting and reusing its ID, recovering interrupted thread creation via deterministic thread identity, reopening archived threads, and refusing public fallback. Verify parent visibility for Gangster members.
-- [ ] Write delivery tests for templates and escaping, `allowedMentions` limited to the target user, one-time reminder, link/leave cancellation, uncertain send recovery, legacy retry leases, missing history permission, mode/channel validation, and disabled notification settings.
-- [ ] Run tests to observe failure.
-- [ ] Implement fresh member/role fetches and permission checks. Persist progress before moving between role/delivery steps. Private threads use configured text parent and deterministic member-specific names; persist a discovered/created ID before posting. Channel mode uses only the configured guild channel/thread.
-- [ ] Before sending, persist exact rendered text and delivery attempt time; reconcile bot-authored matching recipient/content within the delivery window and recorded destination, plus Discord nonce where available. History errors retain retryable work without blind resend. Send successful messages once and acknowledge their Discord IDs. A role-only job completes without requiring a notification destination.
-- [ ] Run focused tests; commit worker.
+- [x] Write tests for add-before-remove, Associate already added on retry, no promotion announcement after removal failure, absent Gangster/no demotion, unrelated role preservation, ambiguous/missing/unmanageable roles, and confirmed-link revalidation.
+- [x] Write private-thread tests for creating a non-invitable thread, adding the intended member, persisting and reusing its ID, recovering interrupted thread creation via deterministic thread identity, reopening archived threads, and refusing public fallback. Verify parent visibility for Gangster members.
+- [x] Write delivery tests for templates and escaping, `allowedMentions` limited to the target user, one-time reminder, link/leave cancellation, uncertain send recovery, legacy retry leases, missing history permission, mode/channel validation, and disabled notification settings.
+- [x] Run tests to observe failure.
+- [x] Implement fresh member/role fetches and permission checks. Persist progress before moving between role/delivery steps. Private threads use configured text parent and deterministic member-specific names; persist a discovered/created ID before posting. Channel mode uses only the configured guild channel/thread.
+- [x] Before sending, persist exact rendered text and delivery attempt time; reconcile bot-authored matching recipient/content within the delivery window and recorded destination, plus Discord nonce where available. History errors retain retryable work without blind resend. Send successful messages once and acknowledge their Discord IDs. A role-only job completes without requiring a notification destination.
+- [x] Run focused tests; commit worker.
 
 ### Task 4: Bot lifecycle and operator documentation
 
@@ -73,10 +73,10 @@
 
 **Interfaces:** Start worker only when Discord and authenticated backend connection are ready. Register configuration before enrolling or claiming work. Reconfigure on reconnect without resetting cutoff. Join/member/link signals wake tick; retain periodic reconciliation.
 
-- [ ] Write tests confirming disabled default is inert, reconnect is serialized, GuildMemberAdd starts eligible enrollment, role discovery includes Gangster, and automatic/manual link changes reach promotion work.
-- [ ] Run tests to observe failure; wire startup/event hooks without duplicating workers or failing unrelated bot features on onboarding configuration errors.
-- [ ] Document every `.env` option and template placeholder; example promotion/reminder text; role hierarchy/Manage Roles; private-thread and parent permissions; reminder enable/disable semantics; one-time state tables; logs and retry diagnostics; channel-mode visibility; installation/restart instructions. Leave real `.env` files unchanged.
-- [ ] Run lifecycle and focused integration tests; commit wiring and documentation.
+- [x] Write tests confirming disabled default is inert, reconnect is serialized, GuildMemberAdd starts eligible enrollment, role discovery includes Gangster, and automatic/manual link changes reach promotion work.
+- [x] Run tests to observe failure; wire startup/event hooks without duplicating workers or failing unrelated bot features on onboarding configuration errors.
+- [x] Document every `.env` option and template placeholder; example promotion/reminder text; role hierarchy/Manage Roles; private-thread and parent permissions; reminder enable/disable semantics; one-time state tables; logs and retry diagnostics; channel-mode visibility; installation/restart instructions. Leave real `.env` files unchanged.
+- [x] Run lifecycle and focused integration tests; commit wiring and documentation.
 
 ### Task 5: Verify, review, and submit
 

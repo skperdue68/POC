@@ -57,3 +57,12 @@ test('onboarding endpoints reject unauthenticated and cross-guild callers',async
  assert.equal((await call('claim',{guildId:'2'})).ok,false);
  assert.equal((await call('configure',{guildId:'2',config:f.config})).ok,false);
 });
+test('unattempted canceled jobs resume after re-enabling or an eligible rejoin',async()=>{
+ const f=fixture();await f.service.configure('1',f.config);f.links.set('old','ESO');f.gangsters.add('old');
+ let job=await f.service.claim('1');await f.service.finish('1',job.id,job.claimToken,{cancelled:true});
+ job=await f.service.claim('1');assert.equal(job?.kind,'promotion');await f.service.finish('1',job.id,job.claimToken,{done:true});
+ await f.service.observeMember('1',{discord_id:'new',joined_at:1001});f.setNow(100000);
+ job=await f.service.claim('1');await f.service.finish('1',job.id,job.claimToken,{cancelled:true});
+ await f.service.observeMember('1',{discord_id:'new',joined_at:100001});f.setNow(200000);
+ assert.equal((await f.service.claim('1'))?.userId,'new');
+});

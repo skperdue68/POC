@@ -1,3 +1,5 @@
+import {createOnboardingWorker} from './member-onboarding.js';
+import {readOnboardingConfig} from './member-onboarding-config.js';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -66,6 +68,7 @@ if (!GUILDSYNC_BOT_KEY) {
 const guildSyncSocket = io(GUILDSYNC_SOCKET_URL, {
   auth: {
     source: 'discord-bot',
+    guildId: DISCORD_GUILD_ID,
     botKey: GUILDSYNC_BOT_KEY
   },
   reconnection: true,
@@ -92,6 +95,13 @@ const client = new Client({
 });
 
 client.commands = new Collection();
+try {
+  const onboardingConfig = readOnboardingConfig();
+  createOnboardingWorker({client,socket:guildSyncSocket,guildId:DISCORD_GUILD_ID,config:onboardingConfig,log:Log});
+  Log('Member onboarding ' + (onboardingConfig.enabled ? 'enabled (' + onboardingConfig.mode + ')' : 'disabled') + '.');
+} catch (error) {
+  Log('Member onboarding configuration rejected; worker not started: ' + error.message);
+}
 
 let guildSyncApplicationDiscordPostingEnabled = true;
 
