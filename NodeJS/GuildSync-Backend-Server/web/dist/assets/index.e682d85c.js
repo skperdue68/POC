@@ -610,7 +610,7 @@
         <label>Bonus rules for
           <select id="bonusRafflePicker" ${r?"":"disabled"}>
             <option value="">Default rules for upcoming raffles</option>
-            ${Mt.map(o=>`<option value="${f(`${o.type}:${o.salesEnd}`)}" ${vt===`${o.type}:${o.salesEnd}`?"selected":""}>${a(o.label)}${o.overridden?" (custom)":""}</option>`).join("")}
+            ${Mt.map(o=>`<option value="${f(`${o.type}:${o.salesEnd}`)}" ${vt===`${o.type}:${o.salesEnd}`?"selected":""}>${a(o.label)}${o.enabled?" (Bonuses)":""}</option>`).join("")}
           </select>
         </label>
         <form id="raffleBonusSettingsForm">

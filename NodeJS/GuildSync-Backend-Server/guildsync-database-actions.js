@@ -15,6 +15,7 @@ const DEFAULT_DEPOSIT_MAIL_BODY_TEMPLATE = [
   '',
   'We received your guild bank deposit of {amount} gold.',
   'Ticket Credit Earned: {ticket_quantity}',
+  '{bonus_block}',
   '{note_block}',
   '',
   'Transaction ID: {event_id}',
@@ -202,6 +203,12 @@ function renderDepositMailTemplate(template, row = {}) {
     raw_deposit_amount: row.deposit_amount == null ? '' : String(row.deposit_amount),
     ticket_quantity: row.ticket_quantity == null ? '0' : String(row.ticket_quantity),
     tickets: row.ticket_quantity == null ? '0' : String(row.ticket_quantity),
+    purchased_tickets: formatDepositMailAmount(row.purchasedTickets ?? row.ticket_quantity),
+    bonus_percent: String(row.bonusPercent || 0),
+    bonus_tickets: formatDepositMailAmount(row.bonusTickets),
+    total_tickets: formatDepositMailAmount(row.totalTickets ?? row.ticket_quantity),
+    bonus_deadline: row.bonusDeadline || '',
+    bonus_block: row.bonusBlock || '',
     ticket_gold_cost: formatDepositMailAmount(ticketGoldCost),
     gold_cost: formatDepositMailAmount(ticketGoldCost),
     raw_ticket_gold_cost: String(ticketGoldCost),
@@ -227,19 +234,37 @@ function renderDepositMailTemplate(template, row = {}) {
   }).trim();
 }
 
-function addRenderedDepositMailContent(row = {}) {
+function addRenderedDepositMailContent(row = {}, versions = [], overrides = []) {
   const normalized = normalizeDepositMailRow(row);
+  const bonus = calculateBankingEntryBonus(normalized, versions, overrides);
+  const bonusDeadline = bonus.bonusPercent > 0 ? new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true
+  }).format(new Date(bonus.bonusExpiresAt * 1000)) + ' ET' : '';
+  const bonusBlock = bonus.bonusPercent > 0 ? [
+    `Early Purchase Bonus: ${bonus.bonusPercent}% for buying before ${bonusDeadline}.`,
+    `Bonus Tickets: ${formatDepositMailAmount(bonus.bonusTickets)}`,
+    `Total Tickets: ${formatDepositMailAmount(bonus.totalTickets)}`
+  ].join('\n') : '';
   const recipient = getForcedDepositMailRecipient() || normalizeDepositMailRecipient(row.account_name || row.display_name || row.recipient || '');
   const templateRow = {
     ...row,
+    ...bonus,
+    bonusDeadline,
+    bonusBlock,
     recipient,
     account_name: recipient,
     display_name: recipient
   };
   const subject = renderDepositMailTemplate(getDepositMailSubjectTemplate(), templateRow);
-  const body = renderDepositMailTemplate(getDepositMailBodyTemplate(), templateRow);
+  const bodyTemplate = getDepositMailBodyTemplate();
+  const renderedBody = renderDepositMailTemplate(bodyTemplate, templateRow);
+  // Existing customized templates also receive the new receipt information.
+  const body = bonusBlock && !bodyTemplate.includes('{bonus_block}')
+    ? renderedBody + '\n\n' + bonusBlock : renderedBody;
   return {
     ...normalized,
+    ...bonus,
     recipient,
     subject,
     body,
@@ -2355,13 +2380,16 @@ export async function checkoutDepositMail(applicationDB, payload = {}) {
       [mailBatchId, checkedOutBy]
     );
 
+    const versions = await getRaffleBonusVersions(connection);
+    const overrides = await getRaffleBonusOverrides(connection);
+    const records = checkedOutRows.map(row => addRenderedDepositMailContent(row, versions, overrides));
     await connection.commit();
 
     return {
       mail_batch_id: mailBatchId,
       checked_out_by: checkedOutBy,
       checkout_minutes: checkoutMinutes,
-      records: checkedOutRows.map(addRenderedDepositMailContent),
+      records,
       records_checked_out: checkedOutRows.length
     };
   } catch (error) {

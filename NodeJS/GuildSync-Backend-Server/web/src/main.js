@@ -1945,7 +1945,7 @@ function renderRaffleBonusSettings() {
         <label>Bonus rules for
           <select id="bonusRafflePicker" ${canEdit ? '' : 'disabled'}>
             <option value="">Default rules for upcoming raffles</option>
-            ${raffleBonusRaffles.map((raffle) => `<option value="${escapeAttribute(`${raffle.type}:${raffle.salesEnd}`)}" ${selectedBonusRaffle === `${raffle.type}:${raffle.salesEnd}` ? 'selected' : ''}>${escapeHtml(raffle.label)}${raffle.overridden ? ' (custom)' : ''}</option>`).join('')}
+            ${raffleBonusRaffles.map((raffle) => `<option value="${escapeAttribute(`${raffle.type}:${raffle.salesEnd}`)}" ${selectedBonusRaffle === `${raffle.type}:${raffle.salesEnd}` ? 'selected' : ''}>${escapeHtml(raffle.label)}${raffle.enabled ? ' (Bonuses)' : ''}</option>`).join('')}
           </select>
         </label>
         <form id="raffleBonusSettingsForm">
