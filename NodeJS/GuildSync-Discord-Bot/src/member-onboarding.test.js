@@ -48,8 +48,8 @@ test('missing Gangster or unconfirmed links do not promote or send',async()=>{
  }
 });
 test('private thread reuse and accepted-message reconciliation avoid duplicates after acknowledgement failure',async()=>{
- const f=fixture('reminder');f.messages.set('old',{id:'old',author:{id:'bot'},content:'<@user> reminder',createdTimestamp:2000000});
- await processOnboardingDelivery(f.context,{...f.job,threadId:'thread',content:'<@user> reminder',attemptAt:1999});
+ const f=fixture('reminder');f.messages.set('old',{id:'old',author:{id:'bot'},content:'**Account linking reminder**\n<@user> reminder',createdTimestamp:2000000});
+ await processOnboardingDelivery(f.context,{...f.job,threadId:'thread',content:'**Account linking reminder**\n<@user> reminder',attemptAt:1999});
  assert.equal(f.actions.includes('create'),false);assert.equal(f.actions.includes('send'),false);assert.equal(f.finishes.at(-1).messageId,'old');
 });
 test('permission or history failures never send publicly, and mentions are restricted',async()=>{
@@ -81,9 +81,38 @@ test('existing private threads are discovered before copying and archived thread
  f.parent.threads.fetchArchived=async()=>({threads:new Collection([['thread',f.thread]]),hasMore:false});
  await processOnboardingDelivery(f.context,f.job);assert.equal(f.actions.includes('create'),false);assert.ok(f.actions.includes('unarchive'));assert.equal(f.finishes.at(-1).done,true);
 });
+test('private archive pagination requests all private threads with timestamp cursor',async()=>{
+ const f=fixture('reminder');let pages=0;
+ f.parent.threads.fetchArchived=async options=>{
+  assert.equal(options.fetchAll,true);
+  if(pages++===0)return {threads:new Collection([['other',{id:'other',name:'other',archiveTimestamp:1500000}]]),hasMore:true};
+  assert.equal(options.before,1500000);return {threads:new Collection(),hasMore:false};
+ };
+ await processOnboardingDelivery(f.context,f.job);assert.equal(f.finishes.at(-1).done,true);assert.equal(pages,2);
+});
+test('message recovery does not adopt another recipient or a different delivery nonce',async()=>{
+ for(const cause of ['recipient','nonce']) {
+  const f=fixture('reminder');const content=cause==='recipient'?'Identical custom message':'**Account linking reminder**\n<@user> reminder';
+  f.messages.set('wrong',{id:'wrong',author:{id:'bot'},content,createdTimestamp:2000000,...(cause==='nonce'?{nonce:'different-job'}:{})});
+  await processOnboardingDelivery(f.context,{...f.job,threadId:'thread',content,attemptAt:1999});
+  assert.notEqual(f.finishes.at(-1).messageId,'wrong');
+ }
+});
+test('fresh join timestamps are observed and eligibility rechecked before notification',async()=>{
+ const f=fixture('reminder');const emit=f.socket.emit;
+ f.socket.emit=(event,payload,cb)=>{if(event.endsWith('observe')){assert.equal(payload.member.joined_at,1001);f.setValid(false);}emit(event,payload,cb);};
+ await processOnboardingDelivery(f.context,f.job);assert.equal(f.actions.includes('send'),false);assert.equal(f.finishes.at(-1).cancelled,true);
+});
 test('disabled worker registers configuration but never observes or claims',async()=>{
  const events=new Map(),calls=[];const client={isReady:()=>true,on:(name,fn)=>events.set(name,fn),off(){}};
  const socket={connected:true,id:'socket',on(){},off(){},timeout(){return this;},emit(event,payload,cb){calls.push(event);cb(null,{ok:true,result:{}});}};
  const worker=createOnboardingWorker({client,socket,guildId:'123',config:readOnboardingConfig({}),log:()=>{}});
  await worker.tick();worker.stop();assert.deepEqual(calls,['guildsync:onboarding-configure']);
+});
+
+test('recovery excludes successful messages from earlier promotion generations',async()=>{
+ const f=fixture('promotion');const content='**Account linked**\n<@user> linked';
+ f.messages.set('prior',{id:'prior',author:{id:'bot'},content,createdTimestamp:2000000});
+ await processOnboardingDelivery(f.context,{...f.job,threadId:'thread',content,attemptAt:1999,previousMessageIds:['prior']});
+ assert.ok(f.actions.includes('send'));assert.notEqual(f.finishes.at(-1).messageId,'prior');
 });

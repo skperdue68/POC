@@ -7,18 +7,22 @@ export async function notifyDiscordConfirmedLink(db,userId) {
  if(service) await service.observeConfirmedLink(userId).catch(error=>service.log('Onboarding link queue retry needed: '+error.message));
 }
 export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=()=>Math.floor(Date.now()/1000),log=console.log,wake=()=>{}}={}) {
- const id=(g,u,kind)=>createHash('sha256').update(g+':'+u+':'+kind).digest('hex');
+ const id=(g,u,kind,generation=0)=>createHash('sha256').update(g+':'+u+':'+kind+':'+generation).digest('hex');
  const reminderOn=config=>config?.enabled && config.reminderEnabled;
  async function enqueue(s,g,u,kind,esoName) {
-  const jobId=id(g,u,kind),existing=await s.job(jobId);
+  const existing=kind==='promotion'?(await s.jobs(g)).filter(j=>j.userId===u && j.kind===kind).sort((a,b)=>(b.generation || 0)-(a.generation || 0))[0]:await s.job(id(g,u,kind));
+  let generation=0;
   if(existing) {
+   if(kind==='promotion' && existing.status==='done') generation=(existing.generation || 0)+1;
+   else {
    if(existing.status==='cancelled' && (kind==='promotion' || !existing.attemptAt)) {
-    existing.status='pending';existing.claimToken=null;existing.leaseUntil=0;existing.retryAt=0;
+    existing.status='pending';existing.claimToken=null;existing.leaseUntil=0;
     await s.putJob(existing);
    }
-   return;
+    return;
+   }
   }
-  await s.putJob({id:jobId,guildId:g,userId:u,kind,esoName,status:'pending',leaseUntil:0,retryAt:0});
+  await s.putJob({id:id(g,u,kind,generation),guildId:g,userId:u,kind,generation,esoName,status:'pending',leaseUntil:0,retryAt:0});
   log('Onboarding queued '+kind+' for '+u);
  }
  async function ensureMember(s,g,u) {
@@ -82,12 +86,13 @@ export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=
     if(await s.confirmed(m.userId)){m.eligibleSince=null;await s.putMember(m);}
     else if(reminderOn(state.config))await enqueue(s,guildId,m.userId,'reminder');
    }
-   for(const job of await s.jobs(guildId)) {
+   const jobs=(await s.jobs(guildId)).sort((a,b)=>(a.retryAt || 0)-(b.retryAt || 0) || a.id.localeCompare(b.id));
+   for(const job of jobs) {
     if(job.status!=='pending' || job.leaseUntil>now() || job.retryAt>now())continue;
     if(!await check(s,guildId,job,state)){job.status='cancelled';await s.putJob(job);continue;}
     job.claimToken=randomUUID();job.leaseUntil=now()+300;await s.putJob(job);
     const member=await s.member(guildId,job.userId);
-    return {...job,threadId:job.threadId || member.threadId,config:state.config};
+    return {...job,threadId:job.threadId || member.threadId,config:state.config,previousMessageIds:jobs.filter(j=>j.userId===job.userId && j.status==='done' && j.messageId).map(j=>j.messageId)};
    }return null;
   });},
   async validate(g,j,t) {return store.atomic(g,async s=>{const job=await claimed(s,g,j,t);return {valid:await check(s,g,job,await s.state(g)),esoName:await s.confirmed(job.userId)};});},
@@ -104,7 +109,7 @@ export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=
     const m=await s.member(g,job.userId);
     if(job.kind==='reminder')m.remindedAt=now();else if(result.promoted!==false)m.promotedAt=now();
     m.eligibleSince=null;await s.putMember(m);
-   }else if(result.cancelled){job.status='cancelled';const m=await s.member(g,job.userId);m.eligibleSince=null;await s.putMember(m);}
+   }else if(result.cancelled){job.status='cancelled';job.retryAt=now()+60;const m=await s.member(g,job.userId);if(!m.present || await s.confirmed(job.userId))m.eligibleSince=null;await s.putMember(m);}
    else {job.retryAt=now()+60;job.lastError=String(result.error || 'Retry requested').slice(0,1000);}
    await s.putJob(job);return {completed:job.status==='done'};
   });}

@@ -58,13 +58,13 @@ GUILDSYNC_ONBOARDING_PROMOTION_MESSAGE="{mention}, your Discord account is now l
 GUILDSYNC_ONBOARDING_REMINDER_MESSAGE="{mention}, please update your Discord server nickname to match your ESO account name so GuildSync can link your accounts and grant full server access."
 ```
 
-Blank values use these defaults. Quote templates in `.env` when they contain `#`. Unknown placeholders and templates longer than 1800 characters are rejected. Only the intended user's mention is allowed; role/everyone mentions are suppressed. Inserted ESO names are escaped. The rendered message is persisted before delivery, so edits to templates do not change an already pending notification.
+Blank values use these defaults. Quote templates in `.env` when they contain `#`. Unknown placeholders and templates longer than 1800 characters are rejected. Notifications include an account-linking heading. If a custom template omits `{mention}`, GuildSync adds the member mention automatically. Only the intended user's mention is allowed; role/everyone mentions are suppressed. Inserted ESO names are escaped. The rendered message is persisted before delivery, so edits to templates do not change an already pending notification.
 
 ## Eligibility and recovery
 
 Reminder enrollment includes only non-bot members whose actual Discord join timestamp is after the enabled cutoff. Existing members are excluded on first enable. Restarting or reconnecting preserves the cutoff. Startup checks recover joins missed during downtime using their true join time, not the time of synchronization.
 
-Disabling reminders/master onboarding and restarting the bot ends enrollment and clears pending eligibility. Re-enabling establishes a new cutoff; members joining while disabled are excluded. A completed reminder is retained across leave/rejoin, so the same Discord member is not reminded again. Linking or leaving cancels pending reminder work. Existing linked Gangster members can still qualify for promotion; promotion is independent of new-join reminder enrollment.
+Disabling reminders/master onboarding and restarting the bot ends enrollment and clears pending eligibility. Re-enabling establishes a new cutoff; members joining while disabled are excluded. A completed reminder is retained across leave/rejoin, so the same Discord member is not reminded again. Linking or leaving cancels pending reminder work. A member who rejoins with Gangster can be promoted again; each promotion keeps a separate delivery identity, while reminders remain once per member. Existing linked Gangster members can still qualify for promotion; promotion is independent of new-join reminder enrollment.
 
 Private threads are reused for the member's reminder and later promotion message. Archived threads are reopened. Role-change retries finish a partial promotion without announcing premature success. Message retries reconcile history before resending after an uncertain acknowledgement. Missing history/permissions stops delivery until corrected. This avoids knowingly repeating a reminder, although no distributed network operation can guarantee exactly-once delivery in every failure scenario.
 

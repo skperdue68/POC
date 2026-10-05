@@ -12,10 +12,11 @@ export async function initializeDiscordOnboardingSchema(db) {
   ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS guildsync_discord_onboarding_deliveries (
     delivery_id VARCHAR(64) PRIMARY KEY, guild_id VARCHAR(32) NOT NULL, discord_id VARCHAR(32) NOT NULL,
-    kind VARCHAR(16) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'pending', payload_json LONGTEXT NOT NULL,
+    kind VARCHAR(16) NOT NULL, generation INT NOT NULL DEFAULT 0,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending', payload_json LONGTEXT NOT NULL,
     claim_token VARCHAR(64) NULL, lease_until BIGINT NOT NULL DEFAULT 0, retry_at BIGINT NOT NULL DEFAULT 0,
     last_error TEXT NULL, completed_at BIGINT NULL,
-    UNIQUE KEY onboarding_member_kind (guild_id, discord_id, kind),
+    UNIQUE KEY onboarding_member_kind (guild_id, discord_id, kind, generation),
     INDEX onboarding_pending (guild_id, status, retry_at)
   ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
  ]) await db.query(sql);

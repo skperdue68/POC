@@ -19,3 +19,6 @@ test('templates escape inserted names and limit ping to intended user',()=>{
  assert.deepEqual(result.allowedMentions,{parse:[],users:['123']});
  assert.match(result.content,/<@123>/);assert.doesNotMatch(result.content,/\*\*bob\*\*/);
 });
+test('a customized template still tags the intended member when placeholder is omitted',()=>{
+ assert.match(renderOnboardingMessage('Please link your account.',{userId:'123'}).content,/^<@123> /);
+});

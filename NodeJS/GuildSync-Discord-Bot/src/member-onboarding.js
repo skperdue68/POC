@@ -44,7 +44,7 @@ async function notificationDestination(context,job,member,progress) {
   const matches=[...(await parent.threads.fetchActive()).threads.values()].filter(t=>t.name===name && t.ownerId===client.user.id && t.type===ChannelType.PrivateThread);
   let before;
   do {
-   const page=await parent.threads.fetchArchived({type:'private',limit:100,...(before?{before}:{} )});
+   const page=await parent.threads.fetchArchived({type:'private',fetchAll:true,limit:100,...(before?{before}:{} )});
    matches.push(...[...page.threads.values()].filter(t=>t.name===name && t.ownerId===client.user.id && t.type===ChannelType.PrivateThread));
    if(!page.hasMore)break;
    const last=page.threads.last();
@@ -65,11 +65,13 @@ async function notificationDestination(context,job,member,progress) {
 }
 
 async function acceptedMessage(channel,client,job,progress) {
+ const heading=job.kind==='promotion'?'**Account linked**':'**Account linking reminder**';
+ if(!job.content.includes('<@'+job.userId+'>') || !job.content.startsWith(heading))throw Error('Stored notification lacks recipient or delivery context; cannot reconcile safely.');
  let before;
  while(true) {
   const messages=await channel.messages.fetch({limit:100,...(before?{before}:{})});
   const found=messages.find(message=>message.author.id===client.user.id && !message.interactionMetadata &&
-   message.content===job.content && message.createdTimestamp>=(job.attemptAt-60)*1000);
+   !(job.previousMessageIds || []).includes(message.id) && message.content===job.content && (message.nonce==null || String(message.nonce)===job.id.slice(0,24)) && message.createdTimestamp>=(job.attemptAt-60)*1000);
   if(found)return found;
   const oldest=messages.last();
   if(!oldest || messages.size<100 || oldest.createdTimestamp<(job.attemptAt-60)*1000)return null;
@@ -89,14 +91,17 @@ export async function processOnboardingDelivery(context,job) {
   const guild=await client.guilds.fetch(guildId);
   let member;
   try {member=await guild.members.fetch({user:job.userId,force:true});}catch(error){if(error.code!==10007)throw error;}
-  if(!member || member.user.bot){await finish({cancelled:true});return;}
+  if(!member || member.user.bot){await request(socket,'observe',{guildId,member:{discord_id:job.userId,present:false}});await finish({cancelled:true});return;}
+  await request(socket,'observe',{guildId,member:{discord_id:job.userId,joined_at:member.joinedTimestamp?Math.floor(member.joinedTimestamp/1000):undefined,present:true}});
+  validity=await request(socket,'validate',payload);
+  if(!validity.valid){await finish({cancelled:true});return;}
   let associateName='Associate';
   if(job.kind==='promotion') {
    const roles=await guild.roles.fetch(),gangster=roleByName(roles,config.gangsterRoleId,'gangster'),associate=roleByName(roles,config.associateRoleId,'Associate');
    associateName=associate.name;
    if(gangster.id===associate.id)throw Error('Gangster and Associate must be different roles.');
    if(!member.roles.cache.has(gangster.id)) {
-    if(!(job.roleStarted || job.roleChanged)){await finish({done:true,promoted:false});return;}
+    if(!(job.roleStarted || job.roleChanged)){await finish({cancelled:true});return;}
     if(!member.roles.cache.has(associate.id))throw Error('Interrupted promotion no longer has the Associate role.');
    }else {
     if(!gangster.editable || !associate.editable || !member.manageable)throw Error('Bot cannot manage onboarding roles; check Manage Roles and role hierarchy.');
@@ -116,7 +121,7 @@ export async function processOnboardingDelivery(context,job) {
   if(!job.content) {
    const rendered=renderOnboardingMessage(job.kind==='promotion'?config.promotionMessage:config.reminderMessage,
     {userId:job.userId,esoName:validity.esoName || job.esoName,associateRole:associateName,hours:config.reminderHours});
-   job.content=rendered.content;await progress({content:job.content});
+   job.content=(job.kind==='promotion'?'**Account linked**':'**Account linking reminder**')+'\n'+rendered.content;if(job.content.length>2000)throw Error('Onboarding notification exceeds Discord message length.');await progress({content:job.content});
   }
   if(job.attemptAt) {
    const existing=await acceptedMessage(destination,client,job,progress);

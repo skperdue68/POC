@@ -45,7 +45,7 @@ test('confirmed Gangster links promote independently of reminder enrollment and 
  await f.service.progress('1',job.id,job.claimToken,{threadId:'t',roleChanged:true});
  await f.service.finish('1',job.id,job.claimToken,{error:'temporary'});
  f.setNow(2000);const retry=await f.service.claim('1');assert.equal(retry.threadId,'t');assert.equal(retry.roleChanged,true);
- await f.service.finish('1',retry.id,retry.claimToken,{done:true});assert.equal(await f.service.claim('1'),null);
+ await f.service.finish('1',retry.id,retry.claimToken,{done:true});f.gangsters.delete('old');assert.equal(await f.service.claim('1'),null);
 });
 test('onboarding endpoints reject unauthenticated and cross-guild callers',async()=>{
  const handlers={};const f=fixture();const socket={on:(name,fn)=>handlers[name]=fn};
@@ -60,9 +60,31 @@ test('onboarding endpoints reject unauthenticated and cross-guild callers',async
 test('unattempted canceled jobs resume after re-enabling or an eligible rejoin',async()=>{
  const f=fixture();await f.service.configure('1',f.config);f.links.set('old','ESO');f.gangsters.add('old');
  let job=await f.service.claim('1');await f.service.finish('1',job.id,job.claimToken,{cancelled:true});
- job=await f.service.claim('1');assert.equal(job?.kind,'promotion');await f.service.finish('1',job.id,job.claimToken,{done:true});
+ f.setNow(1061);job=await f.service.claim('1');assert.equal(job?.kind,'promotion');await f.service.finish('1',job.id,job.claimToken,{done:true});f.gangsters.delete('old');
  await f.service.observeMember('1',{discord_id:'new',joined_at:1001});f.setNow(100000);
  job=await f.service.claim('1');await f.service.finish('1',job.id,job.claimToken,{cancelled:true});
  await f.service.observeMember('1',{discord_id:'new',joined_at:100001});f.setNow(200000);
+ assert.equal((await f.service.claim('1'))?.userId,'new');
+});
+test('completed promotion can occur again, retaining both notification identities and one-time reminders',async()=>{
+ const f=fixture();await f.service.configure('1',f.config);f.links.set('old','ESO');f.gangsters.add('old');
+ const first=await f.service.claim('1');await f.service.finish('1',first.id,first.claimToken,{done:true,messageId:'first-message'});
+ await f.service.observeMember('1',{discord_id:'old',joined_at:1002,present:false});
+ await f.service.observeMember('1',{discord_id:'old',joined_at:1003,present:true});
+ f.setNow(1004);const second=await f.service.claim('1');assert.equal(second?.kind,'promotion');assert.notEqual(second.id,first.id);
+ assert.equal(f.jobs.get(first.id).messageId,'first-message');assert.deepEqual(second.previousMessageIds,['first-message']);
+});
+test('fresh work and older retries are processed before recently failed jobs',async()=>{
+ const f=fixture();await f.service.configure('1',f.config);f.links.set('old','ESO');f.gangsters.add('old');
+ const first=await f.service.claim('1');await f.service.finish('1',first.id,first.claimToken,{error:'permission problem'});
+ f.links.set('new','ESO2');f.gangsters.add('new');f.setNow(1100);
+ const next=await f.service.claim('1');assert.equal(next.userId,'new');
+});
+test('a missed rejoin restarts the reminder delay without losing new enrollment',async()=>{
+ const f=fixture();await f.service.configure('1',f.config);await f.service.observeMember('1',{discord_id:'new',joined_at:1001});
+ f.setNow(100000);const old=await f.service.claim('1');
+ await f.service.observeMember('1',{discord_id:'new',joined_at:100001});f.setNow(100002);
+ assert.equal((await f.service.validate('1',old.id,old.claimToken)).valid,false);
+ await f.service.finish('1',old.id,old.claimToken,{cancelled:true});f.setNow(186401);
  assert.equal((await f.service.claim('1'))?.userId,'new');
 });
