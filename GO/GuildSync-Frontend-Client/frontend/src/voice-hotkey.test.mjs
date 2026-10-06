@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-const source = await readFile(new URL('./voice-hotkey.js', import.meta.url), 'utf8');
+const captureSource=await readFile(new URL('./shortcut-capture.js',import.meta.url),'utf8');
+const source = (await readFile(new URL('./voice-hotkey.js', import.meta.url), 'utf8')).replace('./shortcut-capture.js','data:text/javascript;base64,'+Buffer.from(captureSource).toString('base64'));
 const {createVoiceHotkeyController} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('menu is hidden unless policy and Discord role access are both confirmed',async()=>{

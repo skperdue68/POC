@@ -6,6 +6,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -21,45 +22,63 @@ type voiceShortcut struct {
 }
 
 func parseVoiceShortcut(input string) (voiceShortcut, error) {
-	var result voiceShortcut
-	modifiers := map[string]int{"CTRL": 17, "ALT": 18, "SHIFT": 16}
+	result := voiceShortcut{}
+	codes := map[string]int{"CTRL": 17, "ALT": 18, "SHIFT": 16, "SPACE": 32, "TAB": 9, "ENTER": 13, "BACKSPACE": 8, "DELETE": 46, "INSERT": 45, "HOME": 36, "END": 35, "PAGEUP": 33, "PAGEDOWN": 34, "LEFT": 37, "UP": 38, "RIGHT": 39, "DOWN": 40}
+	labels := map[string]string{"CTRL": "Ctrl", "ALT": "Alt", "SHIFT": "Shift", "SPACE": "Space", "TAB": "Tab", "ENTER": "Enter", "BACKSPACE": "Backspace", "DELETE": "Delete", "INSERT": "Insert", "HOME": "Home", "END": "End", "PAGEUP": "PageUp", "PAGEDOWN": "PageDown", "LEFT": "Left", "UP": "Up", "RIGHT": "Right", "DOWN": "Down"}
 	seen := map[string]bool{}
-	parts := strings.Split(strings.ToUpper(strings.TrimSpace(input)), "+")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if seen[part] {
-			return result, fmt.Errorf("duplicate key")
+	for _, part := range strings.Split(strings.ToUpper(strings.TrimSpace(input)), "+") {
+		key := strings.TrimSpace(part)
+		if seen[key] {
+			return result, fmt.Errorf("duplicate shortcut key")
 		}
-		seen[part] = true
-		if key, ok := modifiers[part]; ok {
-			result.keys = append(result.keys, key)
+		seen[key] = true
+		code := codes[key]
+		if len(key) == 1 && ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= '0' && key[0] <= '9')) {
+			code = int(key[0])
 		}
-	}
-	key := parts[len(parts)-1]
-	code := 0
-	if len(key) == 1 && ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= '0' && key[0] <= '9')) {
-		code = int(key[0])
-	}
-	for n := 1; n <= 12; n++ {
-		if key == fmt.Sprintf("F%d", n) {
-			code = 111 + n
+		for n := 1; n <= 12; n++ {
+			if key == fmt.Sprintf("F%d", n) {
+				code = 111 + n
+			}
 		}
-	}
-	if len(result.keys) == 0 || len(result.keys) != len(parts)-1 || code == 0 {
-		return result, fmt.Errorf("use Ctrl, Alt, or Shift plus a letter, number, or F1–F12")
-	}
-	if (seen["ALT"] && key == "F4") || (seen["CTRL"] && key == "F4") {
-		return result, fmt.Errorf("reserved Windows shortcut")
-	}
-	result.keys = append(result.keys, code)
-	labels := []string{}
-	for _, m := range []string{"CTRL", "ALT", "SHIFT"} {
-		if seen[m] {
-			labels = append(labels, strings.Title(strings.ToLower(m)))
+		if code == 0 {
+			return result, fmt.Errorf("use one or more letters, numbers, F1–F12, Ctrl, Alt, Shift, or supported navigation keys")
 		}
+		result.keys = append(result.keys, code)
 	}
-	labels = append(labels, key)
-	result.label = strings.Join(labels, "+")
+	if ((seen["ALT"] || seen["CTRL"]) && seen["F4"]) || (seen["ALT"] && seen["TAB"]) || (seen["CTRL"] && seen["ALT"] && seen["DELETE"]) {
+		return result, fmt.Errorf("reserved system shortcut")
+	}
+	order := func(code int) int {
+		switch code {
+		case 17:
+			return -3
+		case 18:
+			return -2
+		case 16:
+			return -1
+		}
+		return code
+	}
+	sort.Slice(result.keys, func(i, j int) bool { return order(result.keys[i]) < order(result.keys[j]) })
+	canonical := []string{}
+	for _, code := range result.keys {
+		label := ""
+		for key, value := range codes {
+			if value == code {
+				label = labels[key]
+			}
+		}
+		if label == "" {
+			if code >= 112 {
+				label = fmt.Sprintf("F%d", code-111)
+			} else {
+				label = string(rune(code))
+			}
+		}
+		canonical = append(canonical, label)
+	}
+	result.label = strings.Join(canonical, "+")
 	return result, nil
 }
 

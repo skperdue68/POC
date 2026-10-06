@@ -1,3 +1,4 @@
+import {createShortcutCapture} from './shortcut-capture.js';
 export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authenticated, changed = () => {} }) {
   let settings = { enabled: false, shortcut: 'Ctrl+M', supported: false };
   let held = false, sessionId = null, timer = null, capturing = false, message = '', initialized = false;
@@ -80,17 +81,19 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
   }
   function cancelCapture() {
     if (!capturing) return;
-    capturing = false; document.removeEventListener('keydown', capture, true);
+    capturing = false; shortcutCapture.cancel(); document.removeEventListener('keydown', capture, true);
+document.removeEventListener('keyup', captureUp, true);window.removeEventListener('blur', captureBlur);
     void bridge.SetVoiceHotkeyCapture(false);
   }
-  function capture(event) {
-    event.preventDefault(); event.stopImmediatePropagation();
-    if (event.key === 'Escape') { cancelCapture(); message = ''; notify(); return; }
-    if (['Control','Alt','Shift','Meta'].includes(event.key)) return;
-    const keys = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift'].filter(Boolean);
-    if (event.metaKey || !keys.length) { message = 'Use Ctrl, Alt, or Shift plus a letter, number, or function key.'; notify(); return; }
-    keys.push(event.key.toUpperCase()); void save(settings.enabled, keys.join('+'));
-  }
+  const shortcutCapture=createShortcutCapture({
+    save:shortcut=>void save(settings.enabled,shortcut),
+    cancel:()=>{cancelCapture();message='';notify();},
+    error:error=>{message=error;notify();},
+    changed:shortcut=>{message=shortcut+' — release all keys to save';notify();}
+  });
+  function capture(event){shortcutCapture.keydown(event);}
+  function captureUp(event){shortcutCapture.keyup(event);}
+  function captureBlur(){shortcutCapture.cancel();}
   function render() {
     if(!eligible)return '';
     if (!settings.supported) return '<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><p>Global voice hotkeys require the Windows desktop client.</p></div>';
@@ -100,8 +103,8 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
   function wire(menu) {
     menu.querySelector('#voiceHotkeyEnabled')?.addEventListener('change', event => void save(event.target.checked, settings.shortcut));
     menu.querySelector('#voiceHotkeyCapture')?.addEventListener('click', async () => {
-      release(); capturing = true; message = ''; await bridge.SetVoiceHotkeyCapture(true);
-      document.addEventListener('keydown', capture, true); notify();
+      release(); capturing = true; shortcutCapture.start(); message = 'Press one or more keys, then release all keys to save.'; await bridge.SetVoiceHotkeyCapture(true);
+      document.addEventListener('keydown', capture, true);document.addEventListener('keyup', captureUp, true);window.addEventListener('blur',captureBlur); notify();
     });
     const status = menu.querySelector('#voiceHotkeyStatus'); if (status) status.textContent = message;
   }
