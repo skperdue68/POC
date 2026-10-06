@@ -1,6 +1,8 @@
 # GuildSync detailed help and operator reference
 
-Updated October 5, 2026. This reference follows the current implementation, including the optional onboarding feature and public-thread fallback. Deploy the relevant merged changes before relying on a feature. The application/add-on release version remains 1.2.7; deployment of backend/bot changes is separate from packaging a desktop release.
+For the optional Windows voice shortcut, configuration, database tables and recovery rules, see [Voice Channel Mute](GuildSync-Voice-Mute.md).
+
+Updated October 5, 2026. This reference follows the current implementation, including optional onboarding and voice hotkeys. Deploy the relevant merged changes before relying on a feature. Application/add-on versions are managed by `tools/update-version.go`; deploying backend/bot changes is separate from packaging a desktop release.
 
 For everyday use, start with the [user guide](GuildSync-User-Guide.md). This document covers command access, data flows, configuration, persistence, and recovery.
 

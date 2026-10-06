@@ -6,6 +6,8 @@ import {createConfigurationService} from './admin-configuration.js';
 import {registerConfigurationSocket} from './admin-configuration-socket.js';
 import { createDiscordOnboarding } from './discord-onboarding.js';
 import { registerDiscordOnboardingSocket } from './discord-onboarding-socket.js';
+import {createVoiceMuteStore} from './voice-mute-store.js';
+import {registerVoiceMuteSocket} from './voice-mute-socket.js';
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -466,6 +468,7 @@ io.use(async (socket, next) => {
 });
 
 const onboardingService = createDiscordOnboarding(applicationDB, {log:Log,wake:()=>io.to('GuildSyncDiscordBot').emit('guildsync:onboarding-wake')});
+const voiceMuteStore = createVoiceMuteStore(applicationDB);
 
 const userAdministration = createUserAdministration(loginDB, {log:Log,onChange:async change=>{
   Log(`GuildSync user ${change.action} by ${change.actor_id}: ${change.discord_user_id}`);
@@ -520,6 +523,18 @@ io.on('connection', (socket) => {
     broadcast: configuration => io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration)
   });
   registerDiscordOnboardingSocket(socket, onboardingService);
+  registerVoiceMuteSocket(socket,voiceMuteStore,{
+    getBot:async()=>{
+      const candidate=io.sockets.sockets.get(discordBotSocketId) || [...io.sockets.sockets.values()].find(s=>s.guildSyncAuthType==='discord-bot');
+      const owner=await voiceMuteStore.owner(candidate?.guildSyncBot?.guild_id);
+      return io.sockets.sockets.get(owner);
+    },
+    authorizeUser:async current=>{
+      const [rows]=await loginDB.execute('SELECT role, allowed FROM guildsync_users WHERE discord_user_id = ? LIMIT 1',[current.guildSyncUser.discord_user_id]);
+      const role=roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role);
+      return Number(rows[0]?.allowed)===1 && (role==='user'||role==='admin');
+    },log:Log
+  });
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerArchiveSocket(socket, applicationDB);
   registerRaffleManagementSocket(socket, applicationDB, { sheets: sheetsRuntime });
@@ -2596,9 +2611,11 @@ io.on('connection', (socket) => {
 
     if (socket.guildSyncAuthType === 'discord-bot') {
       name = 'Discord Bot';
-      discordBotConnected = false;
-      discordBotSocketId = null;
-      discordBotConnectedAt = null;
+      if(discordBotSocketId===socket.id) {
+        discordBotConnected = false;
+        discordBotSocketId = null;
+        discordBotConnectedAt = null;
+      }
     } else if (user?.display_name) {
       name = user.display_name + ' GuildSync User';
     }

@@ -1,0 +1,30 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const source = await readFile(new URL('./voice-hotkey.js', import.meta.url), 'utf8');
+const {createVoiceHotkeyController} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+test('disconnect releases owner, blocks held replay, fresh press gets a new nonce', async () => {
+  globalThis.crypto ??= (await import('node:crypto')).webcrypto;
+  let edge; const calls = []; let connected = true;
+  const socket = {get connected() {return connected;}, emit(event,payload,ack) {calls.push({event,...payload}); ack?.({ok:true});}};
+  const bridge = {GetVoiceHotkeySettings:async()=>({enabled:true,shortcut:'Ctrl+M',supported:true}),SetVoiceHotkeyActive:async()=>{}};
+  const control = createVoiceHotkeyController({bridge,eventsOn:(_,fn)=>edge=fn,getSocket:()=>socket,authenticated:()=>true});
+  await control.connection(true);
+  edge({state:'pressed'}); edge({state:'pressed'});
+  assert.equal(calls.length,1); const first = calls[0].sessionId;
+  await control.connection(false);
+  assert.equal(calls[1].state,'released'); assert.equal(calls[1].sessionId,first);
+  connected = false; edge({state:'pressed'}); connected = true;
+  await control.connection(true); edge({state:'pressed'});
+  assert.equal(calls.length,2);
+  edge({state:'released'}); edge({state:'pressed'});
+  assert.equal(calls.length,3); assert.notEqual(calls[2].sessionId,first);
+  control.stop(); assert.equal(calls[3].state,'released');
+});
+test('rejected press never retries until release', async () => {
+  let edge; let presses=0;
+  const bridge = {GetVoiceHotkeySettings:async()=>({enabled:true,shortcut:'Ctrl+M',supported:true}),SetVoiceHotkeyActive:async()=>{}};
+  const control = createVoiceHotkeyController({bridge,eventsOn:(_,fn)=>edge=fn,getSocket:()=>({connected:true,emit(event,payload,ack){if(payload.state==='pressed')presses++; ack?.({ok:false,message:'Forbidden'});}}),authenticated:()=>true});
+  await control.initialize(); edge({state:'pressed'}); edge({state:'pressed'});
+  assert.equal(presses,1); control.stop();
+});

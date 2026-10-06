@@ -10,6 +10,8 @@ New accounts await approval as **Viewer** by default. Viewers can browse data, r
 
 ## What GuildSync does
 
+Authorized Windows desktop users can optionally hold **Ctrl+M** (or a shortcut chosen in their avatar menu) to mute lower-ranked members in their current Discord voice channel. Releasing the keys or leaving ends the session; moderator mutes are preserved. An administrator must first enable it and select allowed Discord roles. See [Voice Channel Mute](GuildSync-Voice-Mute.md).
+
 GuildSync connects your guild's ESO activity with Discord and the raffle spreadsheets. It collects guild bank deposits and roster changes, keeps the records in a database, and uses those records to show raffle tickets, fill spreadsheets, and prepare receipt mail. It also helps officers review applications and match Discord members with ESO accounts.
 
 Data appears after an officer's ESO add-ons save it and the GuildSync desktop app uploads it. GuildSync does not query the live ESO bank when you run a Discord command.

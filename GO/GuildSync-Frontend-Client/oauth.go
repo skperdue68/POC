@@ -183,6 +183,7 @@ func (a *App) GetGuildSyncSession() (GuildSyncSession, error) {
 }
 
 func (a *App) LogoutGuildSync() (GuildSyncSession, error) {
+	_ = a.SetVoiceHotkeyActive(false)
 	session, _ := loadGuildSyncSession()
 	if session.Token != "" {
 		endpoint := strings.TrimRight(session.AuthServerURL, "/") + "/api/auth/logout"

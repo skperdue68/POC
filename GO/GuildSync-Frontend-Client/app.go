@@ -17,6 +17,7 @@ type App struct {
 	mu       sync.Mutex
 	quiting  bool
 	oauth    *oauthRuntimeState
+	voice    *voiceRuntime
 
 	fileWatcherMu        sync.Mutex
 	fileWatcherCancel    context.CancelFunc
@@ -53,6 +54,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	_ = a.SetVoiceHotkeyActive(false)
 	a.StopGuildSyncFileWatcher()
 	_ = a.SaveWindowState()
 	a.stopTray()

@@ -1,5 +1,17 @@
 // Only these operational settings may be displayed or overridden. Never accept arbitrary env keys.
 const configurationHelp={
+ "GUILDSYNC_VOICE_MUTE_ENABLED": {
+  "section": "Access and permissions",
+  "help": "Allows authenticated desktop users with an allowed Discord role to hold a shortcut to mute lower-ranked members in their current voice channel. Turning it off ends temporary sessions; confirmed moderator mutes remain."
+ },
+ "GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS": {
+  "section": "Access and permissions",
+  "help": "Comma-separated Discord role IDs allowed to request a channel mute. Blank permits nobody. GuildSync User or Admin access is also required; Viewers cannot use this feature."
+ },
+ "GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS": {
+  "section": "Rank protection",
+  "help": "Guild rank role IDs from lowest to highest, separated by commas. Leave blank to discover Gangsters through Kingpin by name. Equal, higher and unknown ranks are never muted; decorative roles are ignored."
+ },
  "GUILDSYNC_ONBOARDING_ENABLED": {
   "section": "Access and promotion",
   "help": "Turns member onboarding on or off. Only members joining after it is enabled are watched for a missing ESO link."
@@ -105,6 +117,9 @@ const define=(owner,group,key,label,type,defaultValue,extra={})=>({owner,group,k
 const onboarding=(key,label,type,value,extra)=>define('bot','Member onboarding','GUILDSYNC_ONBOARDING_'+key,label,type,value,extra);
 const raffle=(key,label,type,value,extra)=>define('bot','Raffle announcements','GUILDSYNC_RAFFLE_'+key,label,type,value,extra);
 export const configurationCatalog=[
+ define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_ENABLED','Enable voice channel hotkey mute','boolean',false),
+ define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS','Allowed requester role IDs (comma separated)','ids',''),
+ define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS','Guild rank role IDs (lowest to highest)','ids',''),
  onboarding('ENABLED','Enable member onboarding','boolean',false),
  onboarding('PROMOTION_ENABLED','Promote linked Gangsters to Associates','boolean',true),
  onboarding('PROMOTION_NOTIFY_ENABLED','Notify members after promotion','boolean',true),

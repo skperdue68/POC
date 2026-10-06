@@ -1,3 +1,4 @@
+import {createVoiceHotkeyController} from './voice-hotkey.js';
 import {canEditGuildSyncRole,canIngestGuildSyncRole,canManageGuildSyncLinksRole,canPerformGuildSyncEvent} from './role-permissions.js';
 import {renderRoleViewControls} from './role-view-controls.js';
 import {createUserAdministrationPanel,pendingBadge} from './user-administration.js';
@@ -97,6 +98,21 @@ let desktopClientUpdateInfo = {
 };
 
 let socket = null;
+const voiceHotkey = createVoiceHotkeyController({
+  bridge: new Proxy({}, {get: (_, name) => (...args) => window.go.main.App[name](...args)}),
+  eventsOn: EventsOn, getSocket: () => socket, authenticated: () => isAuthenticatedSession(),
+  changed: () => {
+    if (!profileMenuOpen) return;
+    const menu = document.querySelector('#discordProfileMenu');
+    const section = menu?.querySelector('#voiceHotkeySection');
+    if (!section) return;
+    const scrollTop = menu.scrollTop;
+    section.outerHTML = voiceHotkey.render();
+    voiceHotkey.wire(menu);
+    menu.scrollTop = scrollTop;
+  }
+});
+window.addEventListener('pagehide', () => voiceHotkey.stop());
 
 let discordMembers = [];
 let discordRoles = [];
@@ -8466,11 +8482,13 @@ function renderOpenProfileMenuContents() {
         ${renderProfileFileWatcherSection()}
       </div>
       ${guildSyncSession.user?.role==='admin'?`<button id="manageGuildSyncUsersButton" class="discord-secondary-button user-admin-menu-button" type="button">Manage GuildSync Users <span id="userAdminMenuCount"></span></button>`:''}
+      ${voiceHotkey.render()}
       ${renderRoleViewControls(guildSyncSession.user)}
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
   `;
 
+  voiceHotkey.wire(menu);
   menu.querySelectorAll('[data-role-view]').forEach(button=>button.addEventListener('click',()=>void changeGuildSyncRoleView(button.dataset.roleView)));
   document.querySelector('#manageGuildSyncUsersButton')?.addEventListener('click',()=>{closeProfileMenu(false);userAdministrationPanel.open();});
   updateUserAdministrationBadge(userAdministrationPanel.count);
@@ -8570,6 +8588,7 @@ function openProfileMenu() {
 }
 
 function closeProfileMenu(removeListeners = true) {
+  voiceHotkey.close();
   const menu = document.querySelector('#discordProfileMenu');
   if (menu) {
     menu.classList.remove('open');
@@ -8622,6 +8641,7 @@ async function startDiscordLogin() {
 }
 
 async function logoutGuildSync() {
+  voiceHotkey.stop();
   try {
     guildSyncSession = await LogoutGuildSync();
 
@@ -8663,6 +8683,7 @@ function connectSocket() {
   socket = io(socketURL, socketOptions);
 
   socket.on('connect', () => {
+    void voiceHotkey.connection(true);
     userAdministrationPanel.start();
     updateStatusDot();
     sendVersionCheck();
@@ -8699,6 +8720,7 @@ function connectSocket() {
   });
 
   socket.on('disconnect', () => {
+    void voiceHotkey.connection(false);
     userAdministrationPanel.stop();
     updateStatusDot();
     stopVersionCheckTimer();
@@ -8736,6 +8758,7 @@ function connectSocket() {
 }
 
 function disconnectSocket(updateDot = true) {
+  voiceHotkey.stop();
   userAdministrationPanel.reset();
   stopVersionCheckTimer();
 
