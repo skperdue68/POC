@@ -25,7 +25,31 @@ function database() {
   return [{}];
  }};return db;
 }
-const expected=row=>({allowed:row.allowed,role:row.role,email:row.email??'',guild_member_name:row.guild_member_name??''});
+const expected=row=>({allowed:row.allowed,role:row.role,email:row.email??'',guild_member_name:row.guild_member_name??'',revoked_at:row.revoked_at??null});
+test('admins can include revoked accounts without counting them as pending',async()=>{
+ const db=database(),service=createUserAdministration(db);
+ await service.change('1',{action:'revoke',discord_user_id:'3',expected:expected(db.users.get('3'))});
+ assert.equal((await service.list('1')).users.length,2);
+ const list=await service.list('1',{include_revoked:true});assert.equal(list.users.length,3);assert.ok(list.users.find(u=>u.discord_user_id==='3').revoked_at);assert.equal(list.pending_count,1);
+ await assert.rejects(service.list('3',{include_revoked:true}),/Admin/);
+});
+test('reinstate restores a revoked account with the selected role and renews login requirements',async()=>{
+ const db=database(),service=createUserAdministration(db);
+ await service.change('1',{action:'revoke',discord_user_id:'3',expected:expected(db.users.get('3'))});
+ const before={...db.users.get('3')};
+ const result=await service.change('1',{action:'reinstate',discord_user_id:'3',expected:expected(before),role:'viewer'});
+ assert.equal(result.removed,false);assert.equal(result.user.allowed,1);assert.equal(result.user.revoked_at,null);assert.equal(result.user.role,'viewer');assert.equal(result.user.email,before.email);assert.ok(result.user.requested_at);assert.ok(result.user.approved_at);assert.equal(db.sessions.has('3'),false);
+ await assert.rejects(service.change('1',{action:'reinstate',discord_user_id:'3',expected:expected(db.users.get('3'))}),/not revoked/);
+});
+test('reinstate retains the previous role by default and rejects stale revocation details',async()=>{
+ const db=database(),service=createUserAdministration(db);
+ await service.change('1',{action:'revoke',discord_user_id:'3',expected:expected(db.users.get('3'))});
+ const stale=expected(db.users.get('3'));db.users.get('3').revoked_at='2026-10-06T00:00:00.000Z';
+ await assert.rejects(service.change('1',{action:'reinstate',discord_user_id:'3',expected:stale}),/changed/);
+ await assert.rejects(service.change('2',{action:'reinstate',discord_user_id:'3',expected:expected(db.users.get('3'))}),/Admin/);
+ assert.equal(db.users.get('3').allowed,0);
+ const result=await service.change('1',{action:'reinstate',discord_user_id:'3',expected:expected(db.users.get('3'))});assert.equal(result.user.role,'user');assert.equal(result.user.allowed,1);
+});
 test('only current approved admins can list users or see pending counts',async()=>{
  const db=database(),service=createUserAdministration(db);await assert.rejects(service.list('3'),/Admin/);await assert.rejects(service.pending('2'),/Admin/);
  db.users.get('3').token='private';const result=await service.list('1');assert.equal(result.users.length,3);assert.equal(result.pending_count,1);assert.equal(result.users[2].token,undefined);

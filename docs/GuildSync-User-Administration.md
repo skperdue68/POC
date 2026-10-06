@@ -2,11 +2,12 @@
 
 Open your Discord avatar menu in the upper-right corner and select **Manage GuildSync Users**. This option is visible only to approved GuildSync admins. A numbered circle on the avatar shows accounts awaiting approval. The menu labels your GuildSync access level as **Role**; this is separate from your Discord rank.
 
-Search by name, email, role, or Discord ID, or select **Pending approval** to review new requests. Each record shows the account's Discord identity, guild member name, email, role, approval status, request date, and last login.
+Search by name, email, role, or Discord ID. **Show** offers **Current accounts**, **Pending approval**, and **Revoked accounts**. The default Current accounts list includes approved and pending users, while revoked users appear only in the Revoked accounts view. Each record shows the account's Discord identity, guild member name, email, role, approval status, request date, and last login; revoked records also show their revocation date.
 
 - **Approve account** grants access. New pending accounts default to **Viewer**. Select **User** for normal data editing or **Admin** for administrative access. See the [role permissions](GuildSync-Roles.md).
 - **Save changes** updates the email, guild member name, and selected role. Saving a pending record does not approve it; use **Approve account** for that.
-- **Revoke account** asks for confirmation, sets `allowed=0`, clears saved sessions, and disconnects active clients. The account record and its links to banking history remain intact. Revoked accounts are hidden from the account list and pending approval count. Their next Discord login returns the retained account to pending approval, with Viewer selected by default; it does not restore access automatically.
+- **Revoke account** asks for confirmation, sets `allowed=0`, clears saved sessions, and disconnects active clients. The account record and its links to banking history remain intact. Revoked accounts are hidden from Current accounts and the pending approval count; select Revoked accounts to review them. Their next Discord login returns the retained account to pending approval, with Viewer selected by default; it does not restore access automatically.
+- **Reinstate account**, available to Admins in the Revoked accounts view, restores access to the same account. It defaults to the retained role; select a different role before reinstating if needed. Any edited email and guild member name are saved with reinstatement. The revocation marker is cleared, approval and request timestamps are renewed, and old sessions remain invalid. The user must sign in again. Reinstated users return to Current accounts and do not appear in the pending count.
 
 You can edit your own email and guild member name, but cannot change your own role or revoke your own account. These restrictions are enforced on the server as well as in the interface. Another admin can change your role or revoke your account.
 
