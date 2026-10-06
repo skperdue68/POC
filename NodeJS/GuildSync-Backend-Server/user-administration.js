@@ -2,7 +2,7 @@ import {GUILDSYNC_ROLES} from './role-permissions.js';
 const columns='discord_user_id, username, global_name, guild_member_name, email, allowed, role, requested_at, approved_at, last_login_at, revoked_at';
 const fields=columns.split(', ');
 const publicUser=row=>Object.fromEntries(fields.map(key=>[key,row[key]??null]));
-const snapshot=row=>({allowed:Number(row.allowed),role:row.role,email:row.email??'',guild_member_name:row.guild_member_name??''});
+const snapshot=row=>({allowed:Number(row.allowed),role:row.role,email:row.email??'',guild_member_name:row.guild_member_name??'',revoked_at:row.revoked_at??null});
 function id(value){const clean=String(value??'');if(!/^\d{1,32}$/.test(clean))throw Error('Invalid Discord user ID.');return clean;}
 function values(payload){
  const result={};
@@ -22,11 +22,11 @@ export function createUserAdministration(db,{onChange=async()=>{},log=()=>{}}={}
  };
  const count=async()=>{const [rows]=await db.execute("SELECT COUNT(*) AS pending_count FROM guildsync_users WHERE revoked_at IS NULL AND (allowed = 0 OR role = 'pending')");return Number(rows[0]?.pending_count)||0;};
  return {
-  async list(actor){await authorize(actor);const [rows]=await db.execute(`SELECT ${columns} FROM guildsync_users WHERE revoked_at IS NULL ORDER BY allowed, requested_at DESC, username`);return {users:rows.map(publicUser),pending_count:await count()};},
+  async list(actor,{include_revoked=false}={}){await authorize(actor);if(typeof include_revoked!=='boolean')throw Error('Invalid revoked account filter.');const [rows]=await db.execute(`SELECT ${columns} FROM guildsync_users ${include_revoked?'':'WHERE revoked_at IS NULL'} ORDER BY allowed, requested_at DESC, username`);return {users:rows.map(publicUser),pending_count:await count()};},
   async pending(actor){await authorize(actor);return {pending_count:await count()};},
   async change(actor,payload={}){
    const actorId=id(actor),target=id(payload.discord_user_id),action=payload.action;
-   if(!['save','approve','remove','revoke'].includes(action))throw Error('Invalid user administration action.');
+   if(!['save','approve','remove','revoke','reinstate'].includes(action))throw Error('Invalid user administration action.');
    if(Object.keys(payload).some(key=>!['action','discord_user_id','expected','role','email','guild_member_name'].includes(key)))throw Error('Unsupported user field.');
    if(target===actorId&&(action!=='save'||Object.hasOwn(payload,'role')))throw Error('You cannot change your own role, approval, or revoke your own account.');
    const updates=values(payload);let result;const connection=await db.getConnection();
@@ -38,13 +38,19 @@ export function createUserAdministration(db,{onChange=async()=>{},log=()=>{}}={}
     const [rows]=await connection.execute(`SELECT ${columns} FROM guildsync_users WHERE discord_user_id = ? FOR UPDATE`,[target]);
     const row=rows[0];if(!row)throw Error('This user no longer exists. Refresh the list.');
     const current=snapshot(row),expected=payload.expected;
-    if(!expected||Object.keys(current).some(key=>key==='allowed'?Number(expected[key])!==current[key]:expected[key]!==current[key]))throw Error('This user changed. Refresh the list before saving.');
+    if(!expected||Object.keys(current).some(key=>key==='allowed'?Number(expected[key])!==current[key]:key==='revoked_at'?(expected[key]??null)!==current[key]:expected[key]!==current[key]))throw Error('This user changed. Refresh the list before saving.');
     if(action==='remove'||action==='revoke'){
+     const revoked_at=new Date().toISOString();
      await connection.execute('DELETE FROM guildsync_login_sessions WHERE discord_user_id = ?',[target]);
-     await connection.execute('UPDATE guildsync_users SET allowed = ?, revoked_at = ? WHERE discord_user_id = ?',[0,new Date().toISOString(),target]);
-     result={removed:true,revoked:true,discord_user_id:target};
+     await connection.execute('UPDATE guildsync_users SET allowed = ?, revoked_at = ? WHERE discord_user_id = ?',[0,revoked_at,target]);
+     result={removed:true,revoked:true,user:publicUser({...row,allowed:0,revoked_at}),discord_user_id:target};
     }else{
-     if(row.revoked_at)throw Error('This account has been revoked. Refresh the list.');
+     if(action==='reinstate'){
+      if(!row.revoked_at)throw Error('This account is not revoked. Refresh the list.');
+      const now=new Date().toISOString();
+      updates.allowed=1;updates.revoked_at=null;updates.role=updates.role||(GUILDSYNC_ROLES.includes(row.role)?row.role:'viewer');updates.approved_at=now;updates.requested_at=now;
+      await connection.execute('DELETE FROM guildsync_login_sessions WHERE discord_user_id = ?',[target]);
+     }else if(row.revoked_at)throw Error('This account has been revoked. Refresh the list.');
      if(action==='approve'){updates.allowed=1;updates.role=updates.role||(GUILDSYNC_ROLES.includes(row.role)?row.role:'viewer');updates.approved_at=new Date().toISOString();}
      const names=Object.keys(updates);if(!names.length)throw Error('No user changes were provided.');
      await connection.execute(`UPDATE guildsync_users SET ${names.map(key=>`${key} = ?`).join(', ')} WHERE discord_user_id = ?`,[...names.map(key=>updates[key]),target]);
@@ -66,7 +72,7 @@ export function registerUserAdministrationSocket(socket,service){
    callback({ok:true,...await action(socket.guildSyncUser.discord_user_id,payload)});
   }catch(error){callback({ok:false,message:error.message});}
  });
- route('guildsync:request-users',actor=>service.list(actor));
+ route('guildsync:request-users',(actor,payload)=>service.list(actor,payload));
  route('guildsync:request-pending-users',actor=>service.pending(actor));
  route('guildsync:change-user',(actor,payload)=>service.change(actor,payload));
 }

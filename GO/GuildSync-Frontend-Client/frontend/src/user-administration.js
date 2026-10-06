@@ -1,18 +1,22 @@
 import {GUILDSYNC_ROLES} from './role-permissions.js';
 const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-const pending=user=>!Number(user.allowed)||user.role==='pending';
-const snapshot=user=>({allowed:Number(user.allowed),role:user.role,email:user.email??'',guild_member_name:user.guild_member_name??''});
+const pending=user=>!user.revoked_at&&(!Number(user.allowed)||user.role==='pending');
+const snapshot=user=>({allowed:Number(user.allowed),role:user.role,email:user.email??'',guild_member_name:user.guild_member_name??'',revoked_at:user.revoked_at??null});
+export function filterUserAccounts(users,filter='all',search=''){
+ const query=search.trim().toLowerCase();
+ return users.filter(user=>(filter==='revoked'?!!user.revoked_at:!user.revoked_at&&(filter!=='pending'||pending(user)))&&(!query||[user.username,user.global_name,user.guild_member_name,user.email,user.discord_user_id,user.role].some(value=>String(value??'').toLowerCase().includes(query))));
+}
 export function pendingBadge(count){return Number(count)>0?`<span class="user-pending-badge" aria-hidden="true">${Number(count)>99?'99+':Number(count)}</span>`:'';}
 export function renderUserCard(user,actorId,draft={}){
- const own=user.discord_user_id===actorId,role=draft.role??(GUILDSYNC_ROLES.includes(user.role)?user.role:'viewer'),key=escape(user.discord_user_id);
+ const own=user.discord_user_id===actorId,revoked=!!user.revoked_at,role=draft.role??(GUILDSYNC_ROLES.includes(user.role)?user.role:'viewer'),key=escape(user.discord_user_id);
  return `<form class="user-admin-card" data-user-id="${key}">
-  <header><div><h3>${escape(user.guild_member_name||user.global_name||user.username||user.discord_user_id)}${own?' (You)':''}</h3><p>${escape(user.username)} · Discord ID: ${key}</p></div><span class="user-admin-status ${pending(user)?'is-pending':''}">${pending(user)?'Pending approval':'Approved'}</span></header>
+  <header><div><h3>${escape(user.guild_member_name||user.global_name||user.username||user.discord_user_id)}${own?' (You)':''}</h3><p>${escape(user.username)} · Discord ID: ${key}</p></div><span class="user-admin-status ${pending(user)?'is-pending':''}">${revoked?'Revoked':pending(user)?'Pending approval':'Approved'}</span></header>
   <fieldset class="user-admin-fields"><label>Email<input name="email" type="email" maxlength="255" value="${escape(draft.email??user.email??'')}" placeholder="Not configured"></label>
    <label>Guild member name<input name="guild_member_name" maxlength="255" value="${escape(draft.guild_member_name??user.guild_member_name??'')}" placeholder="ESO / guild display name"></label>
    ${own?`<div class="user-admin-own-role">Role: ${escape(user.role)}<small>Your role cannot be changed here.</small></div>`:`<label>Role<select name="role">${GUILDSYNC_ROLES.map(value=>`<option value="${value}" ${role===value?'selected':''}>${value[0].toUpperCase()+value.slice(1)}</option>`).join('')}</select></label>`}
   </fieldset>
-  <p class="user-admin-dates">Requested: ${escape(user.requested_at||'Not recorded')} · Last login: ${escape(user.last_login_at||'Never')}</p>
-  <div class="user-admin-actions"><button type="submit">Save changes</button>${!own&&pending(user)?'<button type="button" data-user-approve>Approve account</button>':''}${!own?'<button type="button" class="user-admin-remove" data-user-remove>Revoke account</button>':''}</div>
+  <p class="user-admin-dates">Requested: ${escape(user.requested_at||'Not recorded')} · Last login: ${escape(user.last_login_at||'Never')}${revoked?' · Revoked: '+escape(user.revoked_at):''}</p>
+  <div class="user-admin-actions">${revoked?(!own?'<button type="button" data-user-reinstate>Reinstate account</button><span>Restores access with the selected role. The user must sign in again.</span>':''):`<button type="submit">Save changes</button>${!own&&pending(user)?'<button type="button" data-user-approve>Approve account</button>':''}${!own?'<button type="button" class="user-admin-remove" data-user-remove>Revoke account</button>':''}`}</div>
  </form>`;
 }
 export function createUserAdministrationPanel({request,getUser,onCount=()=>{}}){
@@ -36,9 +40,9 @@ export function createUserAdministrationPanel({request,getUser,onCount=()=>{}}){
    const result=await request('guildsync:change-user',payload);if(!result?.ok)throw Error(result?.message||'Could not update this account.');
    if(current!==generation||!admin())return;
    drafts.delete(user.discord_user_id);
-   if(result.removed)users=users.filter(row=>row.discord_user_id!==user.discord_user_id);
-   else users=users.map(row=>row.discord_user_id===user.discord_user_id?result.user:row);
-   void refreshCount();drawRows();message(action==='revoke'?'Account access revoked and login sessions cleared. The account record is retained.':action==='approve'?'Account approved. The user can sign in now.':'Account changes saved.');
+   if(result.user)users=users.map(row=>row.discord_user_id===user.discord_user_id?result.user:row);
+   else if(result.removed)users=users.filter(row=>row.discord_user_id!==user.discord_user_id);
+   void refreshCount();drawRows();message(action==='revoke'?'Account access revoked and login sessions cleared. The account record is retained.':action==='reinstate'?'Account reinstated. The user can sign in again.':action==='approve'?'Account approved. The user can sign in now.':'Account changes saved.');
   }catch(error){if(current===generation)message(error.message);}finally{if(current===generation)setBusy(false);}
  };
  const confirmRemove=form=>{
@@ -49,25 +53,26 @@ export function createUserAdministrationPanel({request,getUser,onCount=()=>{}}){
  };
  function drawRows(){
   if(!overlay)return;const list=overlay.querySelector('.user-admin-list'),scroll=list.scrollTop;
-  const query=search.trim().toLowerCase(),rows=users.filter(user=>(filter!=='pending'||pending(user))&&(!query||[user.username,user.global_name,user.guild_member_name,user.email,user.discord_user_id,user.role].some(value=>String(value??'').toLowerCase().includes(query))));
+  const rows=filterUserAccounts(users,filter,search);
   list.innerHTML=rows.map(user=>renderUserCard(user,getUser().discord_user_id,drafts.get(user.discord_user_id))).join('')||'<p>No matching accounts.</p>';
   overlay.querySelector('[data-user-admin-count]').textContent=`${rows.length} account${rows.length===1?'':'s'} · ${count} pending`;
   list.querySelectorAll('[data-user-id]').forEach(form=>{
    form.addEventListener('input',()=>drafts.set(form.dataset.userId,collect(form)));
-   form.addEventListener('submit',event=>{event.preventDefault();void change(form,'save');});
+   form.addEventListener('submit',event=>{event.preventDefault();if(!users.find(user=>user.discord_user_id===form.dataset.userId)?.revoked_at)void change(form,'save');});
    form.querySelector('[data-user-approve]')?.addEventListener('click',()=>void change(form,'approve'));
    form.querySelector('[data-user-remove]')?.addEventListener('click',()=>confirmRemove(form));
+   form.querySelector('[data-user-reinstate]')?.addEventListener('click',()=>void change(form,'reinstate'));
   });list.scrollTop=scroll;setBusy(busy);
  }
  const load=async()=>{
   if(loading||busy||!admin())return;loading=true;setBusy(true);message('Loading GuildSync accounts...');const current=generation,revision=countRevision;
-  try{const result=await request('guildsync:request-users',{});if(!result?.ok)throw Error(result?.message||'Could not load accounts.');if(current!==generation||!admin())return;users=result.users;drafts.clear();if(revision===countRevision)setCount(result.pending_count);drawRows();message('Only admins can manage accounts. Your own role and account access are protected.');}
+  try{const result=await request('guildsync:request-users',{include_revoked:true});if(!result?.ok)throw Error(result?.message||'Could not load accounts.');if(current!==generation||!admin())return;users=result.users;drafts.clear();if(revision===countRevision)setCount(result.pending_count);drawRows();message('Only admins can manage accounts. Your own role and account access are protected.');}
   catch(error){if(current===generation)message(error.message);}finally{if(current===generation){loading=false;setBusy(false);}}
  };
  const close=()=>{if(busy&&!loading)return;overlay?.remove();overlay=null;if(previousFocus?.isConnected)previousFocus.focus({preventScroll:true});};
  const open=()=>{
   if(!admin()||overlay)return;previousFocus=document.activeElement;overlay=document.createElement('div');overlay.className='user-admin-overlay';overlay.setAttribute('role','dialog');overlay.setAttribute('aria-modal','true');overlay.setAttribute('aria-labelledby','userAdminTitle');
-  overlay.innerHTML='<section class="user-admin-dialog"><header class="user-admin-header"><div><h2 id="userAdminTitle">Manage GuildSync Users</h2><p>Review access requests and maintain GuildSync login records.</p></div><button type="button" data-user-admin-close aria-label="Close user administration">Close</button></header><p role="status" data-user-admin-message></p><div class="user-admin-toolbar"><label>Search accounts<input type="search" data-user-admin-search placeholder="Name, email, role, or Discord ID"></label><label>Show<select data-user-admin-filter><option value="all">All accounts</option><option value="pending">Pending approval</option></select></label><button type="button" data-user-admin-refresh>Refresh list (discard edits)</button><span data-user-admin-count></span></div><div class="user-admin-list"></div></section>';
+  overlay.innerHTML='<section class="user-admin-dialog"><header class="user-admin-header"><div><h2 id="userAdminTitle">Manage GuildSync Users</h2><p>Review access requests and maintain GuildSync login records.</p></div><button type="button" data-user-admin-close aria-label="Close user administration">Close</button></header><p role="status" data-user-admin-message></p><div class="user-admin-toolbar"><label>Search accounts<input type="search" data-user-admin-search placeholder="Name, email, role, or Discord ID"></label><label>Show<select data-user-admin-filter><option value="all">Current accounts</option><option value="pending">Pending approval</option><option value="revoked">Revoked accounts</option></select></label><button type="button" data-user-admin-refresh>Refresh list (discard edits)</button><span data-user-admin-count></span></div><div class="user-admin-list"></div></section>';
   document.body.append(overlay);overlay.querySelector('[data-user-admin-search]').value=search;overlay.querySelector('[data-user-admin-filter]').value=filter;
   overlay.querySelector('[data-user-admin-close]').addEventListener('click',close);
   overlay.querySelector('[data-user-admin-refresh]').addEventListener('click',()=>void load());

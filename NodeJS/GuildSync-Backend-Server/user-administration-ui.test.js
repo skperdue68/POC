@@ -1,8 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {createUserAdministrationPanel,renderUserCard,pendingBadge} from './web/src/user-administration.js';
+import {createUserAdministrationPanel,renderUserCard,pendingBadge,filterUserAccounts} from './web/src/user-administration.js';
 const row={discord_user_id:'1',username:'Test',role:'admin',allowed:1,email:'test@example.com',guild_member_name:'@Test'};
+test('Show separates current, pending, and revoked accounts and searches within the selected view',()=>{
+ const rows=[row,{...row,discord_user_id:'2',role:'viewer',allowed:0},{...row,discord_user_id:'3',username:'Former member',allowed:0,revoked_at:'2026-10-05T23:00:00.000Z'}];
+ assert.deepEqual(filterUserAccounts(rows).map(u=>u.discord_user_id),['1','2']);
+ assert.deepEqual(filterUserAccounts(rows,'pending').map(u=>u.discord_user_id),['2']);
+ assert.deepEqual(filterUserAccounts(rows,'revoked','FORMER').map(u=>u.discord_user_id),['3']);
+ assert.deepEqual(filterUserAccounts(rows,'revoked','missing'),[]);
+});
+test('revoked accounts show reinstatement instead of approval or revocation',()=>{
+ const html=renderUserCard({...row,discord_user_id:'2',allowed:0,revoked_at:'2026-10-05T23:00:00.000Z'},'1');
+ assert.match(html,/>Revoked<\/span>/);assert.match(html,/data-user-reinstate>Reinstate account/);assert.doesNotMatch(html,/data-user-approve|data-user-remove|type="submit"|Pending approval/);
+});
 test('own account has profile fields but no role editor or remove action',()=>{
  const html=renderUserCard(row,'1');assert.match(html,/name="email"/);assert.match(html,/name="guild_member_name"/);assert.doesNotMatch(html,/name="role"|data-user-remove|data-user-approve/);assert.match(html,/Your role cannot be changed here/);
 });
