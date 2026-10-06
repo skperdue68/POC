@@ -40,6 +40,16 @@ All settings below are optional environment settings. Existing configured destin
 | GUILDSYNC_ONBOARDING_PROMOTION_MESSAGE | Promotion message | Built-in message (shown in UI) | Allowed placeholders; maximum 1800 characters |
 | GUILDSYNC_ONBOARDING_REMINDER_MESSAGE | Unlinked member reminder | Built-in message (shown in UI) | Allowed placeholders; maximum 1800 characters |
 
+### Voice channel mute
+
+| Environment key | Purpose | Default | Validation |
+| --- | --- | --- | --- |
+| GUILDSYNC_VOICE_MUTE_ENABLED | Allow Windows desktop hotkey sessions | Disabled | boolean |
+| GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS | Roles permitted to request a session | Blank (nobody) | Comma-separated Discord IDs |
+| GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS | Guild rank order, lowest to highest | Blank (discover by name) | Comma-separated Discord IDs |
+
+See [Voice Channel Mute](GuildSync-Voice-Mute.md) for permissions, personal shortcut settings and recovery rules. These settings support live overrides and returning to the displayed default.
+
 ### Raffle announcements
 
 | Environment key | Purpose | Default | Validation |

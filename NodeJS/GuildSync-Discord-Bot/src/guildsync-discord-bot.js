@@ -1,6 +1,7 @@
 import {createLiveConfiguration} from './live-configuration.js';
 import {createOnboardingWorker} from './member-onboarding.js';
 import {readOnboardingConfig} from './member-onboarding-config.js';
+import {createVoiceMuteWorker,readVoiceMuteConfig} from './voice-mute.js';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -86,6 +87,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildModeration,
     GatewayIntentBits.DirectMessages
   ],
   partials: [
@@ -101,6 +103,8 @@ const liveConfiguration=createLiveConfiguration({start:async env=>{
   const config=readOnboardingConfig(env);
   const worker=createOnboardingWorker({client,socket:guildSyncSocket,guildId:DISCORD_GUILD_ID,config,log:Log});
   stops.push(()=>worker.stop());
+  const voiceWorker=createVoiceMuteWorker({client,socket:guildSyncSocket,guildId:DISCORD_GUILD_ID,config:readVoiceMuteConfig(env),log:Log});
+  stops.push(()=>voiceWorker.stop());
   if(client.isReady()&&guildSyncSocket.connected)void worker.tick();
   if(client.isReady()){
     const raffleStop=startRaffleAnnouncements(client,guildSyncSocket,Log,env);

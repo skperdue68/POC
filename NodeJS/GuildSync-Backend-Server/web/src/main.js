@@ -8928,6 +8928,7 @@ function renderOpenProfileMenuContents() {
         ${renderProfileFileWatcherSection()}
       </div>
       ${guildSyncSession.user?.role==='admin'?`<button id="manageGuildSyncUsersButton" class="discord-secondary-button user-admin-menu-button" type="button">Manage GuildSync Users <span id="userAdminMenuCount"></span></button>`:''}
+      <div class="profile-section"><strong>Voice Channel Mute</strong><p>Global voice hotkeys require the Windows desktop client.</p></div>
       ${renderRoleViewControls(guildSyncSession.user)}
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
