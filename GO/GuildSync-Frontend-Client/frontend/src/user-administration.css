@@ -46,3 +46,10 @@
 #userAdminMenuCount { font-size:11px; font-weight:400; }
 .profile-section.profile-user-management-section { margin-top:18px; }
 .profile-test-mode-section .profile-role-view-actions { margin-top:10px; }
+
+#voiceHotkeySection .voice-hotkey-row { font-size:12px; padding:7px 0; }
+.voice-hotkey-capture-button { margin-inline:auto; display:flex; align-items:center; justify-content:center; min-height:34px; padding:8px 14px; border:1px solid #668cd1; border-radius:8px; background:#245cbb; color:#fff; font:inherit; font-size:12px; font-weight:600; text-align:center; cursor:pointer; }
+.voice-hotkey-capture-button:hover { background:#1c4a99; }
+.voice-hotkey-capture-button:focus-visible { outline:2px solid #fff; outline-offset:3px; }
+#voiceHotkeySection .voice-hotkey-help { margin:8px 0 0; font-size:11px; line-height:1.4; color:#b5c3de; }
+#voiceHotkeyStatus:empty { display:none; }

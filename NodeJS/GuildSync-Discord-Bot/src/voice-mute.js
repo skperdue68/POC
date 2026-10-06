@@ -165,8 +165,10 @@ export function createVoiceMuteWorker({client,socket,guildId,config,log=console.
   finally{ticking=false;}
  };
  const request=async(payload,ack)=>{
+  const hotkeyEdge=['pressed','released'].includes(payload?.state);
+  if(hotkeyEdge)log('Voice hotkey '+payload.state+' received '+JSON.stringify({guildId,requesterId:payload.requesterId,connectionId:payload.connectionId,sessionId:payload.sessionId}));
   try{if(!controller)throw Error('Voice mute is recovering; try again shortly.');const result=await controller.request(payload);ack?.({ok:true,result});}
-  catch(error){ack?.({ok:false,message:error.message});}
+  catch(error){if(hotkeyEdge)log('Voice hotkey '+payload.state+' rejected: '+error.message);ack?.({ok:false,message:error.message});}
  };
  const voice=(before,after)=>{
   if(after.guild.id!==guildId)return;
