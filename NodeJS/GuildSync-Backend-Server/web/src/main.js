@@ -8927,7 +8927,7 @@ function renderOpenProfileMenuContents() {
         </div>
         ${renderProfileFileWatcherSection()}
       </div>
-      ${guildSyncSession.user?.role==='admin'?`<button id="manageGuildSyncUsersButton" class="discord-secondary-button user-admin-menu-button" type="button">Manage GuildSync Users <span id="userAdminMenuCount"></span></button>`:''}
+      ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
 
       ${renderRoleViewControls(guildSyncSession.user)}
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
@@ -10026,4 +10026,3 @@ wireGuildSyncEvents();
 showSplash();
 
 installWebSavedVarsFullScreenDropZone();
-
