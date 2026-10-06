@@ -14,6 +14,7 @@ const ingestionEvents = new Set([
 ]);
 export function canPerformGuildSyncEvent(role,event) {
   if (!GUILDSYNC_ROLES.includes(role)) return false;
+  if (event==='guildsync:voice-mute-access'||event==='guildsync:voice-mute-hotkey')return true;
   if (isReadOnlyGuildSyncEvent(event) || ingestionEvents.has(event)) return true;
   if (adminEvents.has(event)) return role === 'admin';
   return canEditGuildSyncRole(role);

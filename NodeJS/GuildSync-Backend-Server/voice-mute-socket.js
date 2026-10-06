@@ -18,7 +18,7 @@ export function registerVoiceMuteSocket(socket, store, {getBot, authorizeUser, i
  };
  socket.on('guildsync:voice-mute-access',async(_payload={},callback)=>{
   try {
-   if(!socket.guildSyncAuthenticated || socket.guildSyncAuthType==='discord-bot' || !socket.guildSyncUser?.discord_user_id || !await authorizeUser(socket))throw Error('Approved User or Admin access is required for voice mute.');
+   if(!socket.guildSyncAuthenticated || socket.guildSyncAuthType==='discord-bot' || !socket.guildSyncUser?.discord_user_id || !await authorizeUser(socket))throw Error('A valid Discord voice session or approved GuildSync account is required for voice mute.');
    if(!isEnabled()){accessReply(callback,{ok:true,enabled:false,allowed:false});return;}
    if(now()-accessWindowAt>=10000){accessWindowAt=now();accessRequests=0;}if(++accessRequests>10)throw Error('Too many voice-mute access checks.');
    const result=await forward({requesterId:socket.guildSyncUser.discord_user_id},'guildsync:voice-mute-access-request');
@@ -28,7 +28,7 @@ export function registerVoiceMuteSocket(socket, store, {getBot, authorizeUser, i
  });
  socket.on('guildsync:voice-mute-hotkey',async(payload={},callback)=>{
   try {
-   if(!socket.guildSyncAuthenticated || socket.guildSyncAuthType==='discord-bot' || !socket.guildSyncUser?.discord_user_id || !await authorizeUser(socket))throw Error('Approved User or Admin access is required for voice mute.');
+   if(!socket.guildSyncAuthenticated || socket.guildSyncAuthType==='discord-bot' || !socket.guildSyncUser?.discord_user_id || !await authorizeUser(socket))throw Error('A valid Discord voice session or approved GuildSync account is required for voice mute.');
    if(!payload || !['pressed','released','heartbeat'].includes(payload.state) || typeof payload.sessionId!=='string' || !/^[A-Za-z0-9_-]{1,64}$/.test(payload.sessionId))throw Error('Invalid voice mute request.');
    if(now()-windowAt>=10000){windowAt=now();requests=0;}
    if(++requests>100)throw Error('Too many voice mute requests. Release the shortcut and try again.');

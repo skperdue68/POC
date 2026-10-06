@@ -18,7 +18,7 @@ test('hotkey request uses authenticated identity, never the supplied identity/ch
 test('access check derives requester identity and fails closed for unauthorized callers',async()=>{
  const h=harness();await h.call('guildsync:voice-mute-access',{requesterId:'attacker'});
  assert.deepEqual(h.forwarded[0],{event:'guildsync:voice-mute-access-request',payload:{requesterId:'123'}});
- const no=harness({guildSyncAuthenticated:false});assert.deepEqual(await no.call('guildsync:voice-mute-access',{}),{ok:false,enabled:false,allowed:false,message:'Approved User or Admin access is required for voice mute.'});assert.equal(no.forwarded.length,0);
+ const no=harness({guildSyncAuthenticated:false});assert.deepEqual(await no.call('guildsync:voice-mute-access',{}),{ok:false,enabled:false,allowed:false,message:'A valid Discord voice session or approved GuildSync account is required for voice mute.'});assert.equal(no.forwarded.length,0);
 });
 test('unauthenticated and bot callers cannot use the client hotkey',async()=>{
  for(const override of [{guildSyncAuthenticated:false},{guildSyncAuthType:'discord-bot'}]) {const h=harness(override);assert.equal((await h.call('guildsync:voice-mute-hotkey',{state:'pressed',sessionId:'s'})).ok,false);assert.equal(h.forwarded.length,0);}
@@ -32,7 +32,7 @@ test('disabled policy never queries the bot and a disable during a query denies 
  assert.deepEqual(await check(),{ok:true,enabled:false,allowed:false});assert.equal(queries,0);
  enabled=true;assert.deepEqual(await check(),{ok:true,enabled:false,allowed:false});assert.equal(queries,1);
 });
-test('unapproved/revoked/viewer callers are checked at request time',async()=>{
+test('unapproved/revoked callers are checked at request time',async()=>{
  const h=harness();const handlers=new Map();registerVoiceMuteSocket({...h.socket,on:(event,fn)=>handlers.set(event,fn)},h.store,{getBot:()=>null,authorizeUser:async()=>false});
  let result;await handlers.get('guildsync:voice-mute-hotkey')({state:'pressed',sessionId:'s'},r=>result=r);assert.equal(result.ok,false);
 });

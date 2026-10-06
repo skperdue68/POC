@@ -1,3 +1,4 @@
+import {initializeVoiceIdentitySchema,createVoiceIdentityService,registerVoiceIdentityRoutes,registerVoiceOnlyConnection,authorizeVoiceRequester,authenticateVoiceSocket} from './voice-auth.js';
 import {createUserAdministration,registerUserAdministrationSocket} from './user-administration.js';
 import {canIngestGuildSyncRole} from './role-permissions.js';
 import {registerRolePermissions} from './role-permissions-socket.js';
@@ -110,9 +111,12 @@ let loginDB;
 let applicationDB;
 let sheetsRuntime;
 let configurationService;
+let voiceIdentityService;
 
 try {
   loginDB = await openLoginDB();
+await initializeVoiceIdentitySchema(loginDB);
+voiceIdentityService=createVoiceIdentityService(loginDB,{secret:GUILDSYNC_JWT_SECRET});
   applicationDB = await openAppDataDB();
   configurationService = createConfigurationService(applicationDB,{applyAtBoundary:fn=>sheetsRuntime?sheetsRuntime.applyConfiguration(fn):fn()});
   await configurationService.initialize();
@@ -139,6 +143,8 @@ const io = new Server(server, {
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
+
+registerVoiceIdentityRoutes(app,{service:voiceIdentityService,exchangeCode:exchangeCodeWithDiscord,fetchUser:fetchDiscordUser,redirectURI:DISCORD_REDIRECT_URI,disconnect:id=>{for(const socket of io.sockets.sockets.values())if(socket.guildSyncAuthType==='voice-mute'&&socket.guildSyncSessionId===id)socket.disconnect(true);}});
 
 app.post('/api/auth/discord/desktop-token', async (req, res) => {
   try {
@@ -329,7 +335,7 @@ app.post('/api/auth/logout', async (req, res) => {
     if (claims.jti) {
       await loginDB.execute('DELETE FROM guildsync_login_sessions WHERE session_id = ? AND discord_user_id = ?', [claims.jti, claims.sub]);
       for (const socket of io.sockets.sockets.values()) {
-        if (socket.guildSyncSessionId === claims.jti) socket.disconnect(true);
+        if (socket.guildSyncAuthType!=='voice-mute' && socket.guildSyncSessionId === claims.jti) socket.disconnect(true);
       }
     }
     return res.json({ ok: true });
@@ -439,6 +445,7 @@ io.use(async (socket, next) => {
   }
 
   if (!token) {
+    if(auth.source==='voice-mute')return next(new Error('Discord voice login is required.'));
     socket.guildSyncAuthenticated = false;
     socket.guildSyncAuthType = 'anonymous';
     socket.guildSyncUser = null;
@@ -446,6 +453,7 @@ io.use(async (socket, next) => {
   }
 
   try {
+    if(await authenticateVoiceSocket(socket,voiceIdentityService))return next();
     const claims = await verifyGuildSyncSession(token);
 
     socket.guildSyncAuthenticated = true;
@@ -474,7 +482,7 @@ const userAdministration = createUserAdministration(loginDB, {log:Log,onChange:a
   Log(`GuildSync user ${change.action} by ${change.actor_id}: ${change.discord_user_id}`);
   if(change.removed || change.user?.role !== 'admin') roleViews.clearUser(change.discord_user_id);
   for(const client of io.sockets.sockets.values()) {
-    if(client.guildSyncUser?.discord_user_id!==change.discord_user_id)continue;
+    if(client.guildSyncAuthType==='voice-mute'||client.guildSyncUser?.discord_user_id!==change.discord_user_id)continue;
     if(change.removed){client.emit('guildsync:account-removed');client.disconnect(true);}
     else {client.guildSyncUser.role=change.user.role;client.guildSyncUser.display_name=preferredUserName(change.user);await sendCurrentAccountProfile(client);}
   }
@@ -487,12 +495,12 @@ async function broadcastUserAdministrationCounts() {
     if(!admins.length)return;
     const {pending_count}=await userAdministration.pending(admins[0].discord_user_id);
     const ids=new Set(admins.map(row=>row.discord_user_id));
-    for(const client of io.sockets.sockets.values())if(client.guildSyncAuthenticated&&client.guildSyncAuthType!=='discord-bot'&&ids.has(client.guildSyncUser?.discord_user_id))client.emit('guildsync:users-changed',{pending_count});
+    for(const client of io.sockets.sockets.values())if(client.guildSyncAuthenticated&&client.guildSyncAuthType!=='discord-bot'&&client.guildSyncAuthType!=='voice-mute'&&ids.has(client.guildSyncUser?.discord_user_id))client.emit('guildsync:users-changed',{pending_count});
   }catch(error){Log('Could not refresh pending GuildSync account counts: '+error.message);}
 }
 
 async function sendCurrentAccountProfile(socket) {
-  if(!socket.guildSyncAuthenticated||socket.guildSyncAuthType==='discord-bot'||!socket.guildSyncUser?.discord_user_id)return;
+  if(!socket.guildSyncAuthenticated||socket.guildSyncAuthType==='discord-bot'||socket.guildSyncAuthType==='voice-mute'||!socket.guildSyncUser?.discord_user_id)return;
   try {
     const [rows]=await loginDB.execute('SELECT discord_user_id, username, global_name, guild_member_name, email, avatar, role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[socket.guildSyncUser.discord_user_id]);
     if(rows[0]) {
@@ -506,7 +514,20 @@ async function sendCurrentAccountProfile(socket) {
   }catch(error){Log('Could not load current GuildSync account profile: '+error.message);}
 }
 
+function registerVoiceForSocket(socket){
+  registerVoiceMuteSocket(socket,voiceMuteStore,{
+    isEnabled:()=>configurationService.view().settings.find(setting=>setting.key==='GUILDSYNC_VOICE_MUTE_ENABLED')?.value===true,
+    getBot:async()=>{
+      const candidate=io.sockets.sockets.get(discordBotSocketId) || [...io.sockets.sockets.values()].find(s=>s.guildSyncAuthType==='discord-bot');
+      const owner=await voiceMuteStore.owner(candidate?.guildSyncBot?.guild_id);
+      return io.sockets.sockets.get(owner);
+    },
+    authorizeUser:current=>authorizeVoiceRequester(current,{service:voiceIdentityService,loginDB,roleViews}),log:Log
+  });
+
+}
 io.on('connection', (socket) => {
+  if(registerVoiceOnlyConnection(socket,registerVoiceForSocket))return;
   registerRolePermissions(socket,loginDB,roleViews);
   registerRoleViewSocket(socket,roleViews,async()=>{
     let profile;
@@ -520,22 +541,10 @@ io.on('connection', (socket) => {
   registerConfigurationSocket(socket,configurationService,{
     authorizeViewer: async id => {const [rows]=await loginDB.execute('SELECT discord_user_id FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows.length>0;},
     authorizeAdmin: async id => {const [rows]=await loginDB.execute('SELECT role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows[0]?.role==='admin';},
-    broadcast: (configuration,payload) => {io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration);if(Object.keys(payload?.changes||{}).some(key=>key.startsWith('GUILDSYNC_VOICE_MUTE_')))io.to('GuildSyncClientAuthenticated').emit('guildsync:voice-mute-access-changed');}
+    broadcast: (configuration,payload) => {io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration);if(Object.keys(payload?.changes||{}).some(key=>key.startsWith('GUILDSYNC_VOICE_MUTE_')))io.to('GuildSyncClientAuthenticated').to('GuildSyncVoiceClient').emit('guildsync:voice-mute-access-changed');}
   });
   registerDiscordOnboardingSocket(socket, onboardingService);
-  registerVoiceMuteSocket(socket,voiceMuteStore,{
-    isEnabled:()=>configurationService.view().settings.find(setting=>setting.key==='GUILDSYNC_VOICE_MUTE_ENABLED')?.value===true,
-    getBot:async()=>{
-      const candidate=io.sockets.sockets.get(discordBotSocketId) || [...io.sockets.sockets.values()].find(s=>s.guildSyncAuthType==='discord-bot');
-      const owner=await voiceMuteStore.owner(candidate?.guildSyncBot?.guild_id);
-      return io.sockets.sockets.get(owner);
-    },
-    authorizeUser:async current=>{
-      const [rows]=await loginDB.execute('SELECT role, allowed FROM guildsync_users WHERE discord_user_id = ? LIMIT 1',[current.guildSyncUser.discord_user_id]);
-      const role=roleViews.effective(current.guildSyncRoleViewId,rows[0]?.role);
-      return Number(rows[0]?.allowed)===1 && (role==='user'||role==='admin');
-    },log:Log
-  });
+  registerVoiceForSocket(socket);
   registerRaffleSocket(socket, applicationDB, getActiveRaffleSummary, getRaffleUserTickets);
   registerArchiveSocket(socket, applicationDB);
   registerRaffleManagementSocket(socket, applicationDB, { sheets: sheetsRuntime });
@@ -2905,6 +2914,7 @@ async function verifyGuildSyncSession(token) {
     (!Number.isFinite(claims.iat) || claims.iat * 1000 < Date.parse(rows[0].requested_at));
   if (!rows.length || recreatedLegacyAccount) {
     for (const socket of io.sockets.sockets.values()) {
+      if(socket.guildSyncAuthType==='voice-mute')continue;
       if (claims.jti ? socket.guildSyncSessionId === claims.jti : socket.guildSyncUser?.discord_user_id === claims.sub) socket.disconnect(true);
     }
     throw new Error('Session was logged out.');
