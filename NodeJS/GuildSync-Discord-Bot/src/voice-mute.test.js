@@ -12,10 +12,30 @@ test('personal access requires enabled policy, permitted role and known guild ra
  assert.equal(voiceMuteAccess(config,null).allowed,false);
 });
 
+test('mute diagnostics identify channel, attempted members and protected/skipped members',async()=>{
+ const f=fixture();f.guild.name='Test Guild';f.requester.displayName='Officer';f.guild.members.cache=f.members;
+ const fetchChannel=f.guild.channels.fetch;f.guild.channels.fetch=async id=>({...await fetchChannel(id),name:'Event Voice'});
+ f.member('owner','soldiers');f.member('bot-user','soldiers').user.bot=true;
+ f.member('hierarchy','soldiers').manageable=false;f.member('already','soldiers','a',true);
+ f.member('moderated','soldiers');await f.controller.start();
+ await f.controller.audit({id:'30',action:24,target:{id:'moderated'},executor:{id:'mod'},changes:[{key:'mute',new:true}],createdTimestamp:100000});
+ await f.press();
+ assert.ok(f.logs.some(s=>s.startsWith('Voice mute channel selected')&&s.includes('Event Voice')&&s.includes('Officer')));
+ const diagnostic=(id,outcome)=>f.logs.find(s=>s.startsWith('Voice mute member '+outcome)&&s.includes('"memberId":"'+id+'"'));
+ assert.match(diagnostic('low','attempting'),/Event Voice/);assert.match(diagnostic('low','applied'),/succeeded/);
+ for(const [id,reason] of [['r',/Requester is never/],['owner',/owner is protected/],['bot-user',/Bot accounts/],['equal',/equal to or higher/],['unknown',/unrecognized/],['hierarchy',/hierarchy/],['already',/already server-muted/],['moderated',/moderator mute/]])assert.match(diagnostic(id,'skipped'),reason);
+});
+
+test('failed Discord mute is logged with member, channel and error',async()=>{
+ const f=fixture();f.members.get('low').voice.setMute=async()=>{throw Error('Missing Permissions');};
+ await f.controller.start();await f.press();
+ assert.ok(f.logs.some(s=>s.startsWith('Voice mute member failed')&&s.includes('"memberId":"low"')&&s.includes('"channelId":"a"')&&s.includes('Missing Permissions')));
+});
+
 test('role names are case insensitive and IDs remain supported for permissions and rank order',async()=>{
  const f=fixture(),config=readVoiceMuteConfig({GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:' KINGPIN ',GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS:'Gangsters, Soldiers, Kingpin'});
  assert.equal(voiceMuteAccess(config,f.requester).allowed,true);
- const controller=createVoiceMuteController({guild:f.guild,botId:'bot',store:f.store,config});await controller.start();await controller.request({state:'pressed',sessionId:'name',requesterId:'r',connectionId:'c'});assert.equal(f.members.get('low').voice.serverMute,true);assert.equal(f.members.get('equal').voice.serverMute,false);
+ const controller=createVoiceMuteController({guild:f.guild,botId:'bot',store:f.store,config,log:()=>{}});await controller.start();await controller.request({state:'pressed',sessionId:'name',requesterId:'r',connectionId:'c'});assert.equal(f.members.get('low').voice.serverMute,true);assert.equal(f.members.get('equal').voice.serverMute,false);
  await controller.request({state:'released',sessionId:'name',requesterId:'r',connectionId:'c'});
  assert.equal(voiceMuteAccess({...config,allowedRoleIds:['not-the-role']},f.requester).allowed,false);
  assert.equal(voiceMuteAccess({...config,allowedRoleIds:['allowed']},f.requester).allowed,true);
@@ -38,17 +58,19 @@ test('worker logs received hotkey edges and rejection without heartbeat noise',a
 });
 
 test('worker access fetches current roles without requiring a voice channel',async()=>{
- const f=fixture();f.guild.members.fetchMe=async()=>f.guild.members.me;
+ const f=fixture(),logs=[];f.guild.members.fetchMe=async()=>f.guild.members.me;
  const previous=f.guild.members.fetch,fetches=[];
  f.guild.members.fetch=async query=>{fetches.push(query);return previous(typeof query==='object'?query.user:query);};
  f.requester.voice.channelId=null;
  const client=new EventEmitter();client.isReady=()=>true;client.user={id:'bot'};client.guilds={fetch:async()=>f.guild};
  const socket=new EventEmitter();socket.connected=true;socket.id='access';socket.timeout=()=>({emit(_event,payload,ack){Promise.resolve(payload.action==='save'?f.store.save(payload.state):f.store.claim()).then(state=>ack(null,{ok:true,state}));}});
- const worker=createVoiceMuteWorker({client,socket,guildId:'g',config:readVoiceMuteConfig({GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:'Kingpin'}),log:()=>{}});
+ const worker=createVoiceMuteWorker({client,socket,guildId:'g',config:readVoiceMuteConfig({GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:'Kingpin'}),log:message=>logs.push(message)});
  try {
   await worker.tick();const check=()=>new Promise(resolve=>socket.emit('guildsync:voice-mute-access-request',{requesterId:'r'},resolve));
   assert.deepEqual(await check(),{ok:true,enabled:true,allowed:true});assert.deepEqual(fetches.at(-1),{user:'r',force:true});
+  await check();assert.equal(logs.filter(s=>s.startsWith('Voice mute access checked')).length,1);
   f.requester.roles.cache.delete('kingpin');assert.deepEqual(await check(),{ok:true,enabled:true,allowed:false});
+  assert.ok(logs.some(s=>s.includes('None of your Discord roles match')));
  }finally{await worker.stop();}
 });
 
