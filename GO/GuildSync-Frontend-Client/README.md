@@ -16,7 +16,7 @@ Run `wails dev` here for desktop development with the Vite frontend. Run `wails 
 
 Open your profile menu and enable **Voice Channel Mute**. Hold **Ctrl+M** to request a temporary server mute for eligible lower-ranked members of your current Discord voice channel. Release the keys to end it. Your server must enable the feature and allow your Discord role; server owners, peers, higher ranks, bots, and moderator mutes are protected.
 
-**Set Hotkey** captures Ctrl, Alt, or Shift plus a letter, number, or F1–F12. Escape cancels capture. **Return to Default** restores Ctrl+M. The feature starts disabled; personal settings are saved in the operating system user configuration directory under `GuildSync/voice-hotkey.json`, independently on each computer. Changing settings or capturing a shortcut ends an active session.
+**Set Hotkey** captures Ctrl, Alt, or Shift plus a letter, number, or F1–F12. Escape cancels capture. The feature starts disabled; personal settings are saved in the operating system user configuration directory under `GuildSync/voice-hotkey.json`, independently on each computer. Changing settings or capturing a shortcut ends an active session.
 
 Global hotkeys are supported by the Windows desktop client. Browser, macOS, and Linux clients display an unsupported notice. A separately distributable companion is a follow-up.
 

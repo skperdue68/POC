@@ -64,11 +64,10 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
   function render() {
     if (!settings.supported) return '<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><p>Global voice hotkeys require the Windows desktop client.</p></div>';
     // Shortcut labels are validated by Go; messages are inserted using textContent below.
-    return `<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><label class="profile-row">Enable <input id="voiceHotkeyEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}></label><div class="profile-row">Shortcut <span>${settings.shortcut}</span></div><button id="voiceHotkeyCapture" type="button" class="discord-secondary-button">${capturing ? 'Press shortcut (Escape cancels)' : 'Set Hotkey'}</button><button id="voiceHotkeyDefault" type="button" class="discord-secondary-button">Return to Default</button><p id="voiceHotkeyStatus" role="status"></p><p>Hold the shortcut to mute eligible lower-ranked channel members. Server permission is required.</p></div>`;
+    return `<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><label class="profile-row voice-hotkey-row">Enable <input id="voiceHotkeyEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}></label><div class="profile-row voice-hotkey-row">Shortcut <span>${settings.shortcut}</span></div><button id="voiceHotkeyCapture" type="button" class="voice-hotkey-capture-button">${capturing ? 'Press shortcut (Escape cancels)' : 'Set Hotkey'}</button><p id="voiceHotkeyStatus" class="voice-hotkey-help" role="status"></p><p class="voice-hotkey-help">Hold the shortcut to mute eligible lower-ranked channel members. Server permission is required.</p></div>`;
   }
   function wire(menu) {
     menu.querySelector('#voiceHotkeyEnabled')?.addEventListener('change', event => void save(event.target.checked, settings.shortcut));
-    menu.querySelector('#voiceHotkeyDefault')?.addEventListener('click', () => void save(settings.enabled, 'Ctrl+M'));
     menu.querySelector('#voiceHotkeyCapture')?.addEventListener('click', async () => {
       release(); capturing = true; message = ''; await bridge.SetVoiceHotkeyCapture(true);
       document.addEventListener('keydown', capture, true); notify();
