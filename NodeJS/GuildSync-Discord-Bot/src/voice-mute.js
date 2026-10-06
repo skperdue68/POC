@@ -175,9 +175,14 @@ export function createVoiceMuteWorker({client,socket,guildId,config,log=console.
  };
  const request=async(payload,ack)=>{
   const hotkeyEdge=['pressed','released'].includes(payload?.state);
-  if(hotkeyEdge)log('Voice hotkey '+payload.state+' received '+JSON.stringify({guildId,requesterId:payload.requesterId,connectionId:payload.connectionId,sessionId:payload.sessionId}));
+  // Cached names keep diagnostics from delaying release or triggering extra API calls.
+  const guild=hotkeyEdge?client.guilds.cache?.get(guildId):null;
+  const member=guild?.members.cache?.get(payload.requesterId);
+  const user=member?.user||client.users?.cache?.get(payload?.requesterId);
+  const context=hotkeyEdge?JSON.stringify({guildName:guild?.name||'Unknown guild',guildId,requesterName:member?.displayName||user?.globalName||user?.username||'Unknown requester',requesterId:payload.requesterId,connectionId:payload.connectionId,sessionId:payload.sessionId}):'';
+  if(hotkeyEdge)log('Voice hotkey '+payload.state+' received '+context);
   try{if(!controller)throw Error('Voice mute is recovering; try again shortly.');const result=await controller.request(payload);ack?.({ok:true,result});}
-  catch(error){if(hotkeyEdge)log('Voice hotkey '+payload.state+' rejected: '+error.message);ack?.({ok:false,message:error.message});}
+  catch(error){if(hotkeyEdge)log('Voice hotkey '+payload.state+' rejected: '+error.message+' '+context);ack?.({ok:false,message:error.message});}
  };
  const access=async(payload,ack)=>{
   try {

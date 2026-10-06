@@ -23,14 +23,17 @@ test('role names are case insensitive and IDs remain supported for permissions a
 
 test('worker logs received hotkey edges and rejection without heartbeat noise',async()=>{
  const f=fixture(),logs=[];f.guild.members.fetchMe=async()=>f.guild.members.me;
- const client=new EventEmitter();client.isReady=()=>true;client.user={id:'bot'};client.guilds={fetch:async()=>f.guild};
+ f.guild.name='Test Guild';f.requester.displayName='Guild Officer';f.requester.user.username='officer';
+ f.guild.members.cache=f.members;
+ const client=new EventEmitter();client.isReady=()=>true;client.user={id:'bot'};client.guilds={cache:new Map([['g',f.guild]]),fetch:async()=>f.guild};
  const socket=new EventEmitter();socket.connected=true;socket.id='logging';socket.timeout=()=>({emit(_event,payload,ack){Promise.resolve(payload.action==='save'?f.store.save(payload.state):f.store.claim()).then(state=>ack(null,{ok:true,state}));}});
  const worker=createVoiceMuteWorker({client,socket,guildId:'g',config:readVoiceMuteConfig({GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:'allowed'}),log:message=>logs.push(message)});
  try {
   await worker.tick();const request=state=>new Promise(resolve=>socket.emit('guildsync:voice-mute-request',{state,sessionId:'debug',connectionId:'c',requesterId:'r'},resolve));
   assert.equal((await request('pressed')).ok,true);await request('heartbeat');assert.equal((await request('released')).ok,true);
   const received=logs.filter(line=>line.includes('Voice hotkey')&&line.includes('received'));assert.equal(received.length,2);assert.match(received[0],/pressed/);assert.match(received[0],/requester.*r/);assert.match(received[1],/released/);assert.equal(logs.some(line=>line.includes('heartbeat')),false);
-  socket.connected=false;socket.emit('disconnect');assert.equal((await request('pressed')).ok,false);assert.ok(logs.some(line=>line.includes('Voice hotkey pressed rejected')));
+  assert.match(received[0],/"guildName":"Test Guild"/);assert.match(received[0],/"requesterName":"Guild Officer"/);assert.match(received[1],/"requesterName":"Guild Officer"/);
+  socket.connected=false;socket.emit('disconnect');assert.equal((await request('pressed')).ok,false);assert.ok(logs.some(line=>line.includes('Voice hotkey pressed rejected')&&line.includes('Test Guild')&&line.includes('Guild Officer')));
  } finally {await worker.stop();}
 });
 
