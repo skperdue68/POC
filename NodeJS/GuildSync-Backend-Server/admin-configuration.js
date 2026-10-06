@@ -6,11 +6,11 @@ const configurationHelp={
  },
  "GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS": {
   "section": "Access and permissions",
-  "help": "Comma-separated Discord role IDs allowed to request a channel mute. Blank permits nobody. GuildSync User or Admin access is also required; Viewers cannot use this feature."
+  "help": "Comma-separated Discord role names or numeric IDs allowed to request a channel mute, for example Kingpin, Consigliere. Names match case-insensitively; omit @. Blank permits nobody. GuildSync User or Admin access is also required; Viewers cannot use this feature."
  },
  "GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS": {
   "section": "Rank protection",
-  "help": "Guild rank role IDs from lowest to highest, separated by commas. Leave blank to discover Gangsters through Kingpin by name. Equal, higher and unknown ranks are never muted; decorative roles are ignored."
+  "help": "Guild rank role names or numeric IDs from lowest to highest, separated by commas. Names match case-insensitively; omit @. Leave blank to discover Gangsters through Kingpin by name. Equal, higher and unknown ranks are never muted; decorative roles are ignored."
  },
  "GUILDSYNC_ONBOARDING_ENABLED": {
   "section": "Access and promotion",
@@ -118,8 +118,8 @@ const onboarding=(key,label,type,value,extra)=>define('bot','Member onboarding',
 const raffle=(key,label,type,value,extra)=>define('bot','Raffle announcements','GUILDSYNC_RAFFLE_'+key,label,type,value,extra);
 export const configurationCatalog=[
  define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_ENABLED','Enable voice channel hotkey mute','boolean',false),
- define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS','Allowed requester role IDs (comma separated)','ids',''),
- define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS','Guild rank role IDs (lowest to highest)','ids',''),
+ define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS','Allowed requester roles (names or IDs, comma separated)','roles',''),
+ define('bot','Voice channel mute','GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS','Guild rank roles (names or IDs, lowest to highest)','roles',''),
  onboarding('ENABLED','Enable member onboarding','boolean',false),
  onboarding('PROMOTION_ENABLED','Promote linked Gangsters to Associates','boolean',true),
  onboarding('PROMOTION_NOTIFY_ENABLED','Notify members after promotion','boolean',true),
@@ -156,6 +156,7 @@ function typed(item,value){
  if(text.length>(item.maxLength || 2000))throw Error(item.label+' is too long.');
  if(item.type==='id' && text && !/^\d+$/.test(text))throw Error(item.label+' must be a Discord ID.');
  if(item.type==='ids' && text && text.split(',').some(id=>!/^\d+$/.test(id.trim())))throw Error(item.label+' must contain comma-separated Discord IDs.');
+ if(item.type==='roles' && text && text.split(',').some(ref=>!ref.trim()||/[\x00-\x1f\x7f]/.test(ref)||ref.trim().startsWith('@')||ref.includes('<@')))throw Error(item.label+' must contain comma-separated role names or IDs without @.');
  if(item.type==='hours' && (!text || text.split(',').some(v=>!v.trim() || !Number.isFinite(Number(v))||Number(v)<=0||Number(v)>8760)))throw Error(item.label+' must contain positive hours.');
  if(item.type==='select'&&!item.options.includes(text))throw Error('Invalid '+item.label+'.');
  if(item.type==='template'&&!text.trim())throw Error(item.label+' cannot be blank; use the .env default instead.');

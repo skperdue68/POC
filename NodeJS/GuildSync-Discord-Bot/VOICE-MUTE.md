@@ -1,8 +1,8 @@
 # Voice Channel Mute
 
-This feature is disabled by default. Enable `GUILDSYNC_VOICE_MUTE_ENABLED` and set `GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS` to a comma-separated list of Discord role IDs. An empty allowed-role list authorizes nobody. Administrator Configuration can override these defaults live.
+This feature is disabled by default. Enable `GUILDSYNC_VOICE_MUTE_ENABLED` and set `GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS` to a comma-separated list of Discord role names or numeric IDs, such as `Kingpin, Consigliere`. Role names are case insensitive; do not include `@`. The setting key retains its original name for compatibility. An empty allowed-role list authorizes nobody. Administrator Configuration can override these defaults live.
 
-`GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS` lists guild-rank role IDs from lowest to highest. If empty, recognized names follow Gangsters, Associates, Soldiers, Capos, Caporegime, Consigliere and Kingpin, including established singular/plural aliases. Decorative role positions do not affect rank. Unknown, equal and higher ranks, bots and the guild owner are protected.
+`GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS` lists guild-rank role names or numeric IDs from lowest to highest. If empty, recognized names follow Gangsters, Associates, Soldiers, Capos, Caporegime, Consigliere and Kingpin, including established singular/plural aliases. Decorative role positions do not affect rank. Unknown, equal and higher ranks, bots and the guild owner are protected.
 
 The bot requires **Mute Members** in affected voice channels and **View Audit Log**, and subscribes to the Guild Moderation gateway intent. The authenticated backend supplies requester and connection identity. The bot fetches current membership and derives the channel itself.
 

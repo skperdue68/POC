@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createConfigurationService,configurationCatalog} from './admin-configuration.js';
+
+test('voice role overrides accept names and IDs but reject empty list entries',async()=>{
+ const service=createConfigurationService(memoryDB(),{env:{}});await service.initialize();
+ const key='GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS';
+ await service.save({revision:0,changes:{[key]:'Kingpin, Consigliere, 123456789'}});
+ assert.equal((await service.botConfiguration()).overrides[key],'Kingpin, Consigliere, 123456789');
+ await assert.rejects(service.save({revision:1,changes:{[key]:'Kingpin,,Soldiers'}}),/role names or IDs/);
+});
 test('voice mute settings are grouped with help, disabled by default and reset to reported defaults',async()=>{
  const service=createConfigurationService(memoryDB(),{env:{}});await service.initialize();
  const keys=['GUILDSYNC_VOICE_MUTE_ENABLED','GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS','GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS'];

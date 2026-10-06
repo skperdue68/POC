@@ -7,7 +7,7 @@ export function registerConfigurationSocket(socket,service,{authorizeAdmin,autho
  const viewer=async()=>{if(!socket.guildSyncAuthenticated||socket.guildSyncAuthType==='discord-bot'||!socket.guildSyncUser?.discord_user_id||!await authorizeViewer(socket.guildSyncUser.discord_user_id))throw Error('Approved GuildSync access is required to view configuration.');};
  const bot=async()=>{if(!socket.guildSyncAuthenticated||socket.guildSyncAuthType!=='discord-bot')throw Error('Authenticated Discord bot required.');};
  handler('guildsync:request-admin-configuration',viewer,()=>service.view());
- handler('guildsync:save-admin-configuration',admin,async p=>{const view=await service.save(p);broadcast(await service.botConfiguration());return view;});
+ handler('guildsync:save-admin-configuration',admin,async p=>{const view=await service.save(p);broadcast(await service.botConfiguration(),p);return view;});
  handler('guildsync:request-bot-configuration',bot,()=>service.botConfiguration());
  handler('guildsync:register-configuration-defaults',bot,async p=>{await service.registerBotDefaults(p.defaults || {});return service.botConfiguration();});
 }
