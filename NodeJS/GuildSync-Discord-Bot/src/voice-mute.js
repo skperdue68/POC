@@ -5,7 +5,15 @@ const ranks=[['gangster','gangsters'],['associate','associates'],['soldier','sol
 function matchesRole(role,ref){return String(role.id)===ref || (!/^\d+$/.test(ref)&&String(role.name || '').trim().toLowerCase()===ref.trim().toLowerCase());}
 function hasAllowedRole(member,config){return config.allowedRoleIds.some(ref=>[...member.roles.cache.values()].some(role=>matchesRole(role,ref)));}
 function rank(member,config){let result=-1;for(const role of member.roles.cache.values()){const n=config.rankRoleIds.length?config.rankRoleIds.findIndex(ref=>matchesRole(role,ref)):ranks.findIndex(a=>a.includes(String(role.name || '').toLowerCase().replace(/[^a-z0-9]/g,'')));result=Math.max(result,n);}return result;}
-export function voiceMuteAccess(config,member){return {enabled:config.enabled,allowed:Boolean(config.enabled&&member&&!member.user.bot&&rank(member,config)>=0&&hasAllowedRole(member,config))};}
+export function voiceMuteAccessReason(config,member){
+ if(!config.enabled)return 'Voice mute is disabled.';
+ if(!member)return 'Discord membership could not be found.';
+ if(member.user.bot)return 'Bot accounts cannot request voice mute.';
+ if(!hasAllowedRole(member,config))return 'None of your Discord roles match the allowed voice-mute roles.';
+ if(rank(member,config)<0)return 'Your Discord guild rank is not recognized; check the configured rank order.';
+ return 'Voice mute access is allowed.';
+}
+export function voiceMuteAccess(config,member){return {enabled:config.enabled,allowed:voiceMuteAccessReason(config,member)==='Voice mute access is allowed.'};}
 export function createVoiceMuteController({guild,botId,store,config,now=Date.now,log=console.log}) {
  let state,ready=false,paused=false,tail=Promise.resolve(),lastAuditAt=0;const ownChanges=new Map(),heartbeatReceipts=new Map(),endSignals=new Map();
  const serial=fn=>{const job=tail.then(fn);tail=job.catch(()=>{});return job;};
@@ -16,7 +24,22 @@ export function createVoiceMuteController({guild,botId,store,config,now=Date.now
  const moderator=id=>state.moderatorMutes.some(m=>m.userId===id);
  const fetchMember=async id=>{try{return await guild.members.fetch(id);}catch(error){if(error.code===10007)return null;throw error;}};
  const authorized=member=>voiceMuteAccess({...config,enabled:true},member).allowed;
- async function permitted(member,session){const requester=await fetchMember(session.requesterId);if(!authorized(requester) || requester.voice.channelId!==session.channelId || member.voice.channelId!==session.channelId)return false;const r=rank(requester,config),t=rank(member,config);return member.id!==requester.id&&!member.user.bot&&member.id!==guild.ownerId&&t>=0&&r>t&&member.manageable!==false;}
+ async function skipReason(member,session){
+  const requester=await fetchMember(session.requesterId);
+  if(!authorized(requester))return 'Requester no longer has an allowed role and recognized guild rank.';
+  if(requester.voice.channelId!==session.channelId)return 'Requester has left the session voice channel.';
+  if(member.voice.channelId!==session.channelId)return 'Member is no longer in the session voice channel.';
+  if(member.id===requester.id)return 'Requester is never muted.';
+  if(member.user.bot)return 'Bot accounts are protected.';
+  if(member.id===guild.ownerId)return 'Server owner is protected.';
+  const r=rank(requester,config),t=rank(member,config);
+  if(t<0)return 'Member guild rank is unrecognized; unknown ranks are protected.';
+  if(r<=t)return 'Member guild rank is equal to or higher than requester rank.';
+  if(member.manageable===false)return 'Bot role hierarchy cannot manage this member.';
+  return null;
+ }
+ async function permitted(member,session){return !await skipReason(member,session);}
+ function targetLog(session,member,outcome,reason){log('Voice mute member '+outcome+' '+JSON.stringify({guildName:guild.name,guildId:guild.id,channelName:session.channelName||guild.channels.cache?.get(session.channelId)?.name||'Unknown channel',channelId:session.channelId,requesterId:session.requesterId,requesterName:guild.members.cache?.get(session.requesterId)?.displayName,memberId:member.id,memberName:member.displayName||member.user.globalName||member.user.username||member.id,memberRank:rank(member,config),memberRoles:[...member.roles.cache.values()].map(role=>role.name||role.id),sessionId:session.id,reason}));}
  async function permissions(channel){if(!guild.members.me?.permissions.has(PermissionFlagsBits.ViewAuditLog)||!channel.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.MuteMembers))throw Error('Voice mute requires View Audit Log and Mute Members permissions.');}
  async function auditEntry(entry,save=true) {
   if(entry.action!==AuditLogEvent.MemberUpdate || state.auditState.seenIds.includes(entry.id))return false;
@@ -68,16 +91,22 @@ export function createVoiceMuteController({guild,botId,store,config,now=Date.now
   if(changed)await persist();
   lastAuditAt=now();
  }
- async function mute(session,member){if(!active(session.id)||!await permitted(member,session)||moderator(member.id))return;let owned=state.targets.find(t=>t.userId===member.id);
-  if(owned){if(owned.externalOverride || owned.uncertain)return;if(owned.state==='applied'){owned.sessionId=session.id;await persist();}return;}
-  if(member.voice.serverMute)return;
+ async function mute(session,member){
+  const reason=!active(session.id)?'Session ended or expired.':await skipReason(member,session);
+  if(reason){targetLog(session,member,'skipped',reason);return;}
+  if(moderator(member.id)){targetLog(session,member,'skipped','Existing moderator mute is protected.');return;}
+  let owned=state.targets.find(t=>t.userId===member.id);
+  if(owned){if(owned.externalOverride || owned.uncertain){targetLog(session,member,'skipped',owned.externalOverride?'External moderation overrides this session.':'Previous mute API outcome is uncertain; awaiting reconciliation.');return;}if(owned.state==='applied'){owned.sessionId=session.id;await persist();}targetLog(session,member,'skipped','Member already tracked by a voice mute session ('+owned.state+').');return;}
+  if(member.voice.serverMute){targetLog(session,member,'skipped','Member is already server-muted; existing mute is preserved.');return;}
   const channel=await guild.channels.fetch(session.channelId);await permissions(channel);
   owned={sessionId:session.id,userId:member.id,state:'pending',createdAt:now(),lastAttemptAt:now(),muteReason:'GuildSync voice '+session.id};state.targets.push(owned);await persist();
   // Durable intent is the boundary: an uncertain API outcome can never authorize an unmute.
-  if(paused||!ready)return;
-  if(!active(session.id)||!await permitted(member,session)){state.targets=state.targets.filter(t=>t!==owned);await persist();return;}
-  if(paused||!ready)return;
-  try{ownChanges.set(member.id,{value:true,expiresAt:now()+30000});await member.voice.setMute(true,'GuildSync voice '+session.id);owned.state='applied';owned.appliedAt=now();await persist();}catch(error){owned.state='unresolved';owned.uncertain=true;owned.lastError=error.message;await persist();log('Voice mute uncertain '+member.id+': '+error.message);}
+  if(paused||!ready){targetLog(session,member,'skipped','Worker paused or backend unavailable before mute.');return;}
+  const lateReason=!active(session.id)?'Session ended before mute.':await skipReason(member,session);
+  if(lateReason){state.targets=state.targets.filter(t=>t!==owned);await persist();targetLog(session,member,'skipped',lateReason);return;}
+  if(paused||!ready){targetLog(session,member,'skipped','Worker paused or backend unavailable before mute.');return;}
+  targetLog(session,member,'attempting','Eligible lower-ranked member; requesting Discord server mute.');
+  try{ownChanges.set(member.id,{value:true,expiresAt:now()+30000});await member.voice.setMute(true,'GuildSync voice '+session.id);owned.state='applied';owned.appliedAt=now();await persist();targetLog(session,member,'applied','Discord mute request succeeded.');}catch(error){owned.state='unresolved';owned.uncertain=true;owned.lastError=error.message;await persist();targetLog(session,member,'failed',error.message);log('Voice mute uncertain '+member.id+': '+error.message);}
  }
  async function cleanup(){for(const target of [...state.targets]){
   if(paused||!ready)return;
@@ -118,7 +147,8 @@ export function createVoiceMuteController({guild,botId,store,config,now=Date.now
    if(rank(member,config)<0)throw Error('Your Discord guild rank is not recognized; check the configured rank order.');
    if(!member.voice.channelId)throw Error('Join a Discord voice channel before using the mute hotkey.');
    const channel=await guild.channels.fetch(member.voice.channelId);await permissions(channel);if(state.sessions.some(s=>s.channelId===channel.id&&active(s.id)))throw Error('This voice channel already has an active session.');
-   const session={id:sessionId,channelId:channel.id,requesterId,connectionId,lastHeartbeatAt:now(),expiresAt:now()+8000,state:'active'};state.sessions.push(session);await persist();for(const m of channel.members.values()){if(paused)break;await mute(session,m);}return {state:'active',channelId:channel.id};
+   log('Voice mute channel selected '+JSON.stringify({guildName:guild.name,guildId:guild.id,requesterName:member.displayName||member.user.username,requesterId,requesterRank:rank(member,config),channelName:channel.name,channelId:channel.id,memberCount:channel.members.size,sessionId}));
+   const session={id:sessionId,channelId:channel.id,channelName:channel.name,requesterId,connectionId,lastHeartbeatAt:now(),expiresAt:now()+8000,state:'active'};state.sessions.push(session);await persist();for(const m of channel.members.values()){if(paused)break;await mute(session,m);}return {state:'active',channelId:channel.id};
   });},
   tick:()=>serial(async()=>{if(paused||!ready)return;for(const s of state.sessions.filter(s=>s.state==='active')){const member=await fetchMember(s.requesterId);if(!config.enabled||!authorized(member)||!active(s.id)||member?.voice.channelId!==s.channelId){s.state='ended';s.endedAt=now();await persist();}}await audits(false);await cleanup();const retained=state.sessions.filter(s=>s.state==='active'||state.targets.some(t=>t.sessionId===s.id)||now()-(s.endedAt || s.expiresAt || now())<60000);if(retained.length!==state.sessions.length){const retainedIds=new Set(retained.map(s=>s.id));for(const map of [heartbeatReceipts,endSignals])for(const id of map.keys())if(!retainedIds.has(id))map.delete(id);state.sessions=retained;await persist();}}),
   audit:entry=>serial(async()=>{if(ready&&!paused){await audits();await auditEntry(entry);}}),
@@ -179,21 +209,25 @@ export function createVoiceMuteWorker({client,socket,guildId,config,log=console.
   const guild=hotkeyEdge?client.guilds.cache?.get(guildId):null;
   const member=guild?.members.cache?.get(payload.requesterId);
   const user=member?.user||client.users?.cache?.get(payload?.requesterId);
-  const context=hotkeyEdge?JSON.stringify({guildName:guild?.name||'Unknown guild',guildId,requesterName:member?.displayName||user?.globalName||user?.username||'Unknown requester',requesterId:payload.requesterId,connectionId:payload.connectionId,sessionId:payload.sessionId}):'';
+  const context=hotkeyEdge?JSON.stringify({guildName:guild?.name||'Unknown guild',guildId,requesterName:member?.displayName||user?.globalName||user?.username||'Unknown requester',requesterId:payload.requesterId,channelName:member?.voice.channel?.name||guild?.channels.cache?.get(member?.voice.channelId)?.name||'Unknown channel',channelId:member?.voice.channelId||null,connectionId:payload.connectionId,sessionId:payload.sessionId}):'';
   if(hotkeyEdge)log('Voice hotkey '+payload.state+' received '+context);
   try{if(!controller)throw Error('Voice mute is recovering; try again shortly.');const result=await controller.request(payload);ack?.({ok:true,result});}
   catch(error){if(hotkeyEdge)log('Voice hotkey '+payload.state+' rejected: '+error.message+' '+context);ack?.({ok:false,message:error.message});}
  };
+ const accessDiagnostics=new Map();
  const access=async(payload,ack)=>{
   try {
    const identity=socket.id;
    if(stopped||!socket.connected||!client.isReady())throw Error('Discord mute service is unavailable.');
-   if(!config.enabled){ack?.({ok:true,enabled:false,allowed:false});return;}
+   if(!config.enabled){const diagnostic='Voice mute is disabled.';if(accessDiagnostics.get(payload.requesterId)!==diagnostic){accessDiagnostics.set(payload.requesterId,diagnostic);log('Voice mute access checked '+JSON.stringify({guildId,requesterId:payload.requesterId,reason:diagnostic}));}ack?.({ok:true,enabled:false,allowed:false});return;}
    const guild=await client.guilds.fetch(guildId);
    const member=await guild.members.fetch({user:payload.requesterId,force:true});
    if(stopped||!socket.connected||socket.id!==identity)throw Error('Discord mute policy or connection changed.');
+   const details={guildName:guild.name,guildId,requesterName:member?.displayName||member?.user.username,requesterId:payload.requesterId,enabled:config.enabled,allowedRoles:config.allowedRoleIds,rankRoles:config.rankRoleIds.length?config.rankRoleIds:ranks.map(aliases=>aliases.join(' / ')),memberRoles:[...(member?.roles.cache.values()||[])].map(role=>({id:role.id,name:role.name})),reason:voiceMuteAccessReason(config,member)};
+   const diagnostic=JSON.stringify(details);
+   if(accessDiagnostics.get(payload.requesterId)!==diagnostic){accessDiagnostics.set(payload.requesterId,diagnostic);log('Voice mute access checked '+diagnostic);}
    ack?.({ok:true,...voiceMuteAccess(config,member)});
-  }catch(error){ack?.({ok:false,enabled:false,allowed:false,message:error.message});}
+  }catch(error){const diagnostic='Failed: '+error.message;if(accessDiagnostics.get(payload?.requesterId)!==diagnostic){accessDiagnostics.set(payload?.requesterId,diagnostic);log('Voice mute access failed '+JSON.stringify({guildId,requesterId:payload?.requesterId,reason:error.message}));}ack?.({ok:false,enabled:false,allowed:false,message:error.message});}
  };
  const voice=(before,after)=>{
   if(after.guild.id!==guildId)return;

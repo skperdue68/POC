@@ -2,6 +2,12 @@
 export function registerVoiceMuteSocket(socket, store, {getBot, authorizeUser, isEnabled=()=>true, now=Date.now, log=()=>{}}) {
  let windowAt=0, requests=0;
  let accessWindowAt=0,accessRequests=0;
+ let lastAccessDiagnostic;
+ const accessReply=(callback,value)=>{
+  const diagnostic=JSON.stringify({requesterId:socket.guildSyncUser?.discord_user_id,...value});
+  if(diagnostic!==lastAccessDiagnostic){lastAccessDiagnostic=diagnostic;log('Voice mute menu access '+diagnostic);}
+  if(typeof callback==='function')callback(value);
+ };
  const reply=(callback,value)=>{if(typeof callback==='function')callback(value);};
  const forward=async (payload,event='guildsync:voice-mute-request')=>{
   const bot=await getBot();
@@ -13,12 +19,12 @@ export function registerVoiceMuteSocket(socket, store, {getBot, authorizeUser, i
  socket.on('guildsync:voice-mute-access',async(_payload={},callback)=>{
   try {
    if(!socket.guildSyncAuthenticated || socket.guildSyncAuthType==='discord-bot' || !socket.guildSyncUser?.discord_user_id || !await authorizeUser(socket))throw Error('Approved User or Admin access is required for voice mute.');
-   if(!isEnabled()){reply(callback,{ok:true,enabled:false,allowed:false});return;}
+   if(!isEnabled()){accessReply(callback,{ok:true,enabled:false,allowed:false});return;}
    if(now()-accessWindowAt>=10000){accessWindowAt=now();accessRequests=0;}if(++accessRequests>10)throw Error('Too many voice-mute access checks.');
    const result=await forward({requesterId:socket.guildSyncUser.discord_user_id},'guildsync:voice-mute-access-request');
    const enabled=isEnabled()&&result?.ok===true&&result.enabled===true;
-   reply(callback,{ok:result?.ok===true,enabled,allowed:enabled&&result.allowed===true});
-  }catch(error){reply(callback,{ok:false,enabled:false,allowed:false,message:error.message});}
+   accessReply(callback,{ok:result?.ok===true,enabled,allowed:enabled&&result.allowed===true,...(result?.message?{message:result.message}:{})});
+  }catch(error){accessReply(callback,{ok:false,enabled:false,allowed:false,message:error.message});}
  });
  socket.on('guildsync:voice-mute-hotkey',async(payload={},callback)=>{
   try {

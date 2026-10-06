@@ -9,5 +9,5 @@ export function registerConfigurationSocket(socket,service,{authorizeAdmin,autho
  handler('guildsync:request-admin-configuration',viewer,()=>service.view());
  handler('guildsync:save-admin-configuration',admin,async p=>{const view=await service.save(p);broadcast(await service.botConfiguration(),p);return view;});
  handler('guildsync:request-bot-configuration',bot,()=>service.botConfiguration());
- handler('guildsync:register-configuration-defaults',bot,async p=>{await service.registerBotDefaults(p.defaults || {});return service.botConfiguration();});
+ handler('guildsync:register-configuration-defaults',bot,async p=>{await service.registerBotDefaults(p.defaults || {});const configuration=await service.botConfiguration();broadcast(configuration,{changes:p.defaults || {}});return configuration;});
 }

@@ -9,6 +9,21 @@ test('voice role overrides accept names and IDs but reject empty list entries',a
  assert.equal((await service.botConfiguration()).overrides[key],'Kingpin, Consigliere, 123456789');
  await assert.rejects(service.save({revision:1,changes:{[key]:'Kingpin,,Soldiers'}}),/role names or IDs/);
 });
+
+test('bot environment defaults refresh clients and remain defaults under overrides',async()=>{
+ const {registerConfigurationSocket}=await import('./admin-configuration-socket.js');
+ const service=createConfigurationService(memoryDB(),{env:{}});await service.initialize();
+ const handlers=new Map(),broadcasts=[];
+ registerConfigurationSocket({guildSyncAuthenticated:true,guildSyncAuthType:'discord-bot',on:(event,handler)=>handlers.set(event,handler)},service,{broadcast:(...args)=>broadcasts.push(args)});
+ const defaults={GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:'Consigliere'};
+ let response;await handlers.get('guildsync:register-configuration-defaults')({defaults},r=>response=r);
+ assert.equal(response.ok,true);assert.deepEqual(broadcasts[0][1],{changes:defaults});
+ await service.save({revision:0,changes:{GUILDSYNC_VOICE_MUTE_ENABLED:false}});
+ const setting=service.view().settings.find(s=>s.key==='GUILDSYNC_VOICE_MUTE_ENABLED');
+ assert.equal(setting.defaultValue,true);assert.equal(setting.value,false);
+ await service.save({revision:1,changes:{GUILDSYNC_VOICE_MUTE_ENABLED:null}});
+ assert.equal(service.view().settings.find(s=>s.key===setting.key).value,true);
+});
 test('voice mute settings are grouped with help, disabled by default and reset to reported defaults',async()=>{
  const service=createConfigurationService(memoryDB(),{env:{}});await service.initialize();
  const keys=['GUILDSYNC_VOICE_MUTE_ENABLED','GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS','GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS'];
