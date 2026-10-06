@@ -520,10 +520,11 @@ io.on('connection', (socket) => {
   registerConfigurationSocket(socket,configurationService,{
     authorizeViewer: async id => {const [rows]=await loginDB.execute('SELECT discord_user_id FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows.length>0;},
     authorizeAdmin: async id => {const [rows]=await loginDB.execute('SELECT role FROM guildsync_users WHERE discord_user_id = ? AND allowed = 1 LIMIT 1',[id]);return rows[0]?.role==='admin';},
-    broadcast: configuration => io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration)
+    broadcast: (configuration,payload) => {io.to('GuildSyncDiscordBot').emit('guildsync:configuration-updated',configuration);if(Object.keys(payload?.changes||{}).some(key=>key.startsWith('GUILDSYNC_VOICE_MUTE_')))io.to('GuildSyncClientAuthenticated').emit('guildsync:voice-mute-access-changed');}
   });
   registerDiscordOnboardingSocket(socket, onboardingService);
   registerVoiceMuteSocket(socket,voiceMuteStore,{
+    isEnabled:()=>configurationService.view().settings.find(setting=>setting.key==='GUILDSYNC_VOICE_MUTE_ENABLED')?.value===true,
     getBot:async()=>{
       const candidate=io.sockets.sockets.get(discordBotSocketId) || [...io.sockets.sockets.values()].find(s=>s.guildSyncAuthType==='discord-bot');
       const owner=await voiceMuteStore.owner(candidate?.guildSyncBot?.guild_id);

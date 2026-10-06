@@ -1,7 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createVoiceMuteController,createVoiceMuteWorker,readVoiceMuteConfig} from './voice-mute.js';
+import {createVoiceMuteController,createVoiceMuteWorker,readVoiceMuteConfig,voiceMuteAccess} from './voice-mute.js';
 import {EventEmitter} from 'node:events';
+
+test('personal access requires enabled policy, permitted role and known guild rank',()=>{
+ const f=fixture(),config=readVoiceMuteConfig({GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:'allowed'});
+ assert.deepEqual(voiceMuteAccess(config,f.requester),{enabled:true,allowed:true});
+ assert.deepEqual(voiceMuteAccess({...config,enabled:false},f.requester),{enabled:false,allowed:false});
+ assert.equal(voiceMuteAccess(config,f.members.get('low')).allowed,false);
+ f.requester.roles.cache.delete('kingpin');assert.equal(voiceMuteAccess(config,f.requester).allowed,false);
+ assert.equal(voiceMuteAccess(config,null).allowed,false);
+});
+
+test('role names are case insensitive and IDs remain supported for permissions and rank order',async()=>{
+ const f=fixture(),config=readVoiceMuteConfig({GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:' KINGPIN ',GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS:'Gangsters, Soldiers, Kingpin'});
+ assert.equal(voiceMuteAccess(config,f.requester).allowed,true);
+ const controller=createVoiceMuteController({guild:f.guild,botId:'bot',store:f.store,config});await controller.start();await controller.request({state:'pressed',sessionId:'name',requesterId:'r',connectionId:'c'});assert.equal(f.members.get('low').voice.serverMute,true);assert.equal(f.members.get('equal').voice.serverMute,false);
+ await controller.request({state:'released',sessionId:'name',requesterId:'r',connectionId:'c'});
+ assert.equal(voiceMuteAccess({...config,allowedRoleIds:['not-the-role']},f.requester).allowed,false);
+ assert.equal(voiceMuteAccess({...config,allowedRoleIds:['allowed']},f.requester).allowed,true);
+});
 
 test('worker logs received hotkey edges and rejection without heartbeat noise',async()=>{
  const f=fixture(),logs=[];f.guild.members.fetchMe=async()=>f.guild.members.me;
@@ -14,6 +32,31 @@ test('worker logs received hotkey edges and rejection without heartbeat noise',a
   const received=logs.filter(line=>line.includes('Voice hotkey')&&line.includes('received'));assert.equal(received.length,2);assert.match(received[0],/pressed/);assert.match(received[0],/requester.*r/);assert.match(received[1],/released/);assert.equal(logs.some(line=>line.includes('heartbeat')),false);
   socket.connected=false;socket.emit('disconnect');assert.equal((await request('pressed')).ok,false);assert.ok(logs.some(line=>line.includes('Voice hotkey pressed rejected')));
  } finally {await worker.stop();}
+});
+
+test('worker access fetches current roles without requiring a voice channel',async()=>{
+ const f=fixture();f.guild.members.fetchMe=async()=>f.guild.members.me;
+ const previous=f.guild.members.fetch,fetches=[];
+ f.guild.members.fetch=async query=>{fetches.push(query);return previous(typeof query==='object'?query.user:query);};
+ f.requester.voice.channelId=null;
+ const client=new EventEmitter();client.isReady=()=>true;client.user={id:'bot'};client.guilds={fetch:async()=>f.guild};
+ const socket=new EventEmitter();socket.connected=true;socket.id='access';socket.timeout=()=>({emit(_event,payload,ack){Promise.resolve(payload.action==='save'?f.store.save(payload.state):f.store.claim()).then(state=>ack(null,{ok:true,state}));}});
+ const worker=createVoiceMuteWorker({client,socket,guildId:'g',config:readVoiceMuteConfig({GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:'Kingpin'}),log:()=>{}});
+ try {
+  await worker.tick();const check=()=>new Promise(resolve=>socket.emit('guildsync:voice-mute-access-request',{requesterId:'r'},resolve));
+  assert.deepEqual(await check(),{ok:true,enabled:true,allowed:true});assert.deepEqual(fetches.at(-1),{user:'r',force:true});
+  f.requester.roles.cache.delete('kingpin');assert.deepEqual(await check(),{ok:true,enabled:true,allowed:false});
+ }finally{await worker.stop();}
+});
+
+test('hotkey rejections distinguish role mismatch, unknown rank and no voice channel',async()=>{
+ for(const [change,expected] of [
+  [f=>f.requester.roles.cache.delete('allowed'),/roles match/],
+  [f=>f.requester.roles.cache.delete('kingpin'),/rank is not recognized/],
+  [f=>f.requester.voice.channelId=null,/Join a Discord voice channel/]
+ ]){
+  const f=fixture();await f.controller.start();change(f);await assert.rejects(f.press(),expected);
+ }
 });
 
 test('heartbeats received during a slow mute keep the held session alive',async()=>{

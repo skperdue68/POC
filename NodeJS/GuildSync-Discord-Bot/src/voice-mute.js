@@ -2,7 +2,10 @@ import {Events,AuditLogEvent,PermissionFlagsBits} from 'discord.js';
 const csv=value=>String(value || '').split(',').map(s=>s.trim()).filter(Boolean);
 export function readVoiceMuteConfig(env=process.env){return {enabled:String(env.GUILDSYNC_VOICE_MUTE_ENABLED).toLowerCase()==='true',allowedRoleIds:csv(env.GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS),rankRoleIds:csv(env.GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS)};}
 const ranks=[['gangster','gangsters'],['associate','associates'],['soldier','soldiers'],['capo','capos'],['caporegime','caporegimes','caporegieme','caporegiemes'],['consigliere','consiglieri','consiglieres'],['kingpin','kingpins']];
-function rank(member,config){let result=-1;for(const role of member.roles.cache.values()){const n=config.rankRoleIds.length?config.rankRoleIds.indexOf(role.id):ranks.findIndex(a=>a.includes(String(role.name || '').toLowerCase().replace(/[^a-z0-9]/g,'')));result=Math.max(result,n);}return result;}
+function matchesRole(role,ref){return String(role.id)===ref || (!/^\d+$/.test(ref)&&String(role.name || '').trim().toLowerCase()===ref.trim().toLowerCase());}
+function hasAllowedRole(member,config){return config.allowedRoleIds.some(ref=>[...member.roles.cache.values()].some(role=>matchesRole(role,ref)));}
+function rank(member,config){let result=-1;for(const role of member.roles.cache.values()){const n=config.rankRoleIds.length?config.rankRoleIds.findIndex(ref=>matchesRole(role,ref)):ranks.findIndex(a=>a.includes(String(role.name || '').toLowerCase().replace(/[^a-z0-9]/g,'')));result=Math.max(result,n);}return result;}
+export function voiceMuteAccess(config,member){return {enabled:config.enabled,allowed:Boolean(config.enabled&&member&&!member.user.bot&&rank(member,config)>=0&&hasAllowedRole(member,config))};}
 export function createVoiceMuteController({guild,botId,store,config,now=Date.now,log=console.log}) {
  let state,ready=false,paused=false,tail=Promise.resolve(),lastAuditAt=0;const ownChanges=new Map(),heartbeatReceipts=new Map(),endSignals=new Map();
  const serial=fn=>{const job=tail.then(fn);tail=job.catch(()=>{});return job;};
@@ -12,7 +15,7 @@ export function createVoiceMuteController({guild,botId,store,config,now=Date.now
   Math.max(s.expiresAt,(heartbeatReceipts.get(id)||0)+8000)>now());
  const moderator=id=>state.moderatorMutes.some(m=>m.userId===id);
  const fetchMember=async id=>{try{return await guild.members.fetch(id);}catch(error){if(error.code===10007)return null;throw error;}};
- const authorized=member=>member&&!member.user.bot&&rank(member,config)>=0&&config.allowedRoleIds.some(id=>member.roles.cache.has(id));
+ const authorized=member=>voiceMuteAccess({...config,enabled:true},member).allowed;
  async function permitted(member,session){const requester=await fetchMember(session.requesterId);if(!authorized(requester) || requester.voice.channelId!==session.channelId || member.voice.channelId!==session.channelId)return false;const r=rank(requester,config),t=rank(member,config);return member.id!==requester.id&&!member.user.bot&&member.id!==guild.ownerId&&t>=0&&r>t&&member.manageable!==false;}
  async function permissions(channel){if(!guild.members.me?.permissions.has(PermissionFlagsBits.ViewAuditLog)||!channel.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.MuteMembers))throw Error('Voice mute requires View Audit Log and Mute Members permissions.');}
  async function auditEntry(entry,save=true) {
@@ -108,7 +111,13 @@ export function createVoiceMuteController({guild,botId,store,config,now=Date.now
    if(payload.state==='released'||payload.state==='disconnected'){if(existing)await end(existing);return {state:'released'};}
    if(payload.state==='heartbeat'){if(!existing || !active(sessionId))throw Error('Voice mute session has ended; release and press again.');const member=await fetchMember(requesterId);if(!authorized(member)||member.voice.channelId!==existing.channelId){await end(existing);throw Error('Voice mute session authorization ended; release and press again.');}existing.lastHeartbeatAt=Math.max(receivedAt,heartbeatReceipts.get(sessionId)||0);existing.expiresAt=existing.lastHeartbeatAt+8000;await persist();return {state:'active'};}
    if(payload.state!=='pressed')throw Error('Invalid voice mute state.');if(existing){if(active(sessionId))return {state:'active'};throw Error('Voice mute session has ended; release and press again.');}
-   if(!config.enabled)throw Error('Voice mute is disabled.');const member=await fetchMember(requesterId);if(!member?.voice.channelId||member.user.bot||rank(member,config)<0||!config.allowedRoleIds.some(id=>member.roles.cache.has(id)))throw Error('You are not authorized to mute this voice channel.');const channel=await guild.channels.fetch(member.voice.channelId);await permissions(channel);if(state.sessions.some(s=>s.channelId===channel.id&&active(s.id)))throw Error('This voice channel already has an active session.');
+   if(!config.enabled)throw Error('Voice mute is disabled.');const member=await fetchMember(requesterId);
+   if(!member)throw Error('Your Discord account is not a member of this server.');
+   if(member.user.bot)throw Error('Bot accounts cannot request voice mute.');
+   if(!hasAllowedRole(member,config))throw Error('None of your Discord roles match the allowed voice-mute roles.');
+   if(rank(member,config)<0)throw Error('Your Discord guild rank is not recognized; check the configured rank order.');
+   if(!member.voice.channelId)throw Error('Join a Discord voice channel before using the mute hotkey.');
+   const channel=await guild.channels.fetch(member.voice.channelId);await permissions(channel);if(state.sessions.some(s=>s.channelId===channel.id&&active(s.id)))throw Error('This voice channel already has an active session.');
    const session={id:sessionId,channelId:channel.id,requesterId,connectionId,lastHeartbeatAt:now(),expiresAt:now()+8000,state:'active'};state.sessions.push(session);await persist();for(const m of channel.members.values()){if(paused)break;await mute(session,m);}return {state:'active',channelId:channel.id};
   });},
   tick:()=>serial(async()=>{if(paused||!ready)return;for(const s of state.sessions.filter(s=>s.state==='active')){const member=await fetchMember(s.requesterId);if(!config.enabled||!authorized(member)||!active(s.id)||member?.voice.channelId!==s.channelId){s.state='ended';s.endedAt=now();await persist();}}await audits(false);await cleanup();const retained=state.sessions.filter(s=>s.state==='active'||state.targets.some(t=>t.sessionId===s.id)||now()-(s.endedAt || s.expiresAt || now())<60000);if(retained.length!==state.sessions.length){const retainedIds=new Set(retained.map(s=>s.id));for(const map of [heartbeatReceipts,endSignals])for(const id of map.keys())if(!retainedIds.has(id))map.delete(id);state.sessions=retained;await persist();}}),
@@ -170,19 +179,30 @@ export function createVoiceMuteWorker({client,socket,guildId,config,log=console.
   try{if(!controller)throw Error('Voice mute is recovering; try again shortly.');const result=await controller.request(payload);ack?.({ok:true,result});}
   catch(error){if(hotkeyEdge)log('Voice hotkey '+payload.state+' rejected: '+error.message);ack?.({ok:false,message:error.message});}
  };
+ const access=async(payload,ack)=>{
+  try {
+   const identity=socket.id;
+   if(stopped||!socket.connected||!client.isReady())throw Error('Discord mute service is unavailable.');
+   if(!config.enabled){ack?.({ok:true,enabled:false,allowed:false});return;}
+   const guild=await client.guilds.fetch(guildId);
+   const member=await guild.members.fetch({user:payload.requesterId,force:true});
+   if(stopped||!socket.connected||socket.id!==identity)throw Error('Discord mute policy or connection changed.');
+   ack?.({ok:true,...voiceMuteAccess(config,member)});
+  }catch(error){ack?.({ok:false,enabled:false,allowed:false,message:error.message});}
+ };
  const voice=(before,after)=>{
   if(after.guild.id!==guildId)return;
   if(before.serverMute!==after.serverMute)void controller?.muteChanged(after.id,after.serverMute).catch(error=>log('Voice mute attribution: '+error.message));
   if(before.channelId!==after.channelId)void controller?.channelChanged(after.id).catch(error=>log('Voice mute member reconcile: '+error.message));
  };
  const audit=(entry,guild)=>{if(guild.id===guildId)void controller?.audit(entry).catch(error=>log('Voice mute audit reconcile: '+error.message));};
- socket.on('guildsync:voice-mute-request',request);socket.on('connect',start);socket.on('disconnect',pause);
+ socket.on('guildsync:voice-mute-request',request);socket.on('guildsync:voice-mute-access-request',access);socket.on('connect',start);socket.on('disconnect',pause);
  client.on(Events.ClientReady,start);client.on(Events.VoiceStateUpdate,voice);client.on(Events.GuildAuditLogEntryCreate,audit);
  const timer=setIntervalFn(()=>void tick(),1000),leaseTimer=setIntervalFn(renew,5000);
  timer.unref?.();leaseTimer.unref?.();void start();
  return {tick,async stop(){
   stopped=true;clearIntervalFn(timer);clearIntervalFn(leaseTimer);
-  socket.off('guildsync:voice-mute-request',request);socket.off('connect',start);socket.off('disconnect',pause);
+  socket.off('guildsync:voice-mute-request',request);socket.off('guildsync:voice-mute-access-request',access);socket.off('connect',start);socket.off('disconnect',pause);
   client.off(Events.ClientReady,start);client.off(Events.VoiceStateUpdate,voice);client.off(Events.GuildAuditLogEntryCreate,audit);
   const previous=controller;pause();await previous?.drain();await starting;
  }};

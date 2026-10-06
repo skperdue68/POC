@@ -1,14 +1,25 @@
 // The client cannot select its requester, guild or channel. Discord decides the channel.
-export function registerVoiceMuteSocket(socket, store, {getBot, authorizeUser, now=Date.now, log=()=>{}}) {
+export function registerVoiceMuteSocket(socket, store, {getBot, authorizeUser, isEnabled=()=>true, now=Date.now, log=()=>{}}) {
  let windowAt=0, requests=0;
+ let accessWindowAt=0,accessRequests=0;
  const reply=(callback,value)=>{if(typeof callback==='function')callback(value);};
- const forward=async payload=>{
+ const forward=async (payload,event='guildsync:voice-mute-request')=>{
   const bot=await getBot();
   if(!bot?.connected || !bot.guildSyncAuthenticated || bot.guildSyncAuthType!=='discord-bot')throw Error('Discord mute service is unavailable.');
   return new Promise((resolve,reject)=>{
-  bot.timeout(15000).emit('guildsync:voice-mute-request',payload,(error,result)=>error?reject(Error('Discord mute request timed out; recovery will reconcile it.')):resolve(result || {ok:false,message:'Discord mute service did not respond.'}));
+  bot.timeout(15000).emit(event,payload,(error,result)=>error?reject(Error('Discord mute request timed out; recovery will reconcile it.')):resolve(result || {ok:false,message:'Discord mute service did not respond.'}));
   });
  };
+ socket.on('guildsync:voice-mute-access',async(_payload={},callback)=>{
+  try {
+   if(!socket.guildSyncAuthenticated || socket.guildSyncAuthType==='discord-bot' || !socket.guildSyncUser?.discord_user_id || !await authorizeUser(socket))throw Error('Approved User or Admin access is required for voice mute.');
+   if(!isEnabled()){reply(callback,{ok:true,enabled:false,allowed:false});return;}
+   if(now()-accessWindowAt>=10000){accessWindowAt=now();accessRequests=0;}if(++accessRequests>10)throw Error('Too many voice-mute access checks.');
+   const result=await forward({requesterId:socket.guildSyncUser.discord_user_id},'guildsync:voice-mute-access-request');
+   const enabled=isEnabled()&&result?.ok===true&&result.enabled===true;
+   reply(callback,{ok:result?.ok===true,enabled,allowed:enabled&&result.allowed===true});
+  }catch(error){reply(callback,{ok:false,enabled:false,allowed:false,message:error.message});}
+ });
  socket.on('guildsync:voice-mute-hotkey',async(payload={},callback)=>{
   try {
    if(!socket.guildSyncAuthenticated || socket.guildSyncAuthType==='discord-bot' || !socket.guildSyncUser?.discord_user_id || !await authorizeUser(socket))throw Error('Approved User or Admin access is required for voice mute.');

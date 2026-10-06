@@ -104,10 +104,10 @@ const voiceHotkey = createVoiceHotkeyController({
   changed: () => {
     if (!profileMenuOpen) return;
     const menu = document.querySelector('#discordProfileMenu');
-    const section = menu?.querySelector('#voiceHotkeySection');
-    if (!section) return;
+    const mount = menu?.querySelector('#voiceHotkeyMount');
+    if (!mount) return;
     const scrollTop = menu.scrollTop;
-    section.outerHTML = voiceHotkey.render();
+    mount.innerHTML = voiceHotkey.render();
     voiceHotkey.wire(menu);
     menu.scrollTop = scrollTop;
   }
@@ -8327,6 +8327,7 @@ function updateUserAdministrationBadge(count) {
 function handleCurrentAccountProfile(user) {
   if(!user||user.discord_user_id!==guildSyncSession.user?.discord_user_id)return;
   const previousRole=guildSyncSession.user.role;guildSyncSession.user={...guildSyncSession.user,...user};
+  if(previousRole!==user.role)void voiceHotkey.invalidateAccess();
   if(previousRole!==user.role){
     userAdministrationPanel.reset();adminConfigurationPanel.clear();
     if (!canEditGuildSyncRole(user.role)) { bankingMoveDialogOpen=false;manualBiweeklyTicketDialogOpen=false; }
@@ -8482,7 +8483,7 @@ function renderOpenProfileMenuContents() {
         ${renderProfileFileWatcherSection()}
       </div>
       ${guildSyncSession.user?.role==='admin'?`<section class="profile-section profile-user-management-section" aria-label="User Management"><div class="profile-section-header">User Management</div><button id="manageGuildSyncUsersButton" class="user-admin-menu-button" type="button"><span>Manage GuildSync Users</span><span id="userAdminMenuCount"></span></button></section>`:''}
-      ${voiceHotkey.render()}
+      <div id="voiceHotkeyMount">${voiceHotkey.render()}</div>
       ${renderRoleViewControls(guildSyncSession.user)}
       <button id="discordLogoutButton" class="discord-secondary-button profile-logout-button" type="button">Logout</button>
     </section>
@@ -8578,6 +8579,7 @@ function openProfileMenu() {
   menu.classList.add('open');
   menu.setAttribute('aria-hidden', 'false');
   profileMenuOpen = true;
+  void voiceHotkey.refreshAccess();
 
   refreshProfileFileWatcherStatus();
 
@@ -8712,6 +8714,7 @@ function connectSocket() {
   socket.on('guildsync:users-changed',payload=>userAdministrationPanel.changed(payload));
   socket.on('guildsync:account-profile',handleCurrentAccountProfile);
   socket.on('guildsync:account-removed',()=>void logoutGuildSync());
+  socket.on('guildsync:voice-mute-access-changed',()=>void voiceHotkey.invalidateAccess());
 
   socket.on('connect_error', () => {
     userAdministrationPanel.stop();
@@ -8733,6 +8736,7 @@ function connectSocket() {
   });
 
   socket.on('guildsync:discord-member-data-updated', (payload) => {
+    void voiceHotkey.refreshAccess();
     handleDiscordMemberDataUpdated(payload);
   });
 
