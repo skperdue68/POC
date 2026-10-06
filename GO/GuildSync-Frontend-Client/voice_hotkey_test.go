@@ -2,13 +2,36 @@ package main
 
 import "testing"
 
+func TestVoiceRuntimeMultipleOrdinaryKeys(t *testing.T) {
+	events := []string{}
+	v := voiceRuntime{settings: VoiceHotkeySettings{Enabled: true, Shortcut: "M+N"}, active: true, emit: func(_ string, data interface{}) { events = append(events, data.(map[string]string)["state"]) }}
+	down := map[int]bool{}
+	sample := func() { v.sample(func(key int) bool { return down[key] }) }
+	down[77] = true
+	sample()
+	if len(events) != 0 {
+		t.Fatal("partial shortcut activated")
+	}
+	down[78] = true
+	sample()
+	sample()
+	if len(events) != 1 || events[0] != "pressed" {
+		t.Fatal(events)
+	}
+	down[77] = false
+	sample()
+	if len(events) != 2 || events[1] != "released" {
+		t.Fatal(events)
+	}
+}
+
 func TestVoiceShortcutValidation(t *testing.T) {
-	for _, input := range []string{"M", "Ctrl", "Alt+Tab", "Ctrl+Alt+Delete", "Win+L", "Ctrl+Escape", "Ctrl+Unknown"} {
+	for _, input := range []string{"", "Ctrl+Ctrl+M", "Win+L", "Ctrl+Unknown", "Alt+F4"} {
 		if _, err := parseVoiceShortcut(input); err == nil {
 			t.Errorf("accepted unsafe/incomplete %q", input)
 		}
 	}
-	for _, input := range []string{"Ctrl+M", "Ctrl+Shift+F8", "Alt+Q"} {
+	for _, input := range []string{"M", "Ctrl", "Space", "F8", "M+N", "Ctrl+M+N", "Ctrl+Shift+M+N", "Ctrl+M", "Ctrl+Shift+F8", "Alt+Q"} {
 		if _, err := parseVoiceShortcut(input); err != nil {
 			t.Errorf("rejected %q: %v", input, err)
 		}

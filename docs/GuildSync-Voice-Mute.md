@@ -28,7 +28,7 @@ These optional settings belong in `NodeJS/GuildSync-Discord-Bot/.env`; live Admi
 
 The personal menu shows mute controls only when the server feature is enabled and your approved User/Admin account has an allowed Discord role and a recognized guild rank. Access is checked when connecting, opening the menu, after relevant updates, and every 30 seconds. Losing access hides the controls and stops the shortcut listener, while retaining your personal preferences. The `_ROLE_IDS` setting names remain unchanged for compatibility, even when you enter role names.
 
-Local Windows settings are in `%APPDATA%\GuildSync\voice-hotkey.json`: `enabled` defaults to false, `shortcut` to `Ctrl+M`. Shortcuts require Ctrl, Alt or Shift plus a letter, number or F1–F12; invalid/reserved combinations are rejected. Escape cancels capture. Disabling/changing settings ends the active session.
+Local Windows settings are in `%APPDATA%\GuildSync\voice-hotkey.json`: `enabled` defaults to false, `shortcut` to `Ctrl+M`. Shortcuts accept one or more supported keys: letters, numbers, F1–F12, Ctrl/Alt/Shift, Space, and navigation keys. Examples include F8, Space, M+N, and Ctrl+Shift+M. Set Hotkey collects keys until all are released, then saves the combination; Escape or moving focus out of the window cancels. Invalid/reserved combinations are rejected. All configured keys must be held to start muting; releasing any required key ends it. Disabling/changing settings ends the active session.
 
 ## Database and recovery
 
