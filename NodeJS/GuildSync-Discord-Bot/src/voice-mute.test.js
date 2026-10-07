@@ -21,9 +21,10 @@ test('mute diagnostics identify channel, attempted members and protected/skipped
  await f.controller.audit({id:'30',action:24,target:{id:'moderated'},executor:{id:'mod'},changes:[{key:'mute',new:true}],createdTimestamp:100000});
  await f.press();
  assert.ok(f.logs.some(s=>s.startsWith('Voice mute channel selected')&&s.includes('Event Voice')&&s.includes('Officer')));
+ assert.equal(f.members.get('hierarchy').voice.serverMute,true);
  const diagnostic=(id,outcome)=>f.logs.find(s=>s.startsWith('Voice mute member '+outcome)&&s.includes('"memberId":"'+id+'"'));
  assert.match(diagnostic('low','attempting'),/Event Voice/);assert.match(diagnostic('low','applied'),/succeeded/);
- for(const [id,reason] of [['r',/Requester is never/],['owner',/owner is protected/],['bot-user',/Bot accounts/],['equal',/equal to or higher/],['unknown',/unrecognized/],['hierarchy',/hierarchy/],['already',/already server-muted/],['moderated',/moderator mute/]])assert.match(diagnostic(id,'skipped'),reason);
+ for(const [id,reason] of [['r',/Requester is never/],['owner',/owner is protected/],['bot-user',/Bot accounts/],['equal',/equal to or higher/],['unknown',/unrecognized/],['already',/already server-muted/],['moderated',/moderator mute/]])assert.match(diagnostic(id,'skipped'),reason);
 });
 
 test('failed Discord mute is logged with member, channel and error',async()=>{
@@ -172,4 +173,23 @@ test('join policy excludes owner and bots and ends session on requester role los
 test('worker pauses on disconnect and resumes durable cleanup after fresh claim',async()=>{
  const f=fixture();f.guild.members.fetchMe=async()=>f.guild.members.me;const client=new EventEmitter();client.isReady=()=>true;client.user={id:'bot'};client.guilds={fetch:async()=>f.guild};const socket=new EventEmitter();socket.connected=true;socket.id='one';socket.timeout=()=>({emit(_event,payload,ack){Promise.resolve(payload.action==='save'?f.store.save(payload.state):f.store.claim()).then(state=>ack(null,{ok:true,state}));}});const worker=createVoiceMuteWorker({client,socket,guildId:'g',config:readVoiceMuteConfig({GUILDSYNC_VOICE_MUTE_ENABLED:'true',GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS:'allowed'}),log:()=>{}});
  await worker.tick();const request=payload=>new Promise(resolve=>socket.emit('guildsync:voice-mute-request',payload,resolve));assert.equal((await request({state:'pressed',sessionId:'w',connectionId:'c',requesterId:'r'})).ok,true);socket.connected=false;socket.emit('disconnect');assert.equal((await request({state:'pressed',sessionId:'no',connectionId:'c',requesterId:'r'})).ok,false);assert.equal(f.members.get('low').voice.serverMute,true);socket.id='two';socket.connected=true;await worker.tick();assert.equal(f.members.get('low').voice.serverMute,false);await worker.stop();assert.equal(socket.listenerCount('guildsync:voice-mute-request'),0);
+});
+
+test('Consigliere can mute Capo despite unrelated Discord role hierarchy',async()=>{
+ const f=fixture();f.requester.roles.cache.delete('kingpin');f.requester.roles.cache.set('officer',{id:'officer',name:'Consigliere'});
+ const capo=f.member('capo','Capo');capo.manageable=false;
+ await f.controller.start();await f.press();assert.equal(capo.voice.serverMute,true);
+ assert.equal(f.members.get('equal').voice.serverMute,false);
+});
+
+test('request outside a Discord voice channel makes no mute calls or session writes',async()=>{
+ const f=fixture();await f.controller.start();f.requester.voice.channelId=null;const revision=f.state.revision;
+ await assert.rejects(f.press(),/Join a Discord voice channel/);assert.deepEqual(f.calls,[]);assert.equal(f.state.sessions.length,0);assert.equal(f.state.revision,revision);assert.ok(f.logs.some(line=>line.includes('request skipped: requester is not in a Discord voice channel')));
+});
+
+test('voice role environment settings reject @ prefixes like administrator settings',()=>{
+ for(const key of ['GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS','GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS']){
+  assert.throws(()=>readVoiceMuteConfig({[key]:'@Consigliere'}),/without @/);
+  assert.throws(()=>readVoiceMuteConfig({[key]:'Consigliere,,Kingpin'}),/role names or IDs/);
+ }
 });

@@ -1,5 +1,5 @@
 import {Events,AuditLogEvent,PermissionFlagsBits} from 'discord.js';
-const csv=value=>String(value || '').split(',').map(s=>s.trim()).filter(Boolean);
+const csv=value=>{const text=String(value || '').trim();if(!text)return [];const refs=text.split(',').map(s=>s.trim());if(refs.some(ref=>!ref || /[\x00-\x1f\x7f]/.test(ref) || ref.startsWith('@') || ref.includes('<@')))throw Error('Voice mute settings must contain comma-separated role names or IDs without @.');return refs;};
 export function readVoiceMuteConfig(env=process.env){return {enabled:String(env.GUILDSYNC_VOICE_MUTE_ENABLED).toLowerCase()==='true',allowedRoleIds:csv(env.GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS),rankRoleIds:csv(env.GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS)};}
 const ranks=[['gangster','gangsters'],['associate','associates'],['soldier','soldiers'],['capo','capos'],['caporegime','caporegimes','caporegieme','caporegiemes'],['consigliere','consiglieri','consiglieres'],['kingpin','kingpins']];
 function matchesRole(role,ref){return String(role.id)===ref || (!/^\d+$/.test(ref)&&String(role.name || '').trim().toLowerCase()===ref.trim().toLowerCase());}
@@ -35,7 +35,7 @@ export function createVoiceMuteController({guild,botId,store,config,now=Date.now
   const r=rank(requester,config),t=rank(member,config);
   if(t<0)return 'Member guild rank is unrecognized; unknown ranks are protected.';
   if(r<=t)return 'Member guild rank is equal to or higher than requester rank.';
-  if(member.manageable===false)return 'Bot role hierarchy cannot manage this member.';
+  // Voice mute uses Mute Members, not the hierarchy checks for role/nickname edits.
   return null;
  }
  async function permitted(member,session){return !await skipReason(member,session);}
@@ -145,7 +145,7 @@ export function createVoiceMuteController({guild,botId,store,config,now=Date.now
    if(member.user.bot)throw Error('Bot accounts cannot request voice mute.');
    if(!hasAllowedRole(member,config))throw Error('None of your Discord roles match the allowed voice-mute roles.');
    if(rank(member,config)<0)throw Error('Your Discord guild rank is not recognized; check the configured rank order.');
-   if(!member.voice.channelId)throw Error('Join a Discord voice channel before using the mute hotkey.');
+   if(!member.voice.channelId){log('Voice mute request skipped: requester is not in a Discord voice channel '+JSON.stringify({guildId:guild.id,requesterId,connectionId,sessionId}));throw Error('Join a Discord voice channel before using the mute hotkey.');}
    const channel=await guild.channels.fetch(member.voice.channelId);await permissions(channel);if(state.sessions.some(s=>s.channelId===channel.id&&active(s.id)))throw Error('This voice channel already has an active session.');
    log('Voice mute channel selected '+JSON.stringify({guildName:guild.name,guildId:guild.id,requesterName:member.displayName||member.user.username,requesterId,requesterRank:rank(member,config),channelName:channel.name,channelId:channel.id,memberCount:channel.members.size,sessionId}));
    const session={id:sessionId,channelId:channel.id,channelName:channel.name,requesterId,connectionId,lastHeartbeatAt:now(),expiresAt:now()+8000,state:'active'};state.sessions.push(session);await persist();for(const m of channel.members.values()){if(paused)break;await mute(session,m);}return {state:'active',channelId:channel.id};
