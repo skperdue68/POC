@@ -22,3 +22,8 @@ test('templates escape inserted names and limit ping to intended user',()=>{
 test('a customized template still tags the intended member when placeholder is omitted',()=>{
  assert.match(renderOnboardingMessage('Please link your account.',{userId:'123'}).content,/^<@123> /);
 });
+
+test('onboarding role references accept names as well as IDs',()=>{
+ const config=readOnboardingConfig({GUILDSYNC_ONBOARDING_GANGSTER_ROLE_ID:' Gangsters ',GUILDSYNC_ONBOARDING_ASSOCIATE_ROLE_ID:'Associates'});
+ assert.equal(config.gangsterRoleId,'Gangsters');assert.equal(config.associateRoleId,'Associates');
+});

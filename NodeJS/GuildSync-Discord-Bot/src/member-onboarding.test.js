@@ -177,3 +177,19 @@ test('existing Associates are retained during higher-rank cleanup and uneditable
   if(editable)assert.deepEqual(f.actions,['remove:g']);else{assert.deepEqual(f.actions,[]);assert.match(f.finishes.at(-1).error,/Gangsters/);}
  }
 });
+
+test('promotion resolves configured names and ignores unrelated member hierarchy',async()=>{
+ const f=fixture();f.config.gangsterRoleId=' gangsters ';f.config.associateRoleId=' ASSOCIATES ';f.member.manageable=false;
+ await processOnboardingDelivery(f.context,f.job);assert.deepEqual(f.actions.slice(0,2),['add:a','remove:g']);assert.equal(f.finishes.at(-1).done,true);
+});
+
+test('promotion role changes log attempts, success and Discord failures',async()=>{
+ for(const fail of [false,true]){
+  const f=fixture(),logs=[];f.context.log=line=>logs.push(line);
+  if(fail)f.member.roles.remove=async()=>{throw Error('Missing Permissions');};
+  await processOnboardingDelivery(f.context,f.job);
+  assert.ok(logs.some(line=>line.includes('Onboarding role promotion attempting')&&line.includes('user')));
+  if(fail){assert.ok(logs.some(line=>line.includes('Onboarding role promotion failed')&&line.includes('Missing Permissions')));assert.equal(logs.some(line=>line.includes('Onboarding role promotion succeeded')),false);}
+  else assert.ok(logs.some(line=>line.includes('Onboarding role promotion succeeded')&&line.includes('Associates')&&line.includes('Gangsters')));
+ }
+});

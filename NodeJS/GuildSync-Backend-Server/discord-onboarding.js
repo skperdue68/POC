@@ -46,7 +46,8 @@ export function createDiscordOnboarding(db,{store=createOnboardingStore(db),now=
   async configure(guildId,config) {
    for(const key of ['enabled','promotionEnabled','promotionNotifyEnabled','reminderEnabled'])if(typeof config?.[key]!=='boolean')throw Error('Invalid onboarding configuration: '+key);
    if(!['private_thread','channel'].includes(config.mode) || !Number.isFinite(config.reminderHours) || config.reminderHours<=0 || config.reminderHours>8760)throw Error('Invalid onboarding delivery configuration.');
-   for(const key of ['channelId','gangsterRoleId','associateRoleId'])if(config[key] && !/^\d+$/.test(config[key]))throw Error('Invalid onboarding '+key);
+   for(const key of ['channelId'])if(config[key] && !/^\d+$/.test(config[key]))throw Error('Invalid onboarding '+key);
+   for(const key of ['gangsterRoleId','associateRoleId'])if(config[key] && (typeof config[key]!=='string' || /[,\x00-\x1f\x7f@]/.test(config[key])))throw Error('Invalid onboarding '+key);
    await store.atomic(guildId,async s=>{
     const old=await s.state(guildId),oldOn=reminderOn(old?.config),newOn=reminderOn(config);
     const cutoff=newOn?(oldOn?old.reminderSince:now()):null;

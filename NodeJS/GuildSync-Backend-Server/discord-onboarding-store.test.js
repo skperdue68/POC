@@ -19,11 +19,16 @@ test('SQL store retains completed state and queries confirmed links only',async(
  }};
  const store=createOnboardingStore(db);const job=await store.job('job');assert.equal(job.status,'done');assert.equal(job.threadId,'thread');
  await store.confirmed('u');assert.match(queries.at(-1).sql,/link_status='linked' AND auto_link_blocked=0/);
- await store.promotionCandidates({gangsterRoleId:'role'});assert.match(queries.at(-1).sql,/r.role_id=\?/);assert.deepEqual(queries.at(-1).args,['role']);
+ await store.promotionCandidates({gangsterRoleId:'123'});assert.match(queries.at(-1).sql,/r.role_id=\?/);assert.deepEqual(queries.at(-1).args,['123']);
  await store.putJob(job);assert.ok(queries.at(-1).args.every(value=>value!==undefined));
 });
 
 test('default promotion candidates use the plural Gangsters Discord rank',async()=>{
  const queries=[];const store=createOnboardingStore({execute:async(sql,args)=>{queries.push({sql,args});return [[]];}});
  await store.promotionCandidates({});assert.deepEqual(queries.at(-1).args,['gangsters']);
+});
+
+test('configured role names select promotion candidates case insensitively',async()=>{
+ const queries=[],store=createOnboardingStore({execute:async(sql,args)=>{queries.push({sql,args});return [[]];}});
+ await store.promotionCandidates({gangsterRoleId:' GANGSTERS '});assert.match(queries[0].sql,/LOWER\(TRIM\(r.role_name\)\)=\?/);assert.deepEqual(queries[0].args,['gangsters']);
 });

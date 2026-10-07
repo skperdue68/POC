@@ -6,7 +6,7 @@ const configurationHelp={
  },
  "GUILDSYNC_VOICE_MUTE_ALLOWED_ROLE_IDS": {
   "section": "Access and permissions",
-  "help": "Comma-separated Discord role names or numeric IDs allowed to request a channel mute, for example Kingpin, Consigliere. Names match case-insensitively; omit @. Blank permits nobody. GuildSync User or Admin access is also required; Viewers cannot use this feature."
+  "help": "Comma-separated Discord role names or numeric IDs allowed to request a channel mute, for example Kingpin, Consigliere. Names match case-insensitively; omit @. Blank permits nobody. Approved GuildSync Viewer, User or Admin access, or a standalone Discord voice login, is required."
  },
  "GUILDSYNC_VOICE_MUTE_RANK_ROLE_IDS": {
   "section": "Rank protection",
@@ -42,11 +42,11 @@ const configurationHelp={
  },
  "GUILDSYNC_ONBOARDING_GANGSTER_ROLE_ID": {
   "section": "Delivery and role matching",
-  "help": "Role removed after an ESO link is created. Leave blank to discover the Gangsters role by name; use an ID to select it explicitly."
+  "help": "Role removed after an ESO link is created. Leave blank to discover the Gangsters role by name; use a role name or ID to select it explicitly. Names are case insensitive; omit @."
  },
  "GUILDSYNC_ONBOARDING_ASSOCIATE_ROLE_ID": {
   "section": "Delivery and role matching",
-  "help": "Role granted to a linked Gangster who has no higher guild role. Leave blank to discover Associates by name, or supply its Discord role ID."
+  "help": "Role granted to a linked Gangster who has no higher guild role. Leave blank to discover Associates by name, or supply its Discord role name or ID. Names are case insensitive; omit @."
  },
  "GUILDSYNC_ONBOARDING_PROMOTION_MESSAGE": {
   "section": "Member messages",
@@ -127,8 +127,8 @@ export const configurationCatalog=[
  onboarding('REMINDER_HOURS','Reminder delay (hours)','number',24,{min:0.01,max:8760}),
  onboarding('CHANNEL_ID','Notification channel ID','id',''),
  onboarding('NOTIFICATION_MODE','Notification delivery','select','private_thread',{options:['private_thread','channel']}),
- onboarding('GANGSTER_ROLE_ID','Gangsters role ID (blank: discover by name)','id',''),
- onboarding('ASSOCIATE_ROLE_ID','Associates role ID (blank: discover by name)','id',''),
+ onboarding('GANGSTER_ROLE_ID','Gangsters role name or ID (blank: discover by name)','role',''),
+ onboarding('ASSOCIATE_ROLE_ID','Associates role name or ID (blank: discover by name)','role',''),
  onboarding('PROMOTION_MESSAGE','Promotion message','template','{mention}, your Discord account is now linked to ESO account **{eso_name}**. You have been promoted to {associate_role} and should now have full server access.',{placeholders:['mention','eso_name','associate_role','hours'],maxLength:1800}),
  onboarding('REMINDER_MESSAGE','Unlinked member reminder','template','{mention}, please update your Discord server nickname to match your ESO account name so GuildSync can link your accounts and grant full server access.',{placeholders:['mention','eso_name','associate_role','hours'],maxLength:1800}),
  raffle('ANNOUNCEMENTS_ENABLED','Enable raffle announcements','boolean',true),
@@ -156,6 +156,7 @@ function typed(item,value){
  if(text.length>(item.maxLength || 2000))throw Error(item.label+' is too long.');
  if(item.type==='id' && text && !/^\d+$/.test(text))throw Error(item.label+' must be a Discord ID.');
  if(item.type==='ids' && text && text.split(',').some(id=>!/^\d+$/.test(id.trim())))throw Error(item.label+' must contain comma-separated Discord IDs.');
+ if(item.type==='role' && text && /[,\x00-\x1f\x7f@]/.test(text))throw Error(item.label+' must be one role name or ID without @.');
  if(item.type==='roles' && text && text.split(',').some(ref=>!ref.trim()||/[\x00-\x1f\x7f]/.test(ref)||ref.trim().startsWith('@')||ref.includes('<@')))throw Error(item.label+' must contain comma-separated role names or IDs without @.');
  if(item.type==='hours' && (!text || text.split(',').some(v=>!v.trim() || !Number.isFinite(Number(v))||Number(v)<=0||Number(v)>8760)))throw Error(item.label+' must contain positive hours.');
  if(item.type==='select'&&!item.options.includes(text))throw Error('Invalid '+item.label+'.');

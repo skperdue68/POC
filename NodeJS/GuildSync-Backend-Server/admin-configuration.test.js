@@ -58,3 +58,11 @@ test('approved users can view configuration but only admins can save it',async()
  approved=true;socket.guildSyncAuthType='discord-bot';assert.equal((await call('guildsync:request-admin-configuration')).ok,false);assert.equal(reads,1);
  socket.guildSyncAuthType='desktop';socket.guildSyncAuthenticated=false;assert.equal((await call('guildsync:request-admin-configuration')).ok,false);
 });
+
+test('onboarding role defaults and administrator overrides accept a single name or ID',async()=>{
+ const service=createConfigurationService(memoryDB(),{env:{}});await service.initialize();
+ const key='GUILDSYNC_ONBOARDING_GANGSTER_ROLE_ID';
+ await service.registerBotDefaults({[key]:'Gangsters'});await service.save({revision:0,changes:{[key]:'123'}});
+ assert.equal((await service.botConfiguration()).overrides[key],'123');
+ await assert.rejects(service.save({revision:1,changes:{[key]:'Gangsters,Associates'}}),/one role/);
+});
