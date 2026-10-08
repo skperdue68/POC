@@ -54,6 +54,15 @@
         - name: Checkout
           uses: actions/checkout@v4
 
+        - name: Test macOS installer file operations
+          if: runner.os == 'macOS'
+          shell: bash
+          working-directory: .
+          run: |
+            bash -n Installer/Mac/install-guildsync.sh
+            bash -n Installer/Mac/make-macos-installer.sh
+            bash Installer/Mac/installer.test.sh
+
         - name: Setup Go
           uses: actions/setup-go@v5
           with:
@@ -189,15 +198,6 @@
               -Force
 
             Write-Host "Created $zipPath containing $($installer.Name)"
-
-        - name: Test macOS installer file operations
-          if: runner.os == 'macOS'
-          shell: bash
-          working-directory: .
-          run: |
-            bash -n Installer/Mac/install-guildsync.sh
-            bash -n Installer/Mac/make-macos-installer.sh
-            bash Installer/Mac/installer.test.sh
 
         - name: Build macOS installer ZIP
           if: runner.os == 'macOS'

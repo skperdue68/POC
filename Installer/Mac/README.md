@@ -12,7 +12,7 @@ The desktop shortcut is created only when it will not replace a real existing fi
 
 ## Verification
 
-Run `bash Installer/Mac/installer.test.sh` on macOS. Tests cover repeated installs, settings preservation, copying/promotion failures, destination symlinks, AddOns validation, and cleanup file boundaries. The GitHub macOS build runs these checks before packaging.
+Run `bash Installer/Mac/installer.test.sh` on macOS. Tests cover repeated installs, settings preservation, copying/promotion failures, destination symlinks, AddOns validation, and cleanup file boundaries. On macOS the test also compiles every embedded AppleScript without showing dialogs. The GitHub macOS build runs these checks immediately after checkout.
 
 For a native GUI acceptance check, build a new installer ZIP from this revision and test:
 

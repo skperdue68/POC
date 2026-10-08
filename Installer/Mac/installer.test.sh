@@ -4,6 +4,18 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 source "$ROOT/install-guildsync.sh"
+# Compile every embedded AppleScript on native macOS without showing dialogs.
+if [[ -x /usr/bin/osacompile ]]; then
+  awk -v dir="$TEST_DIR" '
+    /<<\047OSA\047/ { n++; active=1; next }
+    active && /^OSA$/ { active=0; next }
+    active { print > (dir "/dialog-" n ".applescript") }
+  ' "$ROOT/install-guildsync.sh"
+  for dialog in "$TEST_DIR"/dialog-*.applescript; do
+    /usr/bin/osacompile -o "$dialog.scpt" "$dialog"
+  done
+  echo 'PASS: all embedded AppleScript dialogs compile on macOS.'
+fi
 mkdir -p "$TEST_DIR/payload/GuildSync.app/Contents/MacOS" "$TEST_DIR/apps" "$TEST_DIR/live/AddOns" "$TEST_DIR/payload/ESO/GuildSyncRoster"
 printf 'app' > "$TEST_DIR/payload/GuildSync.app/Contents/MacOS/GuildSync"
 printf 'new' > "$TEST_DIR/payload/ESO/GuildSyncRoster/GuildSyncRoster.lua"
