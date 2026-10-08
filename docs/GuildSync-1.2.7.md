@@ -15,7 +15,7 @@ Mac users should follow the [Mac installation directions](GuildSync-Mac-Installa
 
 ## Server configuration and installer availability
 
-The backend reads its release version from its stamped `package.json`. An old `GUILDSYNC_CLIENT_VERSION` environment setting is ignored; remove it when convenient. Preserve the deployment's existing secrets and other configuration. Set `GUILDSYNC_DOWNLOADS_DIR` to the installer directory if it differs from the default `NodeJS/GuildSync-Backend-Server/public/downloads`. Set `GUILDSYNC_WEB_PUBLIC_URL` to the externally accessible HTTPS origin used for download links.
+The backend reads its release version from its stamped `package.json`. The Go updater keeps `GUILDSYNC_CLIENT_VERSION` in an existing local `.env` synchronized for compatibility; run `go run tools/update-version.go` from the repository root after pulling. The backend still derives its version from package.json. Preserve the deployment's existing secrets and other configuration. Set `GUILDSYNC_DOWNLOADS_DIR` to the installer directory if it differs from the default `NodeJS/GuildSync-Backend-Server/public/downloads`. Set `GUILDSYNC_WEB_PUBLIC_URL` to the externally accessible HTTPS origin used for download links.
 
 Place these exact files directly in the download directory (case-sensitive on Linux):
 
@@ -67,7 +67,8 @@ Run `node --test` in the bot directory for its command and scheduler tests. This
 
 `VERSION` at the repository root is the development version. Change that file, then run `go run tools/update-version.go` from the root to synchronize generated version fields. Run `go run tools/update-version.go --check` to detect mismatches. Do not edit each component separately.
 
-Publishing a release with a tag such as `v1.4.0` overrides VERSION in the build checkout and stamps desktop/web source, Wails metadata, all four npm package/lock files, ESO manifests, the Applications addon, and Windows installer metadata. The workflow verifies the stamped files before building. These changes belong to the artifacts; the tag does not rewrite repository history. Numeric native installer metadata uses the numeric part of prerelease versions; visible release labels keep the complete version.
+Publishing a release with a tag such as `v1.4.0` overrides VERSION in the build checkout and stamps desktop/web source, Wails metadata, all four npm package/lock files, ESO manifests, the Applications addon, and Windows installer metadata. The workflow verifies the stamped files before building. After every platform and server build succeeds, the downloads job also commits the most recently published release version fields to master. The existing release tag stays immutable; the synchronization is a new commit, available through git pull. Numeric native installer metadata uses the numeric part of prerelease versions; visible release labels keep the complete version.
 
 The release also includes `GuildSync-Server-<version>.zip`, containing backend runtime, newly compiled web assets, bot runtime, migrations and example configuration. It excludes local .env files, credentials, node_modules, old downloads and runtime data. Extract into a staging folder, back up the deployment, and copy runtime files into the corresponding NodeJS service directories. Preserve existing .env, credentials, downloads and persistent data. Run npm ci in backend and bot directories and restart using your existing service manager. Review and apply any required migrations through your normal deployment process. No automatic deployment occurs.
+
 

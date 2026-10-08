@@ -66,6 +66,8 @@ func main() {
 	})
 
 	updateWailsJSON(&changed, "GO/GuildSync-Frontend-Client/wails.json", version)
+	updateEnvVersion(&changed, "NodeJS/GuildSync-Backend-Server/.env", version, true)
+	updateEnvVersion(&changed, "NodeJS/GuildSync-Backend-Server/.env.example", version, false)
 
 	for _, root := range []string{
 		"GO/GuildSync-Frontend-Client/frontend",
@@ -115,6 +117,37 @@ func main() {
 type replacement struct {
 	pattern *regexp.Regexp
 	value   string
+}
+
+func updateEnvVersion(changed *[]string, path, version string, optional bool) {
+	data, err := os.ReadFile(path)
+	if optional && os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		fatalf("read %s: %v", path, err)
+	}
+	original := string(data)
+	pattern := regexp.MustCompile(`(?m)^[ \t]*(?:export[ \t]+)?GUILDSYNC_CLIENT_VERSION[ \t]*=[^\r\n]*`)
+	updated := pattern.ReplaceAllString(original, "GUILDSYNC_CLIENT_VERSION="+version)
+	if !pattern.MatchString(original) {
+		newline := "\n"
+		if strings.Contains(original, "\r\n") {
+			newline = "\r\n"
+		}
+		if updated != "" && !strings.HasSuffix(updated, "\n") {
+			updated += newline
+		}
+		updated += "GUILDSYNC_CLIENT_VERSION=" + version + newline
+	}
+	if original == updated {
+		return
+	}
+	if checkMode {
+		fatalf("version mismatch in %s", path)
+	}
+	writeText(path, updated)
+	*changed = append(*changed, path)
 }
 
 func replaceFile(changed *[]string, path string, replacements []replacement) {
