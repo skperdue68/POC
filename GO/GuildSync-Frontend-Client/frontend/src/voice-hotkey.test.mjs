@@ -5,6 +5,21 @@ const captureSource=await readFile(new URL('./shortcut-capture.js',import.meta.u
 const source = (await readFile(new URL('./voice-hotkey.js', import.meta.url), 'utf8')).replace('./shortcut-capture.js','data:text/javascript;base64,'+Buffer.from(captureSource).toString('base64'));
 const {createVoiceHotkeyController} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
+test('native listener failure releases held mute and exposes setup error',async()=>{
+ let edge;const states=[],active=[];
+ const socket={connected:true,emit(event,payload,ack){if(event==='guildsync:voice-mute-access'){ack({ok:true,enabled:true,allowed:true});return;}states.push(payload.state);ack?.({ok:true})}};
+ const control=createVoiceHotkeyController({bridge:{GetVoiceHotkeySettings:async()=>({enabled:true,shortcut:'Ctrl+M',supported:true}),SetVoiceHotkeyActive:async value=>active.push(value)},eventsOn(_,fn){edge=fn},getSocket:()=>socket,authenticated:()=>true});
+ await control.connection(true);edge({state:'pressed'});edge({state:'error',message:'Enable Input Monitoring'});await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(states,['pressed','released']);assert.equal(active.at(-1),false);
+ const status={textContent:''};control.wire({querySelector:selector=>selector==='#voiceHotkeyStatus'?status:null});assert.equal(status.textContent,'Enable Input Monitoring');control.stop();
+});
+
+test('disabled settings never request global keyboard access',async()=>{
+ const active=[];const socket={connected:true,emit(_,__,ack){ack({ok:true,enabled:true,allowed:true})}};
+ const control=createVoiceHotkeyController({bridge:{GetVoiceHotkeySettings:async()=>({enabled:false,shortcut:'Ctrl+M',supported:true}),SetVoiceHotkeyActive:async value=>active.push(value)},eventsOn(){},getSocket:()=>socket,authenticated:()=>true});
+ await control.connection(true);assert.deepEqual(active,[]);control.stop();
+});
+
 test('menu is hidden unless policy and Discord role access are both confirmed',async()=>{
  let response={ok:true,enabled:false,allowed:false};const active=[];
  const socket={connected:true,emit(event,payload,ack){if(event==='guildsync:voice-mute-access')ack(response)}};
@@ -55,3 +70,4 @@ test('rejected press never retries until release', async () => {
   await control.connection(true); edge({state:'pressed'}); edge({state:'pressed'});
   assert.equal(presses,1); control.stop();
 });
+

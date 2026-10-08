@@ -1,0 +1,47 @@
+name: Test desktop voice hotkeys
+
+on:
+  pull_request:
+    paths:
+      - 'GO/GuildSync-Frontend-Client/voice_hotkey*.go'
+      - 'GO/GuildSync-Frontend-Client/frontend/src/voice-hotkey*'
+      - 'GO/GuildSync-Frontend-Client/frontend/src/shortcut-capture.js'
+      - 'tools/test-voice-native.py'
+      - '.github/workflows/voicehotkeys.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: GO/GuildSync-Frontend-Client/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux native test dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev pkg-config xvfb xdotool
+      - name: Test native voice capture and shared lifecycle
+        if: runner.os != 'Linux'
+        run: python tools/test-voice-native.py
+      - name: Test X11 capture in a virtual display
+        if: runner.os == 'Linux'
+        run: xvfb-run -a env GUILDSYNC_TEST_X11=1 python tools/test-voice-native.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test frontend hold and failure handling
+        run: node --test GO/GuildSync-Frontend-Client/frontend/src/voice-hotkey.test.mjs

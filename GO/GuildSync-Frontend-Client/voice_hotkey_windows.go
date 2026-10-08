@@ -25,6 +25,7 @@ type voiceMessage struct {
 }
 
 func startVoiceKeyboard(v *voiceRuntime) (func(), error) {
+	generation := v.keyboardGeneration
 	ready := make(chan error, 1)
 	done := make(chan struct{})
 	wake := make(chan struct{}, 1)
@@ -70,7 +71,7 @@ func startVoiceKeyboard(v *voiceRuntime) (func(), error) {
 					break
 				}
 			}
-			v.sample(func(key int) bool { value, _, _ := keyState.Call(uintptr(key)); return value&0x8000 != 0 })
+			v.sampleKeyboard(generation, func(key int) bool { value, _, _ := keyState.Call(uintptr(key)); return value&0x8000 != 0 })
 		}
 	}()
 	if err := <-ready; err != nil {

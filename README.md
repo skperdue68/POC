@@ -4,6 +4,8 @@ GuildSync connects ESO guild deposits, roster/application activity, Discord memb
 
 ## Help
 
+- [Voice mute hotkeys: Windows, Mac and Linux setup](docs/GuildSync-Voice-Hotkeys.md)
+
 - [Mac installation: unsigned package approval and two-stage setup](docs/GuildSync-Mac-Installation.md)
 - [User guide: commands and everyday workflows](docs/GuildSync-User-Guide.md)
 - [Detailed help: systems, administration, environment settings, and troubleshooting](docs/GuildSync-Detailed-Help.md)
@@ -27,4 +29,5 @@ Discord `/gsr` is the raffle administration alias; ESO `/gsr` is the roster add-
 | `Installer` | Platform packaging |
 
 Run `node --test` from the repository root for JavaScript tests. Startup/deployment commands and desktop builds are documented in the detailed help and release guide. Keep actual `.env` files, service-account JSON, and production secrets out of source control.
+
 
