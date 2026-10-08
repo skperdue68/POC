@@ -339,3 +339,79 @@
             tag_name: ${{ github.event.release.tag_name }}
             files: release/GuildSync-Server-*.zip
 
+
+    publish-downloads:
+      name: Publish installer ZIPs to downloads
+      needs: build
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout release tools
+          uses: actions/checkout@v4
+          with:
+            ref: ${{ github.event.release.tag_name }}
+            path: release-source
+            sparse-checkout: tools
+        - name: Checkout downloads directory
+          uses: actions/checkout@v4
+          with:
+            ref: master
+            path: downloads-repository
+            sparse-checkout: NodeJS/GuildSync-Backend-Server/public/downloads
+        - name: Download installer ZIP release assets
+          env:
+            GH_TOKEN: ${{ github.token }}
+            GH_REPO: ${{ github.repository }}
+            RELEASE_TAG: ${{ github.event.release.tag_name }}
+          run: |
+            set -euo pipefail
+            VERSION="${RELEASE_TAG#v}"
+            mkdir installers
+            for platform in Windows macOS Linux-x86_64; do
+              gh release download "$RELEASE_TAG" --pattern "GuildSync-Setup-$VERSION-$platform.zip" --dir installers
+            done
+        - name: Validate and copy installer ZIPs intact
+          env:
+            RELEASE_TAG: ${{ github.event.release.tag_name }}
+          run: |
+            python3 release-source/tools/sync-release-downloads.test.py
+            bash release-source/tools/upload-release-downloads.test.sh
+            python3 release-source/tools/sync-release-downloads.py --source installers --destination downloads-repository/NodeJS/GuildSync-Backend-Server/public/downloads --version "$RELEASE_TAG"
+        - name: Commit download ZIPs to master
+          working-directory: downloads-repository
+          env:
+            RELEASE_TAG: ${{ github.event.release.tag_name }}
+          run: |
+            set -euo pipefail
+            VERSION="${RELEASE_TAG#v}"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            for platform in Windows macOS Linux-x86_64; do
+              git add -- "NodeJS/GuildSync-Backend-Server/public/downloads/GuildSync-Setup-$VERSION-$platform.zip"
+            done
+            if git diff --cached --quiet; then
+              echo "Downloads already match this release."
+            else
+              git commit -m "Publish GuildSync $VERSION installer downloads"
+              for attempt in 1 2 3; do
+                git fetch origin master
+                git rebase origin/master
+                if git push origin HEAD:master; then exit 0; fi
+              done
+              echo "Could not update master. Check branch rules and Actions write permissions." >&2
+              exit 1
+            fi
+        - name: Upload ZIPs to running server
+          if: vars.GUILDSYNC_DEPLOY_DOWNLOADS_ENABLED == 'true'
+          env:
+            RELEASE_TAG: ${{ github.event.release.tag_name }}
+            GUILDSYNC_DEPLOY_HOST: ${{ secrets.GUILDSYNC_DEPLOY_HOST }}
+            GUILDSYNC_DEPLOY_USER: ${{ secrets.GUILDSYNC_DEPLOY_USER }}
+            GUILDSYNC_DEPLOY_PORT: ${{ vars.GUILDSYNC_DEPLOY_PORT }}
+            GUILDSYNC_DEPLOY_SSH_KEY: ${{ secrets.GUILDSYNC_DEPLOY_SSH_KEY }}
+            GUILDSYNC_DEPLOY_KNOWN_HOSTS: ${{ secrets.GUILDSYNC_DEPLOY_KNOWN_HOSTS }}
+            GUILDSYNC_DEPLOY_DOWNLOADS_DIR: ${{ vars.GUILDSYNC_DEPLOY_DOWNLOADS_DIR }}
+          run: bash release-source/tools/upload-release-downloads.sh
+        - name: Report server upload configuration
+          if: vars.GUILDSYNC_DEPLOY_DOWNLOADS_ENABLED != 'true'
+          run: echo "::warning::Installer ZIPs were committed to GitHub. Server upload is disabled until GUILDSYNC_DEPLOY_DOWNLOADS_ENABLED=true and SSH settings are configured."
+

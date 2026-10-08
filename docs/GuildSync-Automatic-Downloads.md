@@ -1,0 +1,43 @@
+# Automatic installer downloads
+
+When a release is published, the platform builds attach the actual GuildSync-Setup-<version>-Windows.zip, -macOS.zip and -Linux-x86_64.zip assets. After all three builds succeed, Publish installer ZIPs to downloads fetches those assets directly. It never publishes the GuildSync-installers-* Actions wrapper and keeps the installer ZIPs intact.
+
+The job validates all three ZIPs and commits them to master under NodeJS/GuildSync-Backend-Server/public/downloads. Older installers remain. Rerunning a release with identical assets does not create another commit. GitHub Actions needs contents write access and permission to update master under your repository's branch rules. If a rule blocks this update, the job fails visibly rather than reporting success. These generated commits do not trigger installer builds, because packaging only runs for published releases.
+
+## Enable uploads to the running server
+
+The repository update runs automatically. Live uploads require a Linux/Unix server reachable through SSH from GitHub-hosted runners, Python 3.9 or newer, and a dedicated SSH account with write access to the downloads directory. No app restart is required to serve newly uploaded files.
+
+In repository Settings → Secrets and variables → Actions, add these **secrets**:
+
+| Secret | Value |
+| --- | --- |
+| GUILDSYNC_DEPLOY_HOST | Server hostname or IPv4 address |
+| GUILDSYNC_DEPLOY_USER | SSH login account |
+| GUILDSYNC_DEPLOY_SSH_KEY | Dedicated private key whose public key is authorized on the server |
+| GUILDSYNC_DEPLOY_KNOWN_HOSTS | Verified known_hosts entry for the server; for a custom port use [hostname]:port format |
+
+Verify the host key through your server provider or an existing trusted connection; the job enforces host-key verification.
+
+Add these **repository variables**:
+
+| Variable | Value |
+| --- | --- |
+| GUILDSYNC_DEPLOY_DOWNLOADS_ENABLED | true |
+| GUILDSYNC_DEPLOY_DOWNLOADS_DIR | Absolute path to the directory the backend serves |
+| GUILDSYNC_DEPLOY_PORT | SSH port; optional, defaults to 22 |
+
+The default served directory is <server-repository-root>/NodeJS/GuildSync-Backend-Server/public/downloads. If the backend sets GUILDSYNC_DOWNLOADS_DIR, use that exact absolute directory instead. The backend environment value does not automatically become a GitHub Actions variable. Set the path for your actual deployment; do not use a Windows Downloads folder or guess the server root.
+
+The job uploads only the three installer ZIPs and a temporary validation script. It validates the complete set before promoting files, replaces each file atomically, preserves older versions and removes its temporary SSH credentials and server staging folder when finished. It does not modify application code, secrets, database or persistent data. The backend offers installers for its own packaged version; publishing download files alone does not advance the running backend's version. Prerelease assets are retained alongside stable installers and likewise do not change which version the backend offers.
+
+Without live-upload configuration, the job updates GitHub and displays a warning that the server upload is disabled. With it enabled, missing settings or a failed upload cause the job to fail. Once configured, publish a release containing these workflow/tools changes and check the Publish installer ZIPs to downloads job. To repeat a failed copy, rerun that job in Actions; no new tag is necessary.
+
+## Local verification
+
+Run python tools/sync-release-downloads.test.py. The helper also accepts downloaded Actions wrapper ZIPs and removes up to two wrapper layers without extracting the installer itself. For manual copying, run:
+
+```sh
+python3 tools/sync-release-downloads.py --source /path/to/downloaded-assets --destination /absolute/server/downloads --version v1.4.0
+```
+
