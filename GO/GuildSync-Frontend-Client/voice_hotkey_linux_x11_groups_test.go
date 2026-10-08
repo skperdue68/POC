@@ -36,18 +36,18 @@ func TestVoiceX11UsesActiveLayoutGroup(t *testing.T) {
 		t.Fatalf("load XKB map: %v %s\nmap: %s", err, output, keymap)
 	}
 	defer input.group(0)
-	usM, dvorakM := input.keycode("m", 0), input.keycode("m", 1)
+	usN, dvorakN := input.keycode("n", 0), input.keycode("n", 1)
 	deadline := time.Now().Add(2 * time.Second)
-	for (usM == 0 || dvorakM == 0 || usM == dvorakM) && time.Now().Before(deadline) {
+	for (usN == 0 || dvorakN == 0 || usN == dvorakN) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
-		usM, dvorakM = input.keycode("m", 0), input.keycode("m", 1)
+		usN, dvorakN = input.keycode("n", 0), input.keycode("n", 1)
 	}
-	if usM == 0 || dvorakM == 0 || usM == dvorakM {
+	if usN == 0 || dvorakN == 0 || usN == dvorakN {
 		actual, _ := exec.Command("xkbcomp", "-xkb", os.Getenv("DISPLAY"), "-").CombinedOutput()
-		t.Fatalf("US+Dvorak map did not load: M codes %d %d\nrequested: %s\nactual: %s", usM, dvorakM, keymap, actual)
+		t.Fatalf("US+Dvorak map did not load: N codes %d %d\nrequested: %s\nactual: %s", usN, dvorakN, keymap, actual)
 	}
 	events := make(chan string, 16)
-	v := voiceRuntime{keyboardGeneration: 1, settings: VoiceHotkeySettings{Enabled: true, Shortcut: "Ctrl+Alt+Shift+M"}, active: true, emit: func(_ string, data interface{}) { events <- data.(map[string]string)["state"] }}
+	v := voiceRuntime{keyboardGeneration: 1, settings: VoiceHotkeySettings{Enabled: true, Shortcut: "Ctrl+Alt+Shift+N"}, active: true, emit: func(_ string, data interface{}) { events <- data.(map[string]string)["state"] }}
 	stop, err := startVoiceX11(&v)
 	if err != nil {
 		t.Fatal(err)
@@ -81,17 +81,34 @@ func TestVoiceX11UsesActiveLayoutGroup(t *testing.T) {
 		defer input.key(code, false)
 	}
 	input.group(0)
-	input.key(usM, true)
-	defer input.key(usM, false)
+	input.key(usN, true)
+	defer input.key(usN, false)
 	want("pressed")
 	input.group(1)
 	want("released")
 	quiet()
-	input.key(usM, false)
-	input.key(dvorakM, true)
-	defer input.key(dvorakM, false)
+	input.key(usN, false)
+	input.key(dvorakN, true)
+	defer input.key(dvorakN, false)
 	want("pressed")
 	input.group(0)
 	want("released")
 	quiet()
+	input.key(dvorakN, false)
+	// M has the same physical position in US and Dvorak. XKB collapses
+	// its identical groups into one, which must wrap correctly in group 2.
+	v.mu.Lock()
+	v.settings.Shortcut = "Ctrl+Alt+Shift+M"
+	v.mu.Unlock()
+	m := input.keycode("m", 0)
+	if m == 0 {
+		t.Fatal("missing common US/Dvorak M key")
+	}
+	input.key(m, true)
+	defer input.key(m, false)
+	want("pressed")
+	input.group(1)
+	quiet()
+	input.key(m, false)
+	want("released")
 }
