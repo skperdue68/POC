@@ -6,17 +6,32 @@ package main
 #cgo pkg-config: x11
 #include <stdlib.h>
 #include <X11/Xlib.h>
+#include <X11/XKBlib.h>
 
 
-// Enumerate every level and group so Shift and alternate layouts do not
-// hide the physical key corresponding to a stored keysym.
-static int voice_key_down(const KeySym *mapping, int per_code, int first, int last, const char *bitmap, const char *name) {
+// Scan levels in the effective group only. Modifier and single-group keys
+// use XKB's per-key group wrap/clamp/redirect rule for out-of-range groups.
+static int voice_key_down(XkbDescPtr mapping, unsigned int active_group, const char *bitmap, const char *name) {
     KeySym wanted = XStringToKeysym(name);
     if (wanted == NoSymbol) return 0;
-    for (int code = first; code <= last; code++) {
+    for (int code = mapping->min_key_code; code <= mapping->max_key_code; code++) {
         if (!(bitmap[code / 8] & (1 << (code % 8)))) continue;
-        for (int index = 0; index < per_code; index++) {
-            if (mapping[(code - first) * per_code + index] == wanted) return 1;
+        unsigned int groups = XkbKeyNumGroups(mapping, code);
+        if (!groups) continue;
+        unsigned int group = active_group;
+        if (group >= groups) {
+            unsigned int info = XkbKeyGroupInfo(mapping, code);
+            switch (XkbOutOfRangeGroupAction(info)) {
+            case XkbClampIntoRange: group = groups - 1; break;
+            case XkbRedirectIntoRange:
+                group = XkbOutOfRangeGroupNumber(info);
+                if (group >= groups) group = 0;
+                break;
+            default: group %= groups; break;
+            }
+        }
+        for (int level = 0; level < XkbKeyGroupWidth(mapping, code, group); level++) {
+            if (XkbKeySymEntry(mapping, code, level, group) == wanted) return 1;
         }
     }
     return 0;
@@ -48,8 +63,6 @@ func startVoiceX11(v *voiceRuntime) (func(), error) {
 			return
 		}
 		defer C.XCloseDisplay(display)
-		var first, last C.int
-		C.XDisplayKeycodes(display, &first, &last)
 		// Cache C strings; keyboard mapping itself is read on each sample so
 		// changing the layout or remapping keys does not require restarting.
 		names := map[int][]*C.char{}
@@ -71,20 +84,25 @@ func startVoiceX11(v *voiceRuntime) (func(), error) {
 			}
 			var bitmap [32]C.char
 			C.XQueryKeymap(display, &bitmap[0])
-			var perCode C.int
-			mapping := C.XGetKeyboardMapping(display, C.KeyCode(first), last-first+1, &perCode)
+			var keyboardState C.XkbStateRec
+			if C.XkbGetState(display, C.XkbUseCoreKbd, &keyboardState) != C.Success {
+				v.keyboardError(generation, fmt.Errorf("global voice shortcuts are unavailable: this X11 server does not provide XKB keyboard state"))
+				return
+			}
+			mapping := C.XkbGetMap(display, C.XkbAllClientInfoMask, C.XkbUseCoreKbd)
 			if mapping == nil {
-				continue
+				v.keyboardError(generation, fmt.Errorf("global voice shortcuts are unavailable: cannot read this X11 server's keyboard mapping"))
+				return
 			}
 			v.sampleKeyboard(generation, func(code int) bool {
 				for _, name := range names[code] {
-					if C.voice_key_down(mapping, perCode, first, last, &bitmap[0], name) != 0 {
+					if C.voice_key_down(mapping, C.uint(keyboardState.group), &bitmap[0], name) != 0 {
 						return true
 					}
 				}
 				return false
 			})
-			C.XFree(unsafe.Pointer(mapping))
+			C.XkbFreeKeyboard(mapping, C.XkbAllComponentsMask, C.True)
 		}
 	}()
 	if err := <-ready; err != nil {

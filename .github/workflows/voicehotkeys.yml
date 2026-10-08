@@ -33,7 +33,7 @@ jobs:
           python-version: '3.12'
       - name: Install Linux native test dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev pkg-config xvfb xdotool
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev x11-xkb-utils pkg-config xvfb xdotool
       - name: Test native voice capture and shared lifecycle
         if: runner.os != 'Linux'
         run: python tools/test-voice-native.py

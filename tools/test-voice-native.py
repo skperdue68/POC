@@ -12,4 +12,4 @@ with tempfile.TemporaryDirectory(prefix='guildsync-voice-test-') as temporary:
     for file in list(source.glob('voice_hotkey*.go'))+[source/'go.mod',source/'go.sum']:
         shutil.copyfile(file,target/file.name)
     (target/'app_harness_test.go').write_text('package main\nimport("context";"sync")\ntype App struct { mu sync.Mutex; ctx context.Context; voice *voiceRuntime }\n')
-    subprocess.run(['go','test','-race','-count=1','.'],cwd=target,check=True,env=os.environ.copy())
+    subprocess.run(['go','test','-tags','voicehotkeytest','-race','-count=1','.'],cwd=target,check=True,env=os.environ.copy())

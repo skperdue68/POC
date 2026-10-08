@@ -11,6 +11,7 @@ test('native listener failure releases held mute and exposes setup error',async(
  const control=createVoiceHotkeyController({bridge:{GetVoiceHotkeySettings:async()=>({enabled:true,shortcut:'Ctrl+M',supported:true}),SetVoiceHotkeyActive:async value=>active.push(value)},eventsOn(_,fn){edge=fn},getSocket:()=>socket,authenticated:()=>true});
  await control.connection(true);edge({state:'pressed'});edge({state:'error',message:'Enable Input Monitoring'});await new Promise(resolve=>setImmediate(resolve));
  assert.deepEqual(states,['pressed','released']);assert.equal(active.at(-1),false);
+ await control.refreshAccess();assert.deepEqual(active,[true,false],'policy polling must not reopen a failed or cancelled keyboard permission request');
  const status={textContent:''};control.wire({querySelector:selector=>selector==='#voiceHotkeyStatus'?status:null});assert.equal(status.textContent,'Enable Input Monitoring');control.stop();
 });
 
