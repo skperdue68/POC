@@ -25,12 +25,12 @@ function fixture() {
  return {dir,write,read:file=>fs.readFileSync(path.join(dir,file),'utf8'),remove(){assert.equal(path.dirname(path.resolve(dir)),path.resolve(os.tmpdir()));assert(path.basename(dir).startsWith('guildsync-version-'));fs.rmSync(dir,{recursive:true,force:true});}};
 }
 function run(dir,...args){return spawnSync('go',['run',updater,...args],{cwd:dir,encoding:'utf8'});}
-test('tag stamps all components; dependencies and private env stay unchanged',()=>{
+test('tag stamps all components and local env version; dependency versions and secrets stay unchanged',()=>{
  const f=fixture();try{
   const r=run(f.dir,'v1.4.0');assert.equal(r.status,0,r.stderr);
   assert.equal(f.read('VERSION'),'1.4.0\n');
   for(const pkg of packages){assert.equal(JSON.parse(f.read(pkg+'/package.json')).version,'1.4.0');const lock=JSON.parse(f.read(pkg+'/package-lock.json'));assert.equal(lock.version,'1.4.0');assert.equal(lock.packages[''].version,'1.4.0');assert.equal(lock.packages['node_modules/dependency'].version,'9.9.9');}
-  assert.equal(f.read('NodeJS/GuildSync-Backend-Server/.env'),'SECRET=keep-me\nGUILDSYNC_CLIENT_VERSION=1.0.0\n');
+  assert.equal(f.read('NodeJS/GuildSync-Backend-Server/.env'),'SECRET=keep-me\nGUILDSYNC_CLIENT_VERSION=1.4.0\n');
   assert.equal(run(f.dir,'--check','v1.4.0').status,0);
   const lockFile=packages[3]+'/package-lock.json';const stale=JSON.parse(f.read(lockFile));stale.packages[''].version='1.0.0';f.write(lockFile,JSON.stringify(stale));const before=f.read(lockFile);
   assert.notEqual(run(f.dir,'--check','1.4.0').status,0);assert.equal(f.read(lockFile),before);assert.equal(run(f.dir,'v1.4.0-beta.1+build.2').status,0);assert.equal(run(f.dir,'--check','1.4.0-beta.1+build.2').status,0);
@@ -44,4 +44,15 @@ test('default reads VERSION; check rejects missing required files',()=>{
 test('invalid version leaves files untouched',()=>{
  const f=fixture();try{assert.notEqual(run(f.dir,'v1.2').status,0);assert.equal(f.read('VERSION'),'1.3.3\n');}finally{f.remove();}
 });
+
+test('local env preserves CRLF and secrets; missing env is not created; checks never rewrite it',()=>{
+ const f=fixture();try{
+  const env='NodeJS/GuildSync-Backend-Server/.env';f.write(env,'SECRET=keep-me\r\nexport GUILDSYNC_CLIENT_VERSION="1.0.0"\r\n');
+  assert.equal(run(f.dir,'1.4.0').status,0);assert.equal(f.read(env),'SECRET=keep-me\r\nGUILDSYNC_CLIENT_VERSION=1.4.0\r\n');
+  f.write(env,'SECRET=keep-me\r\nGUILDSYNC_CLIENT_VERSION=1.0.0\r\n');const original=f.read(env);assert.notEqual(run(f.dir,'--check','1.4.0').status,0);assert.equal(f.read(env),original);
+  fs.unlinkSync(path.join(f.dir,env));assert.equal(run(f.dir,'1.4.0').status,0);assert.equal(fs.existsSync(path.join(f.dir,env)),false);
+  f.write(env,'SECRET=keep-me');assert.equal(run(f.dir,'1.4.0').status,0);assert.equal(f.read(env),'SECRET=keep-me\nGUILDSYNC_CLIENT_VERSION=1.4.0\n');
+ }finally{f.remove();}
+});
+
 

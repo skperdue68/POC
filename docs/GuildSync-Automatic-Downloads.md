@@ -1,8 +1,8 @@
 # Automatic installer downloads
 
-When a release is published, the platform builds attach the actual GuildSync-Setup-<version>-Windows.zip, -macOS.zip and -Linux-x86_64.zip assets. After all three builds succeed, Publish installer ZIPs to downloads fetches those assets directly. It never publishes the GuildSync-installers-* Actions wrapper and keeps the installer ZIPs intact.
+When a release is published, the platform builds attach the actual GuildSync-Setup-<version>-Windows.zip, -macOS.zip and -Linux-x86_64.zip assets. After all platform and server builds succeed, Publish installer ZIPs to downloads fetches those assets directly. It never publishes the GuildSync-installers-* Actions wrapper and keeps the installer ZIPs intact.
 
-The job validates all three ZIPs and commits them to master under NodeJS/GuildSync-Backend-Server/public/downloads. Older installers remain. Rerunning a release with identical assets does not create another commit. GitHub Actions needs contents write access and permission to update master under your repository's branch rules. If a rule blocks this update, the job fails visibly rather than reporting success. These generated commits do not trigger installer builds, because packaging only runs for published releases.
+The job validates all three ZIPs and commits them to master under NodeJS/GuildSync-Backend-Server/public/downloads. Older installers remain. For the most recently published release, the same commit synchronizes VERSION, desktop/web version constants, packages/locks, Wails metadata, ESO versions, Windows installer fields and the backend .env.example. A rerun of an older release adds its installers without rolling source versions back. Rerunning a release with identical assets does not create another commit. GitHub Actions needs contents write access and permission to update master under your repository's branch rules. If a rule blocks this update, the job fails visibly rather than reporting success. These generated commits do not trigger installer builds, because packaging only runs for published releases.
 
 ## Enable uploads to the running server
 
@@ -33,6 +33,17 @@ The job uploads only the three installer ZIPs and a temporary validation script.
 
 Without live-upload configuration, the job updates GitHub and displays a warning that the server upload is disabled. With it enabled, missing settings or a failed upload cause the job to fail. Once configured, publish a release containing these workflow/tools changes and check the Publish installer ZIPs to downloads job. To repeat a failed copy, rerun that job in Actions; no new tag is necessary.
 
+## After pulling a release
+
+From the repository root, run:
+
+```sh
+git pull
+go run tools/update-version.go
+```
+
+The updater reads the newly committed VERSION file. It also replaces GUILDSYNC_CLIENT_VERSION in an existing NodeJS/GuildSync-Backend-Server/.env while preserving other settings. That local ignored file cannot be updated by git pull itself; it is never committed or included in release ZIPs. Missing .env files are left missing. To select an explicit release, run go run tools/update-version.go v1.3.5. Rebuild/deploy the web client when source changes: changing web/src/main.js alone does not replace the served compiled web assets.
+
 ## Local verification
 
 Run python tools/sync-release-downloads.test.py. The helper also accepts downloaded Actions wrapper ZIPs and removes up to two wrapper layers without extracting the installer itself. For manual copying, run:
@@ -40,4 +51,5 @@ Run python tools/sync-release-downloads.test.py. The helper also accepts downloa
 ```sh
 python3 tools/sync-release-downloads.py --source /path/to/downloaded-assets --destination /absolute/server/downloads --version v1.4.0
 ```
+
 

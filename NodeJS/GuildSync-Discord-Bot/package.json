@@ -1,6 +1,6 @@
 {
   "name": "guildsync-discord-bot",
-  "version": "1.3.2",
+  "version": "1.3.5",
   "description": "GuildSync Discord bot",
   "main": "src/guildsync-discord-bot.js",
   "type": "module",
