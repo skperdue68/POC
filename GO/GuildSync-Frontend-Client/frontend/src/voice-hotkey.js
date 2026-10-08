@@ -82,9 +82,9 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
     await refreshAccess();
   }
   async function save(enabled, shortcut) {
-    nativeFailed = false;
+    nativeFailed = false; message = '';
     release(); cancelCapture();
-    try { settings = await bridge.SetVoiceHotkeySettings(enabled, shortcut); message = ''; await listener(eligible && settings.enabled && settings.supported); }
+    try { settings = await bridge.SetVoiceHotkeySettings(enabled, shortcut); await listener(eligible && settings.enabled && settings.supported); }
     catch (error) { nativeFailed = true; message = String(error); await listener(false); try { settings = await bridge.GetVoiceHotkeySettings(); } catch {} }
     notify();
   }
