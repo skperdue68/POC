@@ -10,6 +10,7 @@ GuildSync connects ESO guild deposits, roster/application activity, Discord memb
 - [Administrator Configuration: saved overrides and live settings](docs/GuildSync-Admin-Configuration.md)
 - [Google Apps Script archive setup and account migration](docs/google-apps-script-setup.md)
 - [Discord member onboarding setup](NodeJS/GuildSync-Discord-Bot/MEMBER-ONBOARDING.md)
+- [Automatic release downloads: GitHub folder and server upload setup](docs/GuildSync-Automatic-Downloads.md)
 - [Release packaging and deployment](docs/GuildSync-1.2.7.md)
 
 Discord `/gsr` is the raffle administration alias; ESO `/gsr` is the roster add-on command. The guides distinguish both command lists and their permissions. Optional Google exports, automatic rollover, raffle announcements, and member onboarding require their own settings; the database remains the durable record.
