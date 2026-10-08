@@ -4,6 +4,8 @@ For the current command list and later raffle/onboarding changes, use the [user 
 
 The desktop and web application display version 1.2.7. Run `go run tools/update-version.go 1.2.7` at the repository root when preparing this release. It updates the desktop and web source version, Wails metadata, backend package version, backend example environment, ESO manifests, and Windows installer metadata. Existing local backend `.env` files are updated only for the client version; keep all other environment values private.
 
+Mac users should follow the [Mac installation directions](GuildSync-Mac-Installation.md), including unsigned-package approval and the second-stage folder prompts.
+
 ## Build and package
 
 1. Review and merge the release changes. GitHub Actions branch, pull request, and manual builds preserve `info.productVersion` from `GO/GuildSync-Frontend-Client/wails.json`. A `v1.2.7` tag overrides it with `1.2.7`. Do not use run numbers as release versions.
@@ -59,3 +61,4 @@ The bot checks every five minutes while connected. It posts an initial summary, 
 Keep the state file on persistent, writable storage across restarts/deployments, and run one announcing bot instance. Relative state paths resolve from the bot directory. The state remembers the highest announced milestone per raffle and the last successful post. Before sending, the bot persists the pending snapshot; after an interrupted delivery it checks its channel history for the same announcement before retrying. A failed history lookup stops that retry instead of blindly posting again. Do not delete the state file or pending announcements during routine deployment. The bot must be able to read its own announcement content from history; Discord permits this for messages sent by the bot itself without the privileged Message Content intent (see [Discord message fields](https://github.com/discord/discord-api-docs/blob/main/developers/resources/message.mdx)).
 
 Run `node --test` in the bot directory for its command and scheduler tests. This PR does not register commands, send messages, create a release tag, or deploy services automatically.
+
