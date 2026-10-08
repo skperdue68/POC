@@ -42,7 +42,7 @@ git pull
 go run tools/update-version.go
 ```
 
-The updater reads the newly committed VERSION file. It also replaces GUILDSYNC_CLIENT_VERSION in an existing NodeJS/GuildSync-Backend-Server/.env while preserving other settings. That local ignored file cannot be updated by git pull itself; it is never committed or included in release ZIPs. Missing .env files are left missing. To select an explicit release, run go run tools/update-version.go v1.3.5. Rebuild/deploy the web client when source changes: changing web/src/main.js alone does not replace the served compiled web assets.
+The updater reads the newly committed VERSION file. It also replaces GUILDSYNC_CLIENT_VERSION in an existing NodeJS/GuildSync-Backend-Server/.env while preserving other settings. That local ignored file cannot be updated by git pull itself; it is never committed or included in release ZIPs. Missing .env files are left missing. To select an explicit release, run go run tools/update-version.go v1.3.5. For the most recently published release, the publication job also copies the already compiled web files from GuildSync-Server-<version>.zip into public/index.html, public/assets and matching web/dist paths and commits them. Pulling that publication commit updates the served web client without npm run build:web. Refresh the browser afterward. Older release reruns preserve the newer web bundle. Existing local changes to tracked compiled files may need to be resolved before git pull can update them. Development source edits still require a local web build.
 
 ## Local verification
 
@@ -51,6 +51,7 @@ Run python tools/sync-release-downloads.test.py. The helper also accepts downloa
 ```sh
 python3 tools/sync-release-downloads.py --source /path/to/downloaded-assets --destination /absolute/server/downloads --version v1.4.0
 ```
+
 
 
 
