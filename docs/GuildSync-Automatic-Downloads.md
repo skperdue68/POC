@@ -31,7 +31,7 @@ The default served directory is <server-repository-root>/NodeJS/GuildSync-Backen
 
 The job uploads only the three installer ZIPs and a temporary validation script. It validates the complete set before promoting files, replaces each file atomically, preserves older versions and removes its temporary SSH credentials and server staging folder when finished. It does not modify application code, secrets, database or persistent data. The backend offers installers for its own packaged version; publishing download files alone does not advance the running backend's version. Prerelease assets are retained alongside stable installers and likewise do not change which version the backend offers.
 
-Without live-upload configuration, the job updates GitHub and displays a warning that the server upload is disabled. With it enabled, missing settings or a failed upload cause the job to fail. Once configured, publish a release containing these workflow/tools changes and check the Publish installer ZIPs to downloads job. To repeat a failed copy, rerun that job in Actions; no new tag is necessary.
+Without live-upload configuration, the job updates GitHub and displays a warning that the server upload is disabled. With it enabled, missing settings or a failed upload cause the job to fail. Once configured, publish a release containing these workflow/tools changes and check the Publish installer ZIPs to downloads job. To repeat a failed copy, open Actions → Publish GuildSync downloads → Run workflow on master, enter the existing release tag (for example v1.3.6), and run it. This downloads already built release assets without rebuilding installers or publishing a new release. Use this manual workflow after a publication-code fix, because rerunning an older release build still uses its original workflow snapshot.
 
 ## After pulling a release
 
@@ -51,5 +51,6 @@ Run python tools/sync-release-downloads.test.py. The helper also accepts downloa
 ```sh
 python3 tools/sync-release-downloads.py --source /path/to/downloaded-assets --destination /absolute/server/downloads --version v1.4.0
 ```
+
 
 
