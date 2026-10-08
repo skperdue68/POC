@@ -38,6 +38,10 @@ if replace_managed_path "$TEST_DIR/payload/ESO/GuildSyncRoster" "$TEST_DIR/apps"
 if replace_managed_path "$TEST_DIR/missing" "$TEST_DIR/live/AddOns" GuildSyncRoster; then echo 'Missing source accepted' >&2; exit 1; fi
 [[ "$(cat "$TEST_DIR/live/AddOns/GuildSyncRoster/GuildSyncRoster.lua")" == new ]]
 validate_addons_dir "$TEST_DIR/live/AddOns"
+[[ "$(default_addons_location "$TEST_DIR")" == "$TEST_DIR" ]]
+[[ ! -e "$TEST_DIR/Documents" ]]
+mkdir -p "$TEST_DIR/Documents/Elder Scrolls Online/liveeu/AddOns"
+[[ "$(default_addons_location "$TEST_DIR")" == "$TEST_DIR/Documents/Elder Scrolls Online/liveeu/AddOns" ]]
 if validate_addons_dir "$TEST_DIR/live/AddOns/GuildSyncRoster"; then echo 'Nested add-on directory accepted' >&2; exit 1; fi
 mkdir -p "$TEST_DIR/Downloads" "$TEST_DIR/other"
 APP_VERSION=1.2.7

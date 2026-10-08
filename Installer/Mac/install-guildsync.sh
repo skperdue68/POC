@@ -47,6 +47,14 @@ validate_addons_dir() {
   }
 }
 
+default_addons_location() {
+  local user_home="${1:-$HOME}" candidate
+  for candidate in "$user_home/Documents/Elder Scrolls Online/live/AddOns" "$user_home/Documents/Elder Scrolls Online/liveeu/AddOns" "$user_home"; do
+    if [[ -d "$candidate" && -r "$candidate" && -x "$candidate" ]]; then printf '%s\n' "$candidate"; return 0; fi
+  done
+  return 1
+}
+
 is_cleanup_download() {
   local file="$1" parent base downloads
   [[ -f "$file" && ! -L "$file" ]] || return 1
@@ -144,8 +152,7 @@ main() {
   install_parent="$(choose_folder 'Choose where to install GuildSync. Applications is the default.' /Applications)"
   install_parent="$(cd "$install_parent" && pwd -P)"
   case "$install_parent" in /|*.app|*.app/*) echo 'Choose an application parent folder, not an app bundle or filesystem root.' >&2; return 1 ;; esac
-  mkdir -p "$HOME/Documents/Elder Scrolls Online/live/AddOns"
-  addons_dir="$(choose_folder 'Select the ESO AddOns folder itself (not a GuildSync subfolder).' "$HOME/Documents/Elder Scrolls Online/live/AddOns")"
+  addons_dir="$(choose_folder 'Select the ESO AddOns folder itself (not a GuildSync subfolder). Navigate to your ESO installation if needed.' "$(default_addons_location)")"
   addons_dir="$(cd "$addons_dir" && pwd -P)"
   validate_addons_dir "$addons_dir"
   [[ -w "$addons_dir" ]] || { echo "ESO AddOns is not writable: $addons_dir" >&2; return 1; }
