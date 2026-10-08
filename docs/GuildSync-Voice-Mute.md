@@ -2,17 +2,17 @@
 
 ## Using the shortcut
 
-This optional feature lets an authorized officer hold a shortcut to temporarily mute lower-ranked people in the **same Discord voice channel**. It defaults to disabled. In the Windows desktop app, open your avatar menu and find **Voice Channel Mute**. Enable it locally, or choose **Set Hotkey** and press a combination such as Ctrl+M. Settings are saved immediately on that computer.
+This optional feature lets an authorized officer hold a shortcut to temporarily mute lower-ranked people in the **same Discord voice channel**. It defaults to disabled. In the desktop app, open your avatar menu and find **Voice Channel Mute**. Enable it locally, or choose **Set Hotkey** and press a combination such as Ctrl+M. Settings are saved immediately on that computer.
 
 Hold the combination to start a session; releasing a required key ends it. Equal, higher and unknown guild ranks, bots, and the server owner are protected. Joiners follow the same rank checks. If a member moves to an ordinary channel, their temporary mute is removed. If they enter another applicable active session, ownership transfers without briefly unmuting them. When the requester leaves or changes channels, their session ends and never follows them: release and press again to start in the new channel.
 
 Confirmed moderator mutes are preserved. A moderator unmute overrides the current hotkey session. Self-mute, self-deafen and Discord timeouts are untouched. Ordinary keys continue reaching applications, so choose a shortcut that does not conflict with ESO or other software.
 
-Global shortcuts initially support **Windows desktop only**. The web app does not display these controls. Authorized macOS and Linux desktop users see an unsupported notice.
+Global shortcuts support Windows, macOS and compatible Linux desktop sessions. The web app does not display these controls. Mac requires Input Monitoring permission; Wayland requires a supported Global Shortcuts portal. Missing Linux support disables only voice mute and does not prevent installation or startup. See [platform setup](GuildSync-Voice-Hotkeys.md).
 
 ## Administrator setup
 
-1. Deploy the updated backend, Discord bot and Windows desktop client. Backend startup creates the tables automatically. **No Google Apps Script update is needed.**
+1. Deploy the updated backend, Discord bot and desktop client. Backend startup creates the tables automatically. **No Google Apps Script update is needed.**
 2. Give the bot **View Audit Log** and **Mute Members** permission in affected voice channels. Its existing Guild Members intent must remain enabled; it also subscribes to Guild Voice States and Guild Moderation.
 3. In **Reports and Admin → Administrator Configuration → Voice channel mute**, set the allowed requester roles (names or IDs), verify rank order, and enable the feature. Save server settings to apply them live. Return to Default restores the bot environment default.
 4. GuildSync requesters need an approved **Viewer**, **User**, or **Admin** account plus an allowed Discord role. Admin previews as Viewer retain voice access when their Discord role permits it. Standalone requesters sign in with Discord without requiring any GuildSync account or approval. GuildSync Admin does not bypass Discord rank protection.
@@ -51,7 +51,7 @@ Audit reads overlap and track external ordering separately for each member. Dela
 
 Discord has a single server-mute flag. A moderator reapplying mute while someone is already hotkey-muted may produce no observable change. Actors can be unavailable, entries delayed, and audit history is retained for 45 days. Unattributed pre-existing mutes and uncertain ownership are preserved for review. Extremely large audit backlogs defer recovery. Cleanup cannot be guaranteed while Discord, permissions or attribution are unavailable. [Discord audit-log reference](https://github.com/discord/discord-api-docs/blob/main/developers/resources/audit-log.mdx).
 
-Test lower/equal/higher ranks, join/leave, requester departure while held, key release, client disconnect, bot restart and moderator mute/unmute. Automated tests cover controllers and protocol; live Discord permissions, audit timing and the Windows hook in ESO require a controlled deployment test.
+Test lower/equal/higher ranks, join/leave, requester departure while held, key release, client disconnect, bot restart and moderator mute/unmute. Automated tests cover controllers and protocol; live Discord permissions, audit timing and global keyboard capture in ESO require a controlled deployment test.
 
 For troubleshooting, the Discord bot logs received hotkey **pressed** and **released** events with the guild name, requester server display name (falling back to their Discord username), and guild/requester/connection/session IDs. Names come from cached Discord data so logging never waits on an API lookup; unavailable names show as Unknown while retaining their IDs. Rejected requests also log their reason. Heartbeats are not logged. A received event confirms transport to the bot; it does not by itself confirm anyone was muted.
 

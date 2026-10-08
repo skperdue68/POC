@@ -141,12 +141,13 @@ func writeVoiceSettings(path string, settings VoiceHotkeySettings) error {
 }
 
 type voiceRuntime struct {
-	mu              sync.Mutex
-	settings        VoiceHotkeySettings
-	active, capture bool
-	stop            func()
-	held            voiceHoldState
-	emit            func(string, interface{})
+	keyboardGeneration uint64
+	mu                 sync.Mutex
+	settings           VoiceHotkeySettings
+	active, capture    bool
+	stop               func()
+	held               voiceHoldState
+	emit               func(string, interface{})
 }
 
 func (a *App) voiceState() *voiceRuntime {
@@ -191,6 +192,14 @@ func (a *App) SetVoiceHotkeySettings(enabled bool, shortcut string) (VoiceHotkey
 	}
 	v.settings = settings
 	v.capture = false
+	v.stopKeyboardLocked()
+	if v.active && settings.Enabled && settings.Supported {
+		stop, err := startVoiceKeyboard(v)
+		if err != nil {
+			return settings, err
+		}
+		v.stop = stop
+	}
 	return settings, nil
 }
 func (a *App) SetVoiceHotkeyCapture(capture bool) {
@@ -213,13 +222,11 @@ func (a *App) SetVoiceHotkeyActive(active bool) error {
 		if state := v.held.update(true, false); state != "" {
 			v.emit("guildsync:voice-hotkey", map[string]string{"state": state})
 		}
-		if v.stop != nil {
-			v.stop()
-			v.stop = nil
-		}
+		v.stopKeyboardLocked()
 		return nil
 	}
-	if v.stop == nil && v.settings.Supported {
+	if v.stop == nil && v.settings.Supported && v.settings.Enabled {
+		v.keyboardGeneration++
 		stop, err := startVoiceKeyboard(v)
 		if err != nil {
 			v.active = false
@@ -232,6 +239,39 @@ func (a *App) SetVoiceHotkeyActive(active bool) error {
 func (v *voiceRuntime) sample(down func(int) bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.sampleLocked(down)
+}
+
+func (v *voiceRuntime) stopKeyboardLocked() {
+	v.keyboardGeneration++
+	if v.stop != nil {
+		v.stop()
+		v.stop = nil
+	}
+}
+
+func (v *voiceRuntime) sampleKeyboard(generation uint64, down func(int) bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if generation != v.keyboardGeneration {
+		return
+	}
+	v.sampleLocked(down)
+}
+
+func (v *voiceRuntime) keyboardError(generation uint64, err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if generation != v.keyboardGeneration || !v.active {
+		return
+	}
+	if state := v.held.update(true, false); state != "" {
+		v.emit("guildsync:voice-hotkey", map[string]string{"state": state})
+	}
+	v.emit("guildsync:voice-hotkey", map[string]string{"state": "error", "message": err.Error()})
+}
+
+func (v *voiceRuntime) sampleLocked(down func(int) bool) {
 	shortcut, _ := parseVoiceShortcut(v.settings.Shortcut)
 	held := true
 	for _, key := range shortcut.keys {

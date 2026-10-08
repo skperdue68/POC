@@ -2,7 +2,7 @@ import {createShortcutCapture} from './shortcut-capture.js';
 export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authenticated, changed = () => {} }) {
   let settings = { enabled: false, shortcut: 'Ctrl+M', supported: false };
   let held = false, sessionId = null, timer = null, capturing = false, message = '', initialized = false;
-  let eligible=false, nativeActive=false, accessTimer=null, accessGeneration=0, accessPending=null;
+  let eligible=false, nativeActive=false, nativeFailed=false, accessTimer=null, accessGeneration=0, accessPending=null;
   const notify = () => changed();
   const request = (state, id, callback) => {
     const socket = getSocket();
@@ -13,7 +13,14 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
     const id = sessionId; sessionId = null;
     if (id) request('released', id);
   }
-  function edge({ state }) {
+  function edge({ state, message: nativeMessage }) {
+    if (state === 'configured') { message = nativeMessage || ''; notify(); return; }
+    if (state === 'error') {
+      nativeFailed = true;
+      held = false; release();
+      message = nativeMessage || 'Global voice hotkey listener stopped.';
+      void listener(false); notify(); return;
+    }
     if (state === 'released') { held = false; release(); return; }
     if (state !== 'pressed' || held) return;
     held = true;
@@ -42,13 +49,14 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
   async function connection(connected) {
     await initialize();
     clearInterval(accessTimer);accessTimer=null;
-    if (!connected) { accessGeneration++;accessPending=null;eligible=false;release();cancelCapture();await listener(false);notify();return; }
+    if (!connected) { accessGeneration++;accessPending=null;eligible=false;nativeFailed=false;release();cancelCapture();await listener(false);notify();return; }
     await refreshAccess();
     if(getSocket()?.connected){accessTimer=setInterval(()=>void refreshAccess(),30000);accessTimer.unref?.();}
   }
   async function listener(active) {
+    if(active && nativeFailed)return;
     if(nativeActive===active)return;nativeActive=active;
-    try{await bridge.SetVoiceHotkeyActive(active);}catch(error){nativeActive=false;message=String(error);notify();}
+    try{await bridge.SetVoiceHotkeyActive(active);}catch(error){nativeActive=false;nativeFailed=true;message=String(error);notify();}
   }
   async function refreshAccess() {
     if(accessPending)return accessPending;
@@ -63,7 +71,7 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
       const next=Boolean(current?.connected&&authenticated()&&response?.ok===true&&response.enabled===true&&response.allowed===true);
       const changedAccess=eligible!==next;eligible=next;
       if(!eligible){release();cancelCapture();}
-      await listener(eligible);
+      await listener(eligible && settings.enabled && settings.supported);
       if(changedAccess)notify();
     })();
     accessPending=pending;
@@ -74,9 +82,10 @@ export function createVoiceHotkeyController({ bridge, eventsOn, getSocket, authe
     await refreshAccess();
   }
   async function save(enabled, shortcut) {
+    nativeFailed = false; message = '';
     release(); cancelCapture();
-    try { settings = await bridge.SetVoiceHotkeySettings(enabled, shortcut); message = ''; }
-    catch (error) { message = String(error); }
+    try { settings = await bridge.SetVoiceHotkeySettings(enabled, shortcut); await listener(eligible && settings.enabled && settings.supported); }
+    catch (error) { nativeFailed = true; message = String(error); await listener(false); try { settings = await bridge.GetVoiceHotkeySettings(); } catch {} }
     notify();
   }
   function cancelCapture() {
@@ -89,16 +98,16 @@ document.removeEventListener('keyup', captureUp, true);window.removeEventListene
     save:shortcut=>void save(settings.enabled,shortcut),
     cancel:()=>{cancelCapture();message='';notify();},
     error:error=>{message=error;notify();},
-    changed:shortcut=>{message=shortcut+' — release all keys to save';notify();}
+    changed:shortcut=>{message=shortcut+' â€” release all keys to save';notify();}
   });
   function capture(event){shortcutCapture.keydown(event);}
   function captureUp(event){shortcutCapture.keyup(event);}
   function captureBlur(){shortcutCapture.cancel();}
   function render() {
     if(!eligible)return '';
-    if (!settings.supported) return '<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><p>Global voice hotkeys require the Windows desktop client.</p></div>';
+    if (!settings.supported) return '<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><p>Global voice hotkeys are unavailable in this desktop session. Linux needs X11 or a Wayland desktop with the Global Shortcuts portal.</p></div>';
     // Shortcut labels are validated by Go; messages are inserted using textContent below.
-    return `<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong><label class="profile-row voice-hotkey-row">Enable <input id="voiceHotkeyEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}></label><div class="profile-row voice-hotkey-row">Shortcut <span>${settings.shortcut}</span></div><button id="voiceHotkeyCapture" type="button" class="voice-hotkey-capture-button">${capturing ? 'Press shortcut (Escape cancels)' : 'Set Hotkey'}</button><p id="voiceHotkeyStatus" class="voice-hotkey-help" role="status"></p><p class="voice-hotkey-help">Hold the shortcut to mute eligible lower-ranked channel members. Server permission is required.</p></div>`;
+    return `<div id="voiceHotkeySection" class="profile-section"><strong>Voice Channel Mute</strong>${nativeFailed ? '<p>Voice mute is unavailable in this desktop session. GuildSync can still be used. Check the message below, then disable and re-enable the hotkey to retry.</p>' : ''}<label class="profile-row voice-hotkey-row">Enable <input id="voiceHotkeyEnabled" type="checkbox" ${settings.enabled ? 'checked' : ''}></label><div class="profile-row voice-hotkey-row">Shortcut <span>${settings.shortcut}</span></div><button id="voiceHotkeyCapture" type="button" class="voice-hotkey-capture-button">${capturing ? 'Press shortcut (Escape cancels)' : 'Set Hotkey'}</button><p id="voiceHotkeyStatus" class="voice-hotkey-help" role="status"></p><p class="voice-hotkey-help">Hold the shortcut to mute eligible lower-ranked channel members. Server permission is required.</p></div>`;
   }
   function wire(menu) {
     menu.querySelector('#voiceHotkeyEnabled')?.addEventListener('change', event => void save(event.target.checked, settings.shortcut));
@@ -112,3 +121,4 @@ document.removeEventListener('keyup', captureUp, true);window.removeEventListene
   function stop() { accessGeneration++;accessPending=null;clearInterval(accessTimer);accessTimer=null;eligible=false;release();cancelCapture();void listener(false);notify(); }
   return { initialize, connection, refreshAccess, invalidateAccess, render, wire, close, stop };
 }
+
