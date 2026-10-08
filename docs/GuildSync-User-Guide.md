@@ -8,6 +8,10 @@ GuildSync admins can review pending accounts, approve access, and maintain user 
 
 New accounts await approval as **Viewer** by default. Viewers can browse data, run reports, upload ESO history, and use automatic linking; **User** adds normal manual editing and receipt actions, while **Admin** also manages settings and accounts. Admins can test either lower role with **View as User / Viewer** in the avatar menu, then select **Return to Admin View**. Logging out resets the preview. See the [role permissions table](GuildSync-Roles.md).
 
+## Installing on a Mac
+
+The Mac installer is unsigned and runs in two stages. Follow the [Mac installation directions](GuildSync-Mac-Installation.md) for **System Settings → Privacy & Security → Security → Open Anyway**, then complete the application and ESO AddOns folder prompts after the Apple package finishes.
+
 ## What GuildSync does
 
 Authorized Viewer, User, and Admin accounts in the Windows desktop client can optionally hold **Ctrl+M** (or a shortcut chosen in their avatar menu) to mute lower-ranked members in their current Discord voice channel. Releasing the keys or leaving ends the session; moderator mutes are preserved. An administrator must first enable it and select allowed Discord roles. See [Voice Channel Mute](GuildSync-Voice-Mute.md).
@@ -180,3 +184,4 @@ Clicking Discord, Guild Roster, or Banking fetches a complete current dataset fo
 Administrator Configuration groups overrides by function and divides onboarding and raffle announcements into smaller labeled sections. Each setting has its own card with an explanation, its `.env` key, its current selection and Default/Overridden status, and its default controls. Hovering is not required to read help. Two-choice settings mark the default option; other settings show the default value and a Return to default button. Save Configuration applies your edits.
 
 Approved GuildSync users can view **Administrator Configuration** and **Raffle Bonus Tickets**. Users see read-only values and defaults, can refresh configuration, and can select a raffle to inspect its bonus rules. Only GuildSync administrators can change, reset, or save either section. These login permissions are separate from Discord roles.
+
