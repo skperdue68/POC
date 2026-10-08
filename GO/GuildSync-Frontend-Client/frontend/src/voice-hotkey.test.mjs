@@ -72,3 +72,15 @@ test('rejected press never retries until release', async () => {
   assert.equal(presses,1); control.stop();
 });
 
+
+test('saving preserves an asynchronous native setup failure and suppresses polling retries',async()=>{
+ let edge,onchange;const active=[];
+ const settings={enabled:true,shortcut:'Ctrl+M',supported:true};
+ const socket={connected:true,emit(_,__,ack){ack({ok:true,enabled:true,allowed:true})}};
+ const control=createVoiceHotkeyController({bridge:{GetVoiceHotkeySettings:async()=>settings,SetVoiceHotkeyActive:async value=>active.push(value),SetVoiceHotkeySettings:async()=>{edge({state:'error',message:'Linux Global Shortcuts API unavailable'});return settings;}},eventsOn(_,fn){edge=fn},getSocket:()=>socket,authenticated:()=>true});
+ await control.connection(true);
+ control.wire({querySelector:selector=>selector==='#voiceHotkeyEnabled'?{addEventListener(_,fn){onchange=fn}}:null});
+ onchange({target:{checked:true}});await new Promise(resolve=>setImmediate(resolve));
+ await control.refreshAccess();assert.deepEqual(active,[true,false]);assert.match(control.render(),/Voice mute is unavailable/);
+ const status={textContent:''};control.wire({querySelector:selector=>selector==='#voiceHotkeyStatus'?status:null});assert.equal(status.textContent,'Linux Global Shortcuts API unavailable');control.stop();
+});
