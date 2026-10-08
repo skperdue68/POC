@@ -10,6 +10,7 @@ import { registerDiscordOnboardingSocket } from './discord-onboarding-socket.js'
 import {createVoiceMuteStore} from './voice-mute-store.js';
 import {registerVoiceMuteSocket} from './voice-mute-socket.js';
 import 'dotenv/config';
+import { readReleaseVersion } from './release-version.js';
 import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
@@ -106,7 +107,7 @@ const GUILDSYNC_DOWNLOADS_DIR = process.env.GUILDSYNC_DOWNLOADS_DIR || path.join
 const GUILDSYNC_BOT_SOCKET_KEY = requiredEnv('GUILDSYNC_BOT_SOCKET_KEY');
 const GUILDSYNC_APPLICATIONS_GUILD_ID = String(process.env.GUILDSYNC_APPLICATIONS_GUILD_ID || '761817').trim();
 
-const CURRENT_GUILDSYNC_CLIENT_VERSION = requiredEnv('GUILDSYNC_CLIENT_VERSION');
+const CURRENT_GUILDSYNC_CLIENT_VERSION = readReleaseVersion();
 let loginDB;
 let applicationDB;
 let sheetsRuntime;
@@ -3238,4 +3239,5 @@ export function Log(message) {
   const timestamp = new Date().toLocaleString();
   console.log(`${timestamp} [GUILDSYNC-NODE] ${message}`);
 }
+
 

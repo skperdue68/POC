@@ -4,15 +4,8 @@
     contents: write
 
   on:
-    push:
-      branches:
-        - master
-      tags:
-        - 'v*'
-    pull_request:
-      branches:
-        - master
-    workflow_dispatch:
+    release:
+      types: [published]
 
   env:
     FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -53,6 +46,8 @@
       steps:
         - name: Checkout
           uses: actions/checkout@v4
+          with:
+            ref: ${{ github.event.release.tag_name }}
 
         - name: Test macOS installer file operations
           if: runner.os == 'macOS'
@@ -72,20 +67,24 @@
         - name: Determine GuildSync version
           shell: bash
           working-directory: .
+          env:
+            RELEASE_TAG: ${{ github.event.release.tag_name }}
           run: |
             set -euo pipefail
-            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-              VERSION="${GITHUB_REF_NAME#v}"
-            else
-              VERSION="$(python -c 'import json; print(json.load(open("GO/GuildSync-Frontend-Client/wails.json"))["info"]["productVersion"])')"
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Release tags must use vMAJOR.MINOR.PATCH, such as v1.2.7." >&2
+              exit 1
             fi
+            VERSION="${RELEASE_TAG#v}"
             echo "GUILDSYNC_VERSION=${VERSION}" >> "$GITHUB_ENV"
             echo "GuildSync version: ${VERSION}"
 
         - name: Update versioned files
           shell: bash
           working-directory: .
-          run: go run tools/update-version.go "${GUILDSYNC_VERSION}"
+          run: |
+            go run tools/update-version.go "${GUILDSYNC_VERSION}"
+            go run tools/update-version.go --check "${GUILDSYNC_VERSION}"
 
         - name: Setup Node
           uses: actions/setup-node@v4
@@ -281,10 +280,62 @@
 
         - name: Upload release assets
           uses: softprops/action-gh-release@v2
-          if: startsWith(github.ref, 'refs/tags/')
           with:
+            tag_name: ${{ github.event.release.tag_name }}
             files: |
               GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Windows.zip
               GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-macOS.zip
               GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Linux-x86_64.zip
+
+
+    server:
+      name: Package server, web and bot
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            ref: ${{ github.event.release.tag_name }}
+        - uses: actions/setup-go@v5
+          with:
+            go-version: ${{ env.GO_VERSION }}
+        - uses: actions/setup-node@v4
+          with:
+            node-version: ${{ env.NODE_VERSION }}
+        - name: Stamp and verify release version
+          env:
+            RELEASE_TAG: ${{ github.event.release.tag_name }}
+          run: |
+            set -euo pipefail
+            [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
+            VERSION="${RELEASE_TAG#v}"
+            echo "GUILDSYNC_VERSION=$VERSION" >> "$GITHUB_ENV"
+            go run tools/update-version.go "$VERSION"
+            go run tools/update-version.go --check "$VERSION"
+        - name: Test version synchronization and runtime packaging
+          run: |
+            node --test tools/update-version.test.mjs NodeJS/GuildSync-Backend-Server/release-version.test.js
+            python3 tools/package-server-release.test.py
+        - name: Build web client
+          working-directory: NodeJS/GuildSync-Backend-Server/web
+          run: |
+            npm ci
+            npm run build
+        - name: Copy compiled web assets
+          run: |
+            node --input-type=module - <<'JS'
+            import fs from 'node:fs';
+            const root='NodeJS/GuildSync-Backend-Server/';
+            fs.rmSync(root+'public/assets',{recursive:true,force:true});
+            fs.cpSync(root+'web/dist',root+'public',{recursive:true});
+            JS
+        - name: Package server runtime
+          run: python3 tools/package-server-release.py --version "$GUILDSYNC_VERSION" --output "release/GuildSync-Server-$GUILDSYNC_VERSION.zip"
+        - uses: actions/upload-artifact@v4
+          with:
+            name: GuildSync-Server-${{ env.GUILDSYNC_VERSION }}
+            path: release/GuildSync-Server-*.zip
+        - uses: softprops/action-gh-release@v2
+          with:
+            tag_name: ${{ github.event.release.tag_name }}
+            files: release/GuildSync-Server-*.zip
 

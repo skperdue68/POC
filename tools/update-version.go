@@ -10,22 +10,46 @@ import (
 	"strings"
 )
 
-func main() {
-	if len(os.Args) != 2 {
-		fatalf("usage: go run tools/update-version.go <version>")
-	}
+var checkMode bool
 
-	version := strings.TrimSpace(strings.TrimPrefix(os.Args[1], "v"))
+func main() {
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "--check" {
+		checkMode = true
+		args = args[1:]
+	}
+	if len(args) > 1 {
+		fatalf("usage: go run tools/update-version.go [--check] [version]")
+	}
+	var version string
+	if len(args) == 1 {
+		version = args[0]
+	} else {
+		data, err := os.ReadFile("VERSION")
+		if err != nil {
+			fatalf("read VERSION: %v", err)
+		}
+		version = string(data)
+	}
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if version == "" {
 		fatalf("version cannot be empty")
 	}
 
-	validVersion := regexp.MustCompile(`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`)
+	validVersion := regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 	if !validVersion.MatchString(version) {
 		fatalf("version %q does not look like a release version such as 1.1.5", version)
 	}
 
 	var changed []string
+	if checkMode {
+		data, err := os.ReadFile("VERSION")
+		if err != nil || strings.TrimSpace(string(data)) != version {
+			fatalf("VERSION does not match %s", version)
+		}
+	} else {
+		writeText("VERSION", version+"\n")
+	}
 
 	replaceFile(&changed, "GO/GuildSync-Frontend-Client/frontend/src/main.js", []replacement{
 		{
@@ -43,21 +67,15 @@ func main() {
 
 	updateWailsJSON(&changed, "GO/GuildSync-Frontend-Client/wails.json", version)
 
-	replaceFile(&changed, "NodeJS/GuildSync-Backend-Server/.env", []replacement{
-		{
-			pattern: regexp.MustCompile(`(?m)^GUILDSYNC_CLIENT_VERSION=.*$`),
-			value:   "GUILDSYNC_CLIENT_VERSION=" + version,
-		},
-	})
-	replaceFile(&changed, "NodeJS/GuildSync-Backend-Server/.env.example", []replacement{
-		{
-			pattern: regexp.MustCompile(`(?m)^GUILDSYNC_CLIENT_VERSION=.*$`),
-			value:   "GUILDSYNC_CLIENT_VERSION=" + version,
-		},
-	})
-
-	updatePackageJSON(&changed, "NodeJS/GuildSync-Backend-Server/package.json", version)
-	updatePackageLockTopVersion(&changed, "NodeJS/GuildSync-Backend-Server/package-lock.json", version)
+	for _, root := range []string{
+		"GO/GuildSync-Frontend-Client/frontend",
+		"NodeJS/GuildSync-Backend-Server",
+		"NodeJS/GuildSync-Backend-Server/web",
+		"NodeJS/GuildSync-Discord-Bot",
+	} {
+		updatePackageJSON(&changed, root+"/package.json", version)
+		updatePackageLockTopVersion(&changed, root+"/package-lock.json", version)
+	}
 
 	updateESOManifests(&changed, "ESO", version)
 
@@ -70,6 +88,10 @@ func main() {
 
 	replaceFile(&changed, "Installer/Windows/GuildSyncInstaller.iss", []replacement{
 		{
+			pattern: regexp.MustCompile(`(?m)^#define\s+MyAppNumericVersion\s+"[^"]*"`),
+			value:   fmt.Sprintf(`#define MyAppNumericVersion "%s"`, strings.Split(strings.Split(version, "-")[0], "+")[0]),
+		},
+		{
 			pattern: regexp.MustCompile(`(?m)^#define\s+MyAppVersion\s+"[^"]*"`),
 			value:   fmt.Sprintf(`#define MyAppVersion "%s"`, version),
 		},
@@ -80,7 +102,11 @@ func main() {
 	})
 
 	sort.Strings(changed)
-	fmt.Printf("Updated GuildSync version to %s\n", version)
+	if checkMode {
+		fmt.Printf("Verified GuildSync version %s across all release components\n", version)
+	} else {
+		fmt.Printf("Updated GuildSync version to %s\n", version)
+	}
 	for _, path := range changed {
 		fmt.Printf(" - %s\n", path)
 	}
@@ -94,7 +120,7 @@ type replacement struct {
 func replaceFile(changed *[]string, path string, replacements []replacement) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return
+		fatalf("required release file missing: %s", path)
 	}
 	if err != nil {
 		fatalf("read %s: %v", path, err)
@@ -110,6 +136,9 @@ func replaceFile(changed *[]string, path string, replacements []replacement) {
 	}
 
 	if updated != original {
+		if checkMode {
+			fatalf("version mismatch in %s", path)
+		}
 		writeText(path, updated)
 		*changed = append(*changed, path)
 	}
@@ -118,7 +147,7 @@ func replaceFile(changed *[]string, path string, replacements []replacement) {
 func updateWailsJSON(changed *[]string, path string, version string) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return
+		fatalf("required release file missing: %s", path)
 	}
 	if err != nil {
 		fatalf("read %s: %v", path, err)
@@ -133,6 +162,12 @@ func updateWailsJSON(changed *[]string, path string, version string) {
 	if info == nil {
 		info = map[string]any{}
 		raw["info"] = info
+	}
+	if checkMode {
+		if info["productVersion"] != version {
+			fatalf("version mismatch in %s", path)
+		}
+		return
 	}
 	info["productVersion"] = version
 
@@ -153,7 +188,7 @@ func updateWailsJSON(changed *[]string, path string, version string) {
 func updatePackageJSON(changed *[]string, path string, version string) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return
+		fatalf("required release file missing: %s", path)
 	}
 	if err != nil {
 		fatalf("read %s: %v", path, err)
@@ -162,6 +197,19 @@ func updatePackageJSON(changed *[]string, path string, version string) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		fatalf("parse %s: %v", path, err)
+	}
+	if checkMode {
+		if raw["version"] != version {
+			fatalf("version mismatch in %s", path)
+		}
+		if strings.HasSuffix(path, "package-lock.json") {
+			packages, _ := raw["packages"].(map[string]any)
+			root, _ := packages[""].(map[string]any)
+			if root["version"] != version {
+				fatalf("root package version mismatch in %s", path)
+			}
+		}
+		return
 	}
 	raw["version"] = version
 
@@ -182,7 +230,7 @@ func updatePackageJSON(changed *[]string, path string, version string) {
 func updatePackageLockTopVersion(changed *[]string, path string, version string) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return
+		fatalf("required release file missing: %s", path)
 	}
 	if err != nil {
 		fatalf("read %s: %v", path, err)
@@ -191,6 +239,17 @@ func updatePackageLockTopVersion(changed *[]string, path string, version string)
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		fatalf("parse %s: %v", path, err)
+	}
+	packages, packagesOK := raw["packages"].(map[string]any)
+	root, rootOK := packages[""].(map[string]any)
+	if !packagesOK || !rootOK {
+		fatalf("missing root package in %s", path)
+	}
+	if checkMode {
+		if raw["version"] != version || root["version"] != version {
+			fatalf("version mismatch in %s", path)
+		}
+		return
 	}
 	raw["version"] = version
 	if packages, ok := raw["packages"].(map[string]any); ok {
@@ -214,9 +273,9 @@ func updatePackageLockTopVersion(changed *[]string, path string, version string)
 }
 
 func updateESOManifests(changed *[]string, root string, version string) {
-	matches, err := filepath.Glob(filepath.Join(root, "GuildSync*", "GuildSync*.txt"))
-	if err != nil {
-		fatalf("find ESO manifests: %v", err)
+	var matches []string
+	for _, addon := range []string{"GuildSyncBanking", "GuildSyncRoster", "GuildSyncApplications"} {
+		matches = append(matches, filepath.Join(root, addon, addon+".txt"))
 	}
 	for _, path := range matches {
 		replaceFile(changed, filepath.ToSlash(path), []replacement{

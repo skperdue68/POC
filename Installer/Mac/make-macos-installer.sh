@@ -4,6 +4,7 @@ set -euo pipefail
 PAYLOAD_DIR="${1:?payload directory required}"
 OUT_FILE="${2:?output installer path required}"
 APP_VERSION="${3:-0.0.0}"
+BUNDLE_VERSION="${APP_VERSION%%[-+]*}"
 
 PKG_ID="me.perdues.guildsync.installer"
 INSTALLER_APP_NAME="GuildSync Installer.app"
@@ -39,9 +40,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>$APP_VERSION</string>
+  <string>$BUNDLE_VERSION</string>
   <key>CFBundleVersion</key>
-  <string>$APP_VERSION</string>
+  <string>$BUNDLE_VERSION</string>
   <key>LSMinimumSystemVersion</key>
   <string>10.13</string>
 </dict>
@@ -77,7 +78,9 @@ pkgbuild \
   --root "$TMP_DIR/root" \
   --scripts "$SCRIPTS_DIR" \
   --identifier "$PKG_ID" \
-  --version "$APP_VERSION" \
+  --version "$BUNDLE_VERSION" \
   --install-location "/" \
   "$OUT_FILE"
+
+
 
