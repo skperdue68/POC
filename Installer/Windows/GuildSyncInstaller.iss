@@ -1,6 +1,7 @@
 #ifndef MyAppVersion
 #define MyAppVersion "1.3.3"
 #endif
+#define MyAppNumericVersion "1.3.3"
 #ifndef SourceRoot
 #define SourceRoot "payload"
 #endif
@@ -28,8 +29,8 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayIcon={app}\{#MyAppExeName}
-VersionInfoVersion={#MyAppVersion}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppNumericVersion}
+VersionInfoProductVersion={#MyAppNumericVersion}
 VersionInfoCompany=evainefaye
 VersionInfoDescription=GuildSync Installer
 VersionInfoProductName=GuildSync
@@ -79,3 +80,4 @@ function GetESOAddonDir(Param: String): String;
 begin
   Result := ESOAddonPage.Values[0];
 end;
+

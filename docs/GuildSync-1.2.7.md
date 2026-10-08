@@ -15,7 +15,7 @@ Mac users should follow the [Mac installation directions](GuildSync-Mac-Installa
 
 ## Server configuration and installer availability
 
-Set `GUILDSYNC_CLIENT_VERSION=1.2.7` in the backend runtime environment. Preserve the deployment's existing secrets and other configuration. Set `GUILDSYNC_DOWNLOADS_DIR` to the installer directory if it differs from the default `NodeJS/GuildSync-Backend-Server/public/downloads`. Set `GUILDSYNC_WEB_PUBLIC_URL` to the externally accessible HTTPS origin used for download links.
+The backend reads its release version from its stamped `package.json`. An old `GUILDSYNC_CLIENT_VERSION` environment setting is ignored; remove it when convenient. Preserve the deployment's existing secrets and other configuration. Set `GUILDSYNC_DOWNLOADS_DIR` to the installer directory if it differs from the default `NodeJS/GuildSync-Backend-Server/public/downloads`. Set `GUILDSYNC_WEB_PUBLIC_URL` to the externally accessible HTTPS origin used for download links.
 
 Place these exact files directly in the download directory (case-sensitive on Linux):
 
@@ -23,7 +23,7 @@ Place these exact files directly in the download directory (case-sensitive on Li
 - `GuildSync-Setup-1.2.7-macOS.zip`
 - `GuildSync-Setup-1.2.7-Linux-x86_64.zip`
 
-Upload each ZIP to a temporary filename first, then rename it to the final filename after the transfer finishes. The lookup advertises only the configured release for the requested platform. Older ZIPs can remain for existing direct links, but will never be offered as 1.2.7. A newer ZIP is also ignored until the configured version changes. Deploy the backend and generated public web assets, preserve the downloads directory, and restart the backend using the deployment's existing service manager.
+Upload each ZIP to a temporary filename first, then rename it to the final filename after the transfer finishes. The lookup advertises only the packaged release for the requested platform. Older ZIPs can remain for existing direct links, but will never be offered as 1.2.7. A newer ZIP is also ignored until the backend package version changes. Deploy the backend and generated public web assets, preserve the downloads directory, and restart the backend using the deployment's existing service manager.
 
 Verify `/api/client-download?platform=windows`, `platform=macos`, and `platform=linux`: installed releases return matching `download.version`, filename, and URL. Follow each returned URL to verify the ZIP is accessible. A missing installer returns HTTP 404 with an availability message; socket version checks return `download_available: false`, `latest_version: null`, and no update URL without stopping the backend. The web download button stays unavailable until its platform installer exists. Refresh the web page after adding installers. Older desktop clients should receive a 1.2.7 update only when their platform's 1.2.7 installer is present.
 
@@ -61,4 +61,13 @@ The bot checks every five minutes while connected. It posts an initial summary, 
 Keep the state file on persistent, writable storage across restarts/deployments, and run one announcing bot instance. Relative state paths resolve from the bot directory. The state remembers the highest announced milestone per raffle and the last successful post. Before sending, the bot persists the pending snapshot; after an interrupted delivery it checks its channel history for the same announcement before retrying. A failed history lookup stops that retry instead of blindly posting again. Do not delete the state file or pending announcements during routine deployment. The bot must be able to read its own announcement content from history; Discord permits this for messages sent by the bot itself without the privileged Message Content intent (see [Discord message fields](https://github.com/discord/discord-api-docs/blob/main/developers/resources/message.mdx)).
 
 Run `node --test` in the bot directory for its command and scheduler tests. This PR does not register commands, send messages, create a release tag, or deploy services automatically.
+
+
+## One version for each release
+
+`VERSION` at the repository root is the development version. Change that file, then run `go run tools/update-version.go` from the root to synchronize generated version fields. Run `go run tools/update-version.go --check` to detect mismatches. Do not edit each component separately.
+
+Publishing a release with a tag such as `v1.4.0` overrides VERSION in the build checkout and stamps desktop/web source, Wails metadata, all four npm package/lock files, ESO manifests, the Applications addon, and Windows installer metadata. The workflow verifies the stamped files before building. These changes belong to the artifacts; the tag does not rewrite repository history. Numeric native installer metadata uses the numeric part of prerelease versions; visible release labels keep the complete version.
+
+The release also includes `GuildSync-Server-<version>.zip`, containing backend runtime, newly compiled web assets, bot runtime, migrations and example configuration. It excludes local .env files, credentials, node_modules, old downloads and runtime data. Extract into a staging folder, back up the deployment, and copy runtime files into the corresponding NodeJS service directories. Preserve existing .env, credentials, downloads and persistent data. Run npm ci in backend and bot directories and restart using your existing service manager. Review and apply any required migrations through your normal deployment process. No automatic deployment occurs.
 
