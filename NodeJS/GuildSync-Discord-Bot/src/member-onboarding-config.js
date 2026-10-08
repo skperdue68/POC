@@ -16,7 +16,8 @@ export function readOnboardingConfig(env = process.env) {
  if (!['private_thread','channel'].includes(config.mode)) throw Error('Onboarding NOTIFICATION_MODE must be private_thread or channel.');
  if (config.enabled && (config.reminderEnabled || (config.promotionEnabled && config.promotionNotifyEnabled)) && !config.channelId)
   throw Error('GUILDSYNC_ONBOARDING_CHANNEL_ID is required for enabled notifications.');
- for (const key of ['channelId','gangsterRoleId','associateRoleId']) if(config[key] && !/^\d+$/.test(config[key])) throw Error('Onboarding '+key+' must be a Discord ID.');
+ for (const key of ['channelId']) if(config[key] && !/^\d+$/.test(config[key])) throw Error('Onboarding '+key+' must be a Discord ID.');
+ for(const key of ['gangsterRoleId','associateRoleId'])if(config[key] && /[,\x00-\x1f\x7f@]/.test(config[key]))throw Error('Onboarding '+key+' must be one role name or ID without @.');
  for(const template of [config.promotionMessage,config.reminderMessage]) {
   if(template.length>1800) throw Error('Onboarding message templates must be at most 1800 characters.');
   for(const match of template.matchAll(/\{([^{}]+)\}/g)) if(!['mention','eso_name','associate_role','hours'].includes(match[1])) throw Error('Unknown onboarding placeholder: '+match[1]);

@@ -12,7 +12,8 @@ function request(socket,action,payload) {
  });
 }
 function roleByName(roles,id,name) {
- const matches=id?[roles.get(id)].filter(Boolean):[...roles.values()].filter(role=>role.name.toLowerCase()===name.toLowerCase());
+ const ref=String(id || name).trim();
+ const matches=/^\d+$/.test(ref)?[roles.get(ref)].filter(Boolean):[...roles.values()].filter(role=>String(role.name || '').trim().toLowerCase()===ref.toLowerCase());
  if(matches.length!==1)throw Error('Onboarding needs one unambiguous '+name+' role; configure its role ID.');
  return matches[0];
 }
@@ -109,6 +110,7 @@ export async function processOnboardingDelivery(context,job) {
  const payload={guildId,deliveryId:job.id,claimToken:job.claimToken};
  const progress=patch=>request(socket,'progress',{...payload,patch});
  const finish=result=>request(socket,'finish',{...payload,result});
+ let rolePromotionAttempted=false,rolePromotionSucceeded=false;
  try {
   let validity=await request(socket,'validate',payload);
   if(!validity.valid){await finish({cancelled:true});return;}
@@ -121,6 +123,8 @@ export async function processOnboardingDelivery(context,job) {
   if(!validity.valid){await finish({cancelled:true});return;}
   let associateName='Associates';
   if(job.kind==='promotion') {
+   rolePromotionAttempted=true;
+   log('Onboarding role promotion attempting '+JSON.stringify({guildId,userId:job.userId,deliveryId:job.id,gangsterRole:config.gangsterRoleId || 'Gangsters',associateRole:config.associateRoleId || 'Associates'}));
    const roles=await guild.roles.fetch(),gangster=roleByName(roles,config.gangsterRoleId,'Gangsters');
    const higherRank=higherGuildRank(member);
    if(higherRank) {
@@ -134,9 +138,10 @@ export async function processOnboardingDelivery(context,job) {
     }else if(!(job.roleStarted || job.roleChanged)) {
      await finish({cancelled:true});return;
     }
+    rolePromotionSucceeded=true;
+    log('Onboarding role promotion succeeded for '+job.userId+': removed '+gangster.name+' ('+gangster.id+'); retained higher guild rank '+higherRank.name+'.');
     await progress({roleChanged:true});job.roleChanged=true;
     await finish({done:true,promoted:false});
-    log('Onboarding removed '+gangster.name+' from '+job.userId+'; retained higher guild rank '+higherRank.name+'.');
     return; // No Associate-promotion message for a member whose rank was retained.
    }
    const associate=roleByName(roles,config.associateRoleId,'Associates');
@@ -146,14 +151,15 @@ export async function processOnboardingDelivery(context,job) {
     if(!(job.roleStarted || job.roleChanged)){await finish({cancelled:true});return;}
     if(!member.roles.cache.has(associate.id))throw Error('Interrupted promotion no longer has the Associate role.');
    }else {
-    if(!gangster.editable || !associate.editable || !member.manageable)throw Error('Bot cannot manage onboarding roles; check Manage Roles and role hierarchy.');
+    if(!gangster.editable || !associate.editable)throw Error('Bot cannot manage onboarding roles; check Manage Roles and role hierarchy.');
     validity=await request(socket,'validate',payload);
     if(!validity.valid){await finish({cancelled:true});return;}
     await progress({roleStarted:true});job.roleStarted=true;
     if(!member.roles.cache.has(associate.id))await member.roles.add(associate.id,'GuildSync confirmed ESO link');
     await member.roles.remove(gangster.id,'GuildSync promotion to Associate');
-    log('Onboarding promoted '+job.userId+' to '+associate.name+'; removed '+gangster.name+'.');
    }
+   rolePromotionSucceeded=true;
+   log('Onboarding role promotion succeeded for '+job.userId+': has '+associate.name+' ('+associate.id+'); removed '+gangster.name+' ('+gangster.id+').');
    await progress({roleChanged:true});job.roleChanged=true;
    if(!config.promotionNotifyEnabled){await finish({done:true});return;}
    validity=await request(socket,'validate',payload);
@@ -182,6 +188,7 @@ export async function processOnboardingDelivery(context,job) {
   await finish({done:true,messageId:message.id});
   log('Onboarding '+job.kind+' notification sent for '+job.userId+' in '+destination.id+'.');
  }catch(error){
+  if(rolePromotionAttempted&&!rolePromotionSucceeded)log('Onboarding role promotion failed for '+job.userId+' in guild '+guildId+' (delivery '+job.id+'): '+error.message);
   log('Onboarding '+job.kind+' for '+job.userId+' failed: '+error.message);
   try {await finish({error:error.message});}catch(ackError){log('Onboarding retry acknowledgement failed: '+ackError.message);}
  }
