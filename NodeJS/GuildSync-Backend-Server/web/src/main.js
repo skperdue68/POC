@@ -419,7 +419,7 @@ function renderGuildSyncTabs() {
       const showMailAttention = shouldShowBankingMailTabAttention(tab.id, isActive);
       const attentionCount = showMailAttention ? getBankingMailAttentionCount() : 0;
       const attentionTitle = showMailAttention
-        ? `Deposit mail needs attention: ${attentionCount} item${attentionCount === 1 ? '' : 's'} ready to check out or write.`
+        ? `Deposit mail needs attention: ${attentionCount} item${attentionCount === 1 ? '' : 's'} ready to check out.`
         : '';
 
       return `
@@ -573,7 +573,8 @@ function getBankingMailAttentionCount() {
     return 0;
   }
 
-  return getUnsentDepositMailCount() + getPendingDepositMailWriteCount() + getWrittenDepositMailWaitingCount();
+  // Attention is for records still available to check out, not mail already queued or written.
+  return getUnsentDepositMailCount();
 }
 
 function shouldShowBankingMailTabAttention(tabId, isActive) {
@@ -7430,6 +7431,14 @@ function updateBonusSettingsView() {
 }
 
 function updateBankingDataView() {
+  const tabBar = document.querySelector('.guildsync-tabs');
+  if (tabBar) {
+    const tabs = renderGuildSyncTabs();
+    if (tabBar.innerHTML !== tabs) {
+      tabBar.innerHTML = tabs;
+      wireGuildSyncTabs();
+    }
+  }
   updateBonusSettingsView();
   if (activeGuildSyncTab === 'more' && document.querySelector('.bank-deposits-panel')) {
     updateLiveDataView('.bank-deposits-panel', renderBankDepositsPanel(), true);
