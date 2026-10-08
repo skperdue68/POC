@@ -11,10 +11,10 @@
   "name": "guildsync-auth-server",
   "private": true,
   "scripts": {
-    "build:web": "cd web && npm install && npm run build && node -e \"const fs=require('fs'); fs.rmSync('../public/assets',{recursive:true,force:true}); fs.cpSync('dist','../public',{recursive:true});\"",
+    "build:web": "cd web \u0026\u0026 npm install \u0026\u0026 npm run build \u0026\u0026 node -e \"const fs=require('fs'); fs.rmSync('../public/assets',{recursive:true,force:true}); fs.cpSync('dist','../public',{recursive:true});\"",
     "dev": "node guildsync-backend-server.js",
     "start": "node guildsync-backend-server.js"
   },
   "type": "module",
-  "version": "1.3.5"
+  "version": "1.3.6"
 }
