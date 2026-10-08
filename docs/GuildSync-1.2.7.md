@@ -8,9 +8,9 @@ Mac users should follow the [Mac installation directions](GuildSync-Mac-Installa
 
 ## Build and package
 
-1. Review and merge the release changes. GitHub Actions branch, pull request, and manual builds preserve `info.productVersion` from `GO/GuildSync-Frontend-Client/wails.json`. A `v1.2.7` tag overrides it with `1.2.7`. Do not use run numbers as release versions.
+1. Review and merge the release changes. Installer builds run only when a GitHub release is published, including a prerelease. Ordinary pushes, pull requests, manual dispatch, draft release saves, and pushing a tag alone do not start this workflow. The published release tag supplies the version: `v1.2.7` becomes `1.2.7`. Use `vMAJOR.MINOR.PATCH` release tags, optionally with a prerelease/build suffix, and do not use run numbers as release versions.
 2. Build the desktop frontend in `GO/GuildSync-Frontend-Client/frontend` using `npm ci` and `npm run build`. Build the web frontend with `npm run build:web` from `NodeJS/GuildSync-Backend-Server`; deploy its generated `public` files together with the backend.
-3. When authorized to release, push the `v1.2.7` tag and wait for all three Actions platform jobs. Those jobs build the application and platform installers. Download and extract the Actions artifact wrapper to obtain the actual installer ZIPs below, or download those ZIP assets from the release.
+3. When authorized to release, publish a GitHub Release using the `v1.2.7` tag on a commit containing the updated workflow. Publishing starts the three platform jobs, which build from that exact tag and attach installers to the same release. Saving a draft or merely pushing the tag does not start a build. For acceptance testing before a stable release, publish a prerelease with its own version tag. Wait for all three jobs to finish; installer assets appear after the builds complete. Download and extract the Actions artifact wrapper to obtain the actual installer ZIPs below, or download those ZIP assets from the release.
 4. Test installation and startup on each supported platform before publishing the installers to the server. Do not rename an older installer to claim it is version 1.2.7.
 
 ## Server configuration and installer availability

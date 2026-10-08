@@ -4,15 +4,8 @@
     contents: write
 
   on:
-    push:
-      branches:
-        - master
-      tags:
-        - 'v*'
-    pull_request:
-      branches:
-        - master
-    workflow_dispatch:
+    release:
+      types: [published]
 
   env:
     FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -53,6 +46,8 @@
       steps:
         - name: Checkout
           uses: actions/checkout@v4
+          with:
+            ref: ${{ github.event.release.tag_name }}
 
         - name: Test macOS installer file operations
           if: runner.os == 'macOS'
@@ -72,13 +67,15 @@
         - name: Determine GuildSync version
           shell: bash
           working-directory: .
+          env:
+            RELEASE_TAG: ${{ github.event.release.tag_name }}
           run: |
             set -euo pipefail
-            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-              VERSION="${GITHUB_REF_NAME#v}"
-            else
-              VERSION="$(python -c 'import json; print(json.load(open("GO/GuildSync-Frontend-Client/wails.json"))["info"]["productVersion"])')"
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Release tags must use vMAJOR.MINOR.PATCH, such as v1.2.7." >&2
+              exit 1
             fi
+            VERSION="${RELEASE_TAG#v}"
             echo "GUILDSYNC_VERSION=${VERSION}" >> "$GITHUB_ENV"
             echo "GuildSync version: ${VERSION}"
 
@@ -281,8 +278,8 @@
 
         - name: Upload release assets
           uses: softprops/action-gh-release@v2
-          if: startsWith(github.ref, 'refs/tags/')
           with:
+            tag_name: ${{ github.event.release.tag_name }}
             files: |
               GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-Windows.zip
               GO/GuildSync-Frontend-Client/release/GuildSync-Setup-${{ env.GUILDSYNC_VERSION }}-macOS.zip
